@@ -13,9 +13,21 @@ venv/
 *.csv
 manifest.txt
 
+# Music files
+*.mp3
+*.flac
+*.m4a
+*.wav
+*.aac
+*.ogg
+*.wma
+
 # beets
 beets.db
 
 # OS
 .DS_Store
 Thumbs.db
+
+# spotipy
+token_cache

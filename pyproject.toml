@@ -1,0 +1,16 @@
+[project]
+name = "tapebuilding"
+version = "0.1.0"
+description = "building and managing my personal music library"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "python-dotenv>=1.2.2",
+    "spotipy>=2.26.0",
+]
+
+[tool.setuptools]
+packages = ["download"]
+
+[project.scripts]
+export = "download.spotify_to_csv:main"
