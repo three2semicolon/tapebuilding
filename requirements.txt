@@ -1,0 +1,6 @@
+python-dotenv
+spotipy          # Spotify API client
+spotdl           # Spotify downloader
+beets            # Music tagger and organizer
+pandas           # CSV merging and manifest work
+firebase-admin   # Soundbyte / Firestore access
