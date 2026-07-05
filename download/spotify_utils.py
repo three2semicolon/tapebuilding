@@ -295,8 +295,7 @@ def export_manifest_as_txt(tracks, export_dir):
 def get_export_dir(base_dir=None):
     """get or create the export directory."""
     if base_dir is None:
-        # Default to export directory relative to this file
-        base_dir = os.path.join(os.path.dirname(__file__), 'export')
+        base_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'export')
 
     os.makedirs(base_dir, exist_ok=True)
     return base_dir

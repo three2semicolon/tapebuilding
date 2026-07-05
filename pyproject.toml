@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "python-dotenv>=1.2.2",
+    "spotdl>=4.5.0",
     "spotipy>=2.26.0",
 ]
 
@@ -14,3 +15,4 @@ packages = ["download"]
 
 [project.scripts]
 export = "download.spotify_to_csv:main"
+download = "download.download_music:main"
