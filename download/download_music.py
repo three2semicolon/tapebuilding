@@ -6,12 +6,23 @@ import argparse
 import os
 import sys
 import subprocess
+import csv
+import re
 from .spotify_utils import get_export_dir
+
+
+def sanitize_filename(filename):
+    """sanitize filename to match spotdl's default behavior (remove invalid characters)."""
+    # remove invalid characters for Windows and POSIX
+    filename = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', filename)
+    # remove trailing spaces and dots (Windows does not allow trailing dots or spaces)
+    filename = filename.strip('. ')
+    return filename
 
 
 def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
                    overwrite_errors=False, skip_existing=False, verbose=False,
-                   validate_only=False, batch_size=1):
+                   validate_only=False, batch_size=1, pre_skip_existing=False):
     """download music using spotDL from Spotify URLs (file, csv, or directory), processing in batches."""
     print(f"processing spotify source: {url_file}")
 
@@ -19,7 +30,6 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
         print(f"error: url file/path not found: {url_file}")
         return False
 
-    # extract URLs from file, csv, or directory of csvs
     urls = []
     try:
         if os.path.isdir(url_file):
@@ -60,7 +70,66 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
               "Use without --validate-only to download.")
         return True
 
-    # batches
+    # If we want to pre-skip existing files and we have a CSV with metadata, do that now
+    if pre_skip_existing and url_file.lower().endswith('.csv'):
+        try:
+            with open(url_file, 'r', encoding='utf-8') as f:
+                sample = f.read(1024)
+                f.seek(0)
+                sniffer = csv.Sniffer()
+                delimiter = sniffer.sniff(sample).delimiter
+                reader = csv.DictReader(f, delimiter=delimiter)
+                if reader.fieldnames:
+                    reader.fieldnames = [name.strip() for name in reader.fieldnames]
+                required_columns = {'track_name', 'artist_names'}
+                if not required_columns.issubset(set(reader.fieldnames)):
+                    print("warning: CSV missing required columns for pre-skip (track_name, artist_names). "
+                          "Falling back to standard processing.")
+                else:
+                    if output_dir:
+                        os.makedirs(output_dir, exist_ok=True)
+                        final_output_dir = output_dir
+                    else:
+                        archive_path = os.getenv('archive_path', os.path.expanduser('~/music/tapebuilding'))
+                        os.makedirs(archive_path, exist_ok=True)
+                        final_output_dir = archive_path
+
+                    extension = format  # assuming format maps directly to extension (e.g., mp3 -> .mp3)
+                    # spotdl's default output template is: {artists} - {title}
+                    skipped_count = 0
+                    new_urls = []
+                    for row in reader:
+                        url = row.get('spotify_url', '').strip()
+                        if not url:
+                            continue
+                        track_name = row.get('track_name', '').strip()
+                        artist_names = row.get('artist_names', '').strip()
+                        if not track_name or not artist_names:
+                            new_urls.append(url)
+                            continue
+
+                        filename = f"{artist_names} - {track_name}.{extension}"
+                        filename = sanitize_filename(filename)
+                        filepath = os.path.join(final_output_dir, filename)
+
+                        if os.path.exists(filepath):
+                            skipped_count += 1
+                            if verbose:
+                                print(f"skipping existing file: {filename}")
+                        else:
+                            new_urls.append(url)
+
+                    print(f"pre-skip check: skipped {skipped_count} existing files, {len(new_urls)} to download.")
+                    urls = new_urls
+                    url_count = len(urls)
+                    if url_count == 0:
+                        print("all files already exist!")
+                        return True
+        except Exception as e:
+            print(f"warning: failed to pre-skip existing files: {e}")
+            print("falling back to standard processing.")
+
+    # process URLs in batches
     overall_success = True
     num_batches = (url_count + batch_size - 1) // batch_size
     print(f"processing {url_count} URLs in {num_batches} batch(es) of up to {batch_size}")
@@ -72,38 +141,40 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
         batch_num = batch_idx + 1
         print(f"\n--- Batch {batch_num}/{num_batches} ({len(batch)} URLs) ---")
 
+        # build spotdl command: operation, then URLs, then options
         cmd = [sys.executable, "-m", "spotdl", "download"] + batch
         cmd.extend([
             "--format", format,
             "--bitrate", bitrate
         ])
+
         if overwrite_errors:
             cmd.append("--overwrite")
         if skip_existing:
             cmd.append("--skip-existing")
         if verbose:
             cmd.append("--verbose")
+
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
             cmd.extend(["--output", output_dir])
         else:
-            # use archive_path from .env or fallback
             archive_path = os.getenv('archive_path', os.path.expanduser('~/music/tapebuilding'))
             os.makedirs(archive_path, exist_ok=True)
             cmd.extend(["--output", archive_path])
+
         ffmpeg_path = os.getenv('ffmpeg_path')
         if ffmpeg_path:
             cmd.extend(["--ffmpeg", ffmpeg_path])
 
         print(f"running: {' '.join(cmd)}")
 
-        # run spotdl
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                check=False
+                check=False  # don't raise exception on non-zero exit
             )
 
             if result.stdout:
@@ -121,9 +192,9 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
             overall_success = False
 
     if overall_success:
-        print(f"\nall batches processed successfully! total tracks processed: {url_count}")
+        print(f"\nAll batches processed successfully! total tracks processed: {url_count}")
     else:
-        print(f"\ncompleted with errors; see output above.")
+        print(f"\nCompleted with errors; see output above.")
     return overall_success
 
 
@@ -166,10 +237,11 @@ def main():
                         help='only validate the url file without downloading')
     parser.add_argument('--batch-size', type=int, default=1,
                         help='number of URLs to process in each batch (default: 1)')
+    parser.add_argument('--pre-skip-existing', action='store_true',
+                        help='pre-check output directory for existing files and skip download if file exists (requires CSV with track_name and artist_names)')
 
     args = parser.parse_args()
 
-    # determine input file
     url_file = None
     if args.url_file:
         url_file = args.url_file
@@ -188,7 +260,8 @@ def main():
             skip_existing=args.skip_existing,
             verbose=args.verbose,
             validate_only=args.validate_only,
-            batch_size=args.batch_size
+            batch_size=args.batch_size,
+            pre_skip_existing=args.pre_skip_existing
         )
         if not success:
             sys.exit(1)

@@ -11,48 +11,37 @@ load_dotenv()
 
 def get_default_download_dir():
     """get the default download directory."""
-    # check if archive_path is set in .env
     archive_path = os.getenv('archive_path')
     if archive_path:
         return archive_path
 
-    # fallback to a default music directory
     return os.path.join(os.path.expanduser("~"), "music", "tapebuilding")
 
 def download_with_spotdl(url_file, output_dir=None, format='mp3', bitrate='320k',
                         overwrite_errors=False, skip_existing=False, verbose=False):
     """download music using spotdl from a file of spotify urls."""
-    # set default output directory if not provided
     if output_dir is None:
         output_dir = get_default_download_dir()
 
-    # ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
 
-    # build spotdl command
     cmd = ["spotdl"]
 
-    # add url file
     cmd.extend(["--input-file", url_file])
 
-    # add output directory if specified
     if output_dir:
-        # create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
         cmd.extend(["--output", output_dir])
     else:
-        # use archive_path from .env or fallback
         archive_path = os.getenv('archive_path', os.path.expanduser('~/music/tapebuilding'))
         os.makedirs(archive_path, exist_ok=True)
         cmd.extend(["--output", archive_path])
 
-    # add format and bitrate options
     cmd.extend([
         "--format", format,
         "--bitrate", bitrate
     ])
 
-    # add optional flags
     if overwrite_errors:
         cmd.append("--overwrite-errors")
     if skip_existing:
@@ -64,7 +53,6 @@ def download_with_spotdl(url_file, output_dir=None, format='mp3', bitrate='320k'
     print(f"saving to: {output_dir}")
     print(f"running: {' '.join(cmd)}")
 
-    # run spotdl command
     try:
         result = subprocess.run(
             cmd,
@@ -73,7 +61,6 @@ def download_with_spotdl(url_file, output_dir=None, format='mp3', bitrate='320k'
             check=False  # don't raise exception on non-zero exit
         )
 
-        # print stdout and stderr
         if result.stdout:
             print(result.stdout.strip())
         if result.stderr:

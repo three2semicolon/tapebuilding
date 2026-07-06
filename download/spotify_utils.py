@@ -13,7 +13,6 @@ from spotipy.oauth2 import SpotifyOAuth
 
 load_dotenv()
 
-# spotify configuration, from .env
 SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
 SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
 SPOTIFY_REDIRECT_URI = os.getenv('SPOTIFY_REDIRECT_URI', 'http://localhost:8888/callback')
@@ -44,7 +43,6 @@ def get_user_playlists(sp, my_playlists_only=False):
     playlists = []
     results = sp.current_user_playlists(limit=50)
 
-    # Get current user ID for filtering
     current_user_id = None
     if my_playlists_only:
         try:
@@ -56,15 +54,13 @@ def get_user_playlists(sp, my_playlists_only=False):
 
     while results:
         for playlist in results.get('items', []):
-            # Safely get playlist URL
             playlist_url = ''
             if playlist.get('external_urls') and isinstance(playlist['external_urls'], dict):
                 playlist_url = playlist['external_urls'].get('spotify', '')
 
-            # Filter by owner if requested
             owner_id = playlist.get('owner', {}).get('id')
             if my_playlists_only and current_user_id and owner_id != current_user_id:
-                continue  # Skip playlists not owned by the current user
+                continue
 
             playlists.append({
                 'id': playlist.get('id', ''),
@@ -94,7 +90,6 @@ def get_playlist_tracks(sp, playlist_id, playlist_name):
         for item in results.get('items', []):
             track = item.get('track')
             if track:
-                # Safely extract track information
                 track_id = track.get('id', '')
                 track_name = track.get('name', '')
                 artists = track.get('artists', [])
@@ -108,7 +103,6 @@ def get_playlist_tracks(sp, playlist_id, playlist_name):
                 added_by = item.get('added_by', {})
                 added_by_id = added_by.get('id') if added_by else None
 
-                # Safely get Spotify URL
                 spotify_url = ''
                 external_urls = track.get('external_urls', {})
                 if isinstance(external_urls, dict):
@@ -154,7 +148,6 @@ def get_liked_songs(sp):
         for item in results.get('items', []):
             track = item.get('track')
             if track:
-                # Safely extract track information
                 track_id = track.get('id', '')
                 track_name = track.get('name', '')
                 artists = track.get('artists', [])
@@ -168,7 +161,6 @@ def get_liked_songs(sp):
                 added_by = item.get('added_by', {})
                 added_by_id = added_by.get('id') if added_by else None
 
-                # Safely get Spotify URL
                 spotify_url = ''
                 external_urls = track.get('external_urls', {})
                 if isinstance(external_urls, dict):
@@ -215,17 +207,15 @@ def merge_and_deduplicate(playlists_data, liked_songs_data):
     for track in all_tracks:
         track_id = track.get('track_id', '')
         if not track_id:
-            continue  # Skip tracks without ID
+            continue
 
         if track_id not in track_dict:
-            # first time seeing this track
             track_dict[track_id] = {
                 **track,
                 'playlist_names': [track.get('playlist_name', '')],
                 'playlist_ids': [track.get('playlist_id', '')]
             }
         else:
-            # already seen, add this playlist to its list
             playlist_name = track.get('playlist_name', '')
             playlist_id_val = track.get('playlist_id', '')
             if playlist_name and playlist_name not in track_dict[track_id]['playlist_names']:
@@ -264,7 +254,6 @@ def export_to_csv(data, filename, export_dir):
     if not data:
         return
 
-    # Get fieldnames from first item, handling empty data
     if data and len(data) > 0:
         fieldnames = data[0].keys()
     else:
@@ -285,7 +274,7 @@ def export_manifest_as_txt(tracks, export_dir):
     with open(txt_filepath, 'w', encoding='utf-8') as f:
         for track in tracks:
             spotify_url = track.get('spotify_url', '')
-            if spotify_url:  # Only write non-empty URLs
+            if spotify_url:
                 f.write(spotify_url + '\n')
 
     url_count = len([t for t in tracks if t.get('spotify_url', '')])

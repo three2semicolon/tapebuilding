@@ -21,8 +21,8 @@ def extract_playlist_id_from_url(url):
     """extract playlist ID from a Spotify playlist URL.
 
     formats like:
-    # https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M
-    # spotify:playlist:37i9dQZF1DXcBWIGoYBM5M
+    https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M
+    spotify:playlist:37i9dQZF1DXcBWIGoYBM5M
     """
     if 'open.spotify.com/playlist/' in url:
         return url.split('open.spotify.com/playlist/')[1].split('?')[0]
@@ -45,13 +45,11 @@ def export_specific_playlist(sp, playlist_identifier, export_dir):
         tracks = get_playlist_tracks(sp, playlist_id, playlist_name)
         print(f"found {len(tracks)} tracks")
 
-        # csv
         safe_name = "".join(c for c in playlist_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
         safe_name = safe_name.replace(' ', '_')
         filename = f"playlist_{safe_name}.csv"
         export_to_csv(tracks, filename, export_dir)
 
-        # txt for spotDL
         txt_filename = f"playlist_{safe_name}_urls.txt"
         txt_filepath = os.path.join(export_dir, txt_filename)
         with open(txt_filepath, 'w', encoding='utf-8') as f:
@@ -73,7 +71,6 @@ def export_all_data(sp, export_dir, my_playlists_only=False):
     user = sp.current_user()
     print(f"authenticated as: {user.get('display_name', 'Unknown User')} ({user.get('id', 'Unknown ID')})")
 
-    # all playlists
     playlists = get_user_playlists(sp, my_playlists_only=my_playlists_only)
     if my_playlists_only:
         print(f"found {len(playlists)} of your playlists")
@@ -89,22 +86,17 @@ def export_all_data(sp, export_dir, my_playlists_only=False):
         all_playlist_tracks.extend(tracks)
     print(f"found {len(all_playlist_tracks)} tracks in playlists")
 
-    # export playlist tracks
     export_to_csv(all_playlist_tracks, 'playlist_tracks.csv', export_dir)
 
-    # liked songs
     liked_songs = get_liked_songs(sp)
     print(f"found {len(liked_songs)} liked songs")
     export_to_csv(liked_songs, 'liked_songs.csv', export_dir)
 
-    # merge and deduplicate
     manifest_tracks = merge_and_deduplicate(all_playlist_tracks, liked_songs)
     print(f"created manifest with {len(manifest_tracks)} unique tracks")
 
-    # csv
     export_to_csv(manifest_tracks, 'spotify_manifest.csv', export_dir)
 
-    # txt for spotDL
     export_manifest_as_txt(manifest_tracks, export_dir)
 
     print("\nexport complete! files saved in:", export_dir)
