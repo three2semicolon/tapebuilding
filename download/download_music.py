@@ -9,6 +9,7 @@ import subprocess
 import csv
 import re
 from .spotify_utils import get_export_dir
+from organize.library import resolve_library_root, scan_existing
 
 
 def sanitize_filename(filename):
@@ -18,6 +19,70 @@ def sanitize_filename(filename):
     # remove trailing spaces and dots (Windows does not allow trailing dots or spaces)
     filename = filename.strip('. ')
     return filename
+
+
+def _resolve_output_dir(output_dir, create=True):
+    """resolve the download output dir: explicit --output, else the library
+    root from organize. Created if `create`."""
+    final = output_dir or resolve_library_root()
+    if create:
+        os.makedirs(final, exist_ok=True)
+    return final
+
+
+def _predict_output_filename(artist_names, track_name, fmt):
+    """predict spotdl's output filename for a track.
+
+    spotdl's default template is '{artists} - {title}', so we mirror it (with
+    the same filename sanitization) to guess whether a file already exists.
+    Returns the filename only; the caller joins it with the output directory.
+    """
+    return sanitize_filename(f"{artist_names} - {track_name}.{fmt}")
+
+
+def _count_existing(url_file, urls, output_dir, fmt):
+    """count how many of `urls` already exist in the library.
+
+    Predicts filenames from a CSV's track_name + artist_names columns, then
+    delegates the existence check to organize.scan_existing. Returns
+    (existing, new, checked_dir), or None if `url_file` isn't a CSV with the
+    columns needed to predict names.
+    """
+    if not url_file.lower().endswith('.csv'):
+        return None
+    try:
+        with open(url_file, 'r', encoding='utf-8') as f:
+            sample = f.read(1024)
+            f.seek(0)
+            delimiter = csv.Sniffer().sniff(sample).delimiter
+            reader = csv.DictReader(f, delimiter=delimiter)
+            if reader.fieldnames:
+                reader.fieldnames = [name.strip() for name in reader.fieldnames]
+            if not {'track_name', 'artist_names'}.issubset(set(reader.fieldnames)):
+                return None
+            metadata = {}
+            for row in reader:
+                url = (row.get('spotify_url') or '').strip()
+                if url and url not in metadata:
+                    metadata[url] = (
+                        (row.get('artist_names') or '').strip(),
+                        (row.get('track_name') or '').strip(),
+                    )
+    except Exception as e:
+        print(f"warning: failed to check existing files: {e}")
+        return None
+
+    library_root = output_dir or resolve_library_root()
+    candidates = []
+    no_meta = 0
+    for url in urls:
+        artist_names, track_name = metadata.get(url, ('', ''))
+        if not artist_names or not track_name:
+            no_meta += 1
+        else:
+            candidates.append(_predict_output_filename(artist_names, track_name, fmt))
+    existing, new = scan_existing(library_root, candidates)
+    return existing, new + no_meta, library_root
 
 
 def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
@@ -66,8 +131,13 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
         return False
 
     if validate_only:
-        print(f"url validation complete: {url_count} unique URLs. "
-              "Use without --validate-only to download.")
+        print(f"url validation complete: {url_count} unique URLs.")
+        counts = _count_existing(url_file, urls, output_dir, format)
+        if counts is not None:
+            existing, new, checked_dir = counts
+            print(f"  existing in output dir ({checked_dir}): {existing}")
+            print(f"  new (to download): {new}")
+        print("Use without --validate-only to download.")
         return True
 
     # If we want to pre-skip existing files and we have a CSV with metadata, do that now
@@ -86,16 +156,7 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
                     print("warning: CSV missing required columns for pre-skip (track_name, artist_names). "
                           "Falling back to standard processing.")
                 else:
-                    if output_dir:
-                        os.makedirs(output_dir, exist_ok=True)
-                        final_output_dir = output_dir
-                    else:
-                        archive_path = os.getenv('archive_path', os.path.expanduser('~/music/tapebuilding'))
-                        os.makedirs(archive_path, exist_ok=True)
-                        final_output_dir = archive_path
-
-                    extension = format  # assuming format maps directly to extension (e.g., mp3 -> .mp3)
-                    # spotdl's default output template is: {artists} - {title}
+                    final_output_dir = _resolve_output_dir(output_dir)
                     skipped_count = 0
                     new_urls = []
                     for row in reader:
@@ -108,14 +169,11 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
                             new_urls.append(url)
                             continue
 
-                        filename = f"{artist_names} - {track_name}.{extension}"
-                        filename = sanitize_filename(filename)
-                        filepath = os.path.join(final_output_dir, filename)
-
+                        filepath = os.path.join(final_output_dir, _predict_output_filename(artist_names, track_name, format))
                         if os.path.exists(filepath):
                             skipped_count += 1
                             if verbose:
-                                print(f"skipping existing file: {filename}")
+                                print(f"skipping existing file: {os.path.basename(filepath)}")
                         else:
                             new_urls.append(url)
 
@@ -155,13 +213,7 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
         if verbose:
             cmd.append("--verbose")
 
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
-            cmd.extend(["--output", output_dir])
-        else:
-            archive_path = os.getenv('archive_path', os.path.expanduser('~/music/tapebuilding'))
-            os.makedirs(archive_path, exist_ok=True)
-            cmd.extend(["--output", archive_path])
+        cmd.extend(["--output", _resolve_output_dir(output_dir)])
 
         ffmpeg_path = os.getenv('ffmpeg_path')
         if ffmpeg_path:

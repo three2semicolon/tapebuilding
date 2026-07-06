@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["download"]
+packages = ["download", "organize"]
 
 [project.scripts]
 export = "download.spotify_to_csv:main"
