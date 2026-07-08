@@ -123,6 +123,52 @@ download -u path/to/urls.txt --validate-only
 - `--skip-existing`: skip files that already exist in output directory
 - `--verbose`: enable verbose output from spotdl
 
+## download from soundcloud
+
+the `soundcloud` command downloads a single track, set/playlist, or album from a soundcloud url using yt-dlp (which ships a first-class SoundCloud extractor). unlike the spotdl `download` command, this takes one url directly -- no url file or batching -- and yt-dlp walks a playlist/set url itself.
+
+### usage
+
+```bash
+# single track
+soundcloud "https://soundcloud.com/artist/track"
+
+# a set / playlist (drops into a "Set Name/" subfolder, tracks numbered)
+soundcloud "https://soundcloud.com/artist/sets/my-set"
+
+# an album
+soundcloud "https://soundcloud.com/artist/albums/my-album"
+
+# specify an output directory (default: library root, same as `download`)
+soundcloud -o /path/to/music "https://soundcloud.com/artist/track"
+
+# keep the original audio container instead of transcoding to mp3
+soundcloud -f best "https://soundcloud.com/artist/track"
+
+# list the tracks in a set/album without downloading (playlist preview)
+soundcloud -m "https://soundcloud.com/artist/sets/my-set"
+```
+
+### options
+
+- `url`: soundcloud track, set/playlist, or album url (positional)
+- `-o, --output`: output directory (default: library root, via `archive_path` or `~/music/tapebuilding`)
+- `-f, --format`: transcode target audio format -- `mp3` (default), `m4a`, `opus`, `vorbis`, `wav`, `flac`, `alac`, `aac`, or `best` (keep original container, no transcode)
+- `-q, --audio-quality`: transcoding quality, 0 (best) to 10 (worst) on yt-dlp's scale (default: 0)
+- `--no-thumbnail`: do not embed the cover-art thumbnail
+- `--overwrite`: re-download files that already exist (default: skip existing)
+- `-v, --verbose`: enable verbose yt-dlp output
+- `-m, --metadata-only`: list the tracks in the url without downloading (playlist preview)
+- `--cookies-from-browser`: browser to read soundcloud cookies from (e.g. `chrome`); needed for soundcloud go+ and some restricted tracks
+- `--ffmpeg`: path to ffmpeg (default: `ffmpeg_path` env var, then system path)
+
+### notes
+
+- metadata (title, artist/uploader, cover) is embedded with `--embed-metadata --embed-thumbnail`, analogous to spotdl. soundcloud's metadata is sparser than spotify's -- you reliably get uploader, title, duration, and cover, but usually not album / track number / release date (except on sets, which provide an album name and playlist index)
+- filenames follow `Uploader - Title.ext` for singles and `Set Name/NN - Uploader - Title.ext` for set/album tracks, so they sit alongside your spotdl downloads in the same library root
+- transcoding to mp3 requires ffmpeg; `--ffmpeg` or the `ffmpeg_path` env var overrides the system path lookup
+- if the `soundcloud` command isn't available after `uv sync`, run it as `python -m download.soundcloud_downloader ...` in the meantime
+
 ## complete workflow
 
 here's the recommended full workflow for maintaining your music library with tapebuilding:

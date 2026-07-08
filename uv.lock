@@ -232,6 +232,19 @@ wheels = [
 ]
 
 [[package]]
+name = "deno"
+version = "2.9.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/10/9111c76994f96cafc5d3216744fc7498dec91ec5dbc2b21dccb242eb423c/deno-2.9.1.tar.gz", hash = "sha256:6ff26ea8d015f39d907a5f1f2728d0a67de3e52ad79a893daa6c2b6bb774eff8", size = 8166, upload-time = "2026-07-01T16:38:11.268Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/20/2f/e36e8c5fc6a115f80866f891cafabc272cebb3ca5aa5aa0c22ecc8dcda4b/deno-2.9.1-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:b6dad51f76d2e4c1641b3bb607d74bede6b8b6ee9f3dd8b1843668c9a9242d51", size = 42326438, upload-time = "2026-07-01T16:37:57.076Z" },
+    { url = "https://files.pythonhosted.org/packages/93/2c/f36273086056c0cadb607e7024032393627dc9d127bbb151e8fd15afc167/deno-2.9.1-py3-none-macosx_11_0_arm64.whl", hash = "sha256:2093a3caf68b39b5fb6b4ad7a15efe8862a9b8c637467278a5a2beac6f8bde4d", size = 37976869, upload-time = "2026-07-01T16:38:00.076Z" },
+    { url = "https://files.pythonhosted.org/packages/59/95/bc958662607300f290c5d77e7a8f5ba22d59ed8cbe9be4088f46f598f463/deno-2.9.1-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:5924c9e1c7ae63e1c103412c7a7fbb0d72dc8d5b44ed969c4365b7db29b73cba", size = 42045727, upload-time = "2026-07-01T16:38:02.905Z" },
+    { url = "https://files.pythonhosted.org/packages/96/55/b5cc71d6f41cc2aa3662e25783f4254b9f2f440d5fc3bfcdf07f101b5c66/deno-2.9.1-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:c73797b2319a5ac6749a715468ad95ef89a1f5c791499042d38ba0f52ecbe0fb", size = 43904159, upload-time = "2026-07-01T16:38:05.914Z" },
+    { url = "https://files.pythonhosted.org/packages/58/4c/19c6782e7b518f2d6338c54253c372be0628673f9f18fd88956a811f30de/deno-2.9.1-py3-none-win_amd64.whl", hash = "sha256:1ae3d509073d561b57005b530532f68c8beb19d140cb7d5a18c6066249e1a470", size = 41612042, upload-time = "2026-07-01T16:38:08.793Z" },
+]
+
+[[package]]
 name = "deprecated"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -846,18 +859,22 @@ wheels = [
 [[package]]
 name = "tapebuilding"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
+    { name = "deno" },
     { name = "python-dotenv" },
     { name = "spotdl" },
     { name = "spotipy" },
+    { name = "yt-dlp", extra = ["default"] },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "deno", specifier = ">=2.9.1" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "spotdl", specifier = ">=4.5.0" },
     { name = "spotipy", specifier = ">=2.26.0" },
+    { name = "yt-dlp", extras = ["default"], specifier = ">=2026.6.9" },
 ]
 
 [[package]]

@@ -196,8 +196,28 @@ def get_liked_songs(sp):
     return tracks
 
 
+def _normalize_title(s):
+    """normalize a string for fuzzy title dedup."""
+    import re
+    s = s.lower()
+    s = re.sub(r'\s*(feat\.?|ft\.?|featuring)\s+.*', '', s)
+    s = re.sub(r'\s*\(.*?\)', '', s)
+    s = re.sub(r'[^\w\s]', '', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
+
+
+def _fuzzy_key(track):
+    """normalized primary-artist + title key for cross-ID duplicate detection."""
+    artists = track.get('artist_names', '')
+    primary = artists.split(',')[0].strip() if artists else ''
+    title = track.get('track_name', '')
+    return f"{_normalize_title(primary)}|||{_normalize_title(title)}"
+
+
 def merge_and_deduplicate(playlists_data, liked_songs_data):
-    """merge all track data and deduplicate by spotify track ID."""
+    """merge all track data and deduplicate by spotify track ID, then by
+    normalized artist+title to catch remasters/regional duplicates."""
     print("merging and deduplicating tracks...")
 
     all_tracks = playlists_data + liked_songs_data
@@ -223,9 +243,10 @@ def merge_and_deduplicate(playlists_data, liked_songs_data):
                 if playlist_id_val:
                     track_dict[track_id]['playlist_ids'].append(playlist_id_val)
 
-    deduped_tracks = []
+    # first-pass results keyed by track_id
+    id_deduped = []
     for track_id, track_data in track_dict.items():
-        deduped_tracks.append({
+        id_deduped.append({
             'track_id': track_data.get('track_id', ''),
             'track_name': track_data.get('track_name', ''),
             'artist_names': track_data.get('artist_names', ''),
@@ -239,7 +260,37 @@ def merge_and_deduplicate(playlists_data, liked_songs_data):
             'spotify_url': track_data.get('spotify_url', '')
         })
 
-    # Sort by track name (case-insensitive), handling empty names
+    # second-pass: fuzzy dedup by normalized primary-artist + title
+    # when two track IDs resolve to the same song (remaster, regional version, etc.)
+    # keep the one with higher popularity as the canonical download URL
+    fuzzy_dict = {}
+    for track in id_deduped:
+        key = _fuzzy_key(track)
+        if key not in fuzzy_dict:
+            fuzzy_dict[key] = track
+        else:
+            existing = fuzzy_dict[key]
+            if track.get('popularity', 0) > existing.get('popularity', 0):
+                # merge playlist membership from the dropped duplicate into the keeper
+                existing_playlists = set(existing.get('playlist_names', '').split('; '))
+                new_playlists = set(track.get('playlist_names', '').split('; '))
+                merged = sorted([p for p in existing_playlists | new_playlists if p])
+                track['playlist_names'] = '; '.join(merged)
+                track['playlist_count'] = len(merged)
+                fuzzy_dict[key] = track
+            else:
+                # keep existing but absorb the new playlist names
+                existing_playlists = set(existing.get('playlist_names', '').split('; '))
+                new_playlists = set(track.get('playlist_names', '').split('; '))
+                merged = sorted([p for p in existing_playlists | new_playlists if p])
+                existing['playlist_names'] = '; '.join(merged)
+                existing['playlist_count'] = len(merged)
+
+    deduped_tracks = list(fuzzy_dict.values())
+    fuzzy_removed = len(id_deduped) - len(deduped_tracks)
+    if fuzzy_removed:
+        print(f"fuzzy dedup removed {fuzzy_removed} additional duplicate(s) (remasters/regional versions)")
+
     deduped_tracks.sort(key=lambda x: x.get('track_name', '').lower())
     return deduped_tracks
 

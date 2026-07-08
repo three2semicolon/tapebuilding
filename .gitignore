@@ -31,3 +31,7 @@ Thumbs.db
 
 # spotipy
 token_cache
+
+# processing
+failed_downloads.txt
+soft_failures.txt
