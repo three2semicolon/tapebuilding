@@ -13,6 +13,7 @@ run. songs may be in multiple playlists.
 usage:
   uv run playlists --playlist "_obs"                 # preview one (no files written)
   uv run playlists --apply --playlist "_obs"         # write it
+  uv run playlists --apply --rescrape --playlist "_obs"  # rescrape just _obs, then build it
   uv run playlists --apply                            # build all your own playlists
   uv run playlists --apply --all                     # include followed/shared lists
   uv run playlists --apply --rescrape --covers        # refresh from spotify + art
@@ -27,7 +28,7 @@ import sys
 from dotenv import load_dotenv
 load_dotenv()
 
-from download.spotify_utils import authenticate_spotify
+from download.spotify_utils import authenticate_spotify, get_playlist_tracks
 from download.spotify_to_csv import export_all_data, extract_playlist_id_from_url
 
 from .indexer import (
@@ -48,6 +49,10 @@ PLAYLIST_TRACKS_FIELDS = (
     'added_by', 'spotify_url', 'track_number', 'disc_number', 'is_local',
 )
 
+PLAYLIST_META_FIELDS = (
+    'id', 'name', 'description', 'owner', 'public', 'track_count', 'playlist_url',
+)
+
 
 def _read_csv(path):
     """read a csv into a list of dicts, or [] if missing."""
@@ -55,6 +60,20 @@ def _read_csv(path):
         return []
     with open(path, 'r', encoding='utf-8', newline='') as f:
         return list(csv.DictReader(f))
+
+
+def _write_csv(path, rows, fields):
+    """atomic, non-fatal csv write. mirrors _write_unmatched: a locked target
+    (editor/scanner holding it) warns rather than aborting the build."""
+    tmp = path + '.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8', newline='') as f:
+            w = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
+            w.writeheader()
+            w.writerows(rows)
+        os.replace(tmp, path)
+    except OSError as e:
+        print(f"  warning: could not write {path}: {e}")
 
 
 def _group_tracks_by_playlist(rows):
@@ -83,7 +102,7 @@ def _select_playlists(playlists_csv, args):
         wanted = []
         for token in args.names:
             as_id = extract_playlist_id_from_url(token)
-            is_id = (as_id == token) and len(token) >= 16
+            is_id = len(as_id) >= 16          # bare id, or id extracted from a url
             wanted.append((token, as_id, is_id))
         selected = []
         for meta in rows:
@@ -134,6 +153,71 @@ def _download_cover(sp, playlist_id, dest_path):
     return True
 
 
+def _scope_rescrape(sp, args, exports_dir):
+    """--rescrape with -p: fetch only the named playlist(s) from spotify and
+    patch their rows into playlists.csv + playlist_tracks.csv, instead of the
+    full export_all_data walk of every owned playlist. a name token resolves to
+    an id via the existing playlists.csv (one we don't already know can't be
+    scraped by name - pass its url or id, or run a full --rescrape first to
+    learn it); a url or bare id fetches directly."""
+    playlists_csv = os.path.join(exports_dir, 'playlists.csv')
+    tracks_csv = os.path.join(exports_dir, 'playlist_tracks.csv')
+    metas = _read_csv(playlists_csv)          # [] on a first run
+    tracks = _read_csv(tracks_csv)
+    name_to_id = {m.get('name'): m.get('id') for m in metas if m.get('name') and m.get('id')}
+
+    to_fetch, missing = [], []
+    for token in args.names:
+        as_id = extract_playlist_id_from_url(token)
+        if len(as_id) >= 16:                         # bare id, or id extracted from a url
+            to_fetch.append((token, as_id))
+        elif token in name_to_id:                    # a name we already know
+            to_fetch.append((token, name_to_id[token]))
+        else:
+            missing.append(token)
+
+    if missing:
+        print(f"warning: can't rescrape by name (not in playlists.csv): {', '.join(missing)}")
+        print("         pass its url or id instead, or run a full --rescrape first to learn it.")
+    if not to_fetch:
+        return
+
+    print(f"rescraping {len(to_fetch)} playlist(s) (--rescrape -p) into {exports_dir}")
+    fetch_ids = {pid for _, pid in to_fetch}
+    out_tracks = [r for r in tracks if r.get('playlist_id') not in fetch_ids]
+
+    for token, pid in to_fetch:
+        try:
+            pl = sp.playlist(pid)
+        except Exception as e:
+            print(f"  warning: could not fetch playlist {token}: {e}")
+            continue
+        name = pl.get('name') or token
+        meta = {
+            'id': pl.get('id', ''),
+            'name': name,
+            'description': pl.get('description', '') or '',
+            'owner': (pl.get('owner') or {}).get('display_name', '') or '',
+            'public': pl.get('public', False),
+            'track_count': (pl.get('tracks') or {}).get('total', 0),
+            'playlist_url': (pl.get('external_urls') or {}).get('spotify', ''),
+        }
+        # replace in place to keep playlists.csv row order; else append
+        for i, m in enumerate(metas):
+            if m.get('id') == pid:
+                metas[i] = meta
+                break
+        else:
+            metas.append(meta)
+
+        new_tracks = get_playlist_tracks(sp, pid, name)
+        print(f"  - {name}: {len(new_tracks)} tracks")
+        out_tracks.extend(new_tracks)
+
+    _write_csv(playlists_csv, metas, PLAYLIST_META_FIELDS)
+    _write_csv(tracks_csv, out_tracks, PLAYLIST_TRACKS_FIELDS)
+
+
 def build_playlists(args):
     playlists_path = resolve_playlists_path(args.playlists_path)
     exports_dir = resolve_exports_dir(playlists_path, args.exports_dir)
@@ -143,8 +227,11 @@ def build_playlists(args):
     if args.rescrape or args.covers:
         sp = authenticate_spotify()
     if args.rescrape:
-        print("rescraping spotify (--rescrape) into " + exports_dir)
-        export_all_data(sp, exports_dir, my_playlists_only=True)
+        if args.names:
+            _scope_rescrape(sp, args, exports_dir)
+        else:
+            print("rescraping spotify (--rescrape) into " + exports_dir)
+            export_all_data(sp, exports_dir, my_playlists_only=True)
 
     playlists_csv = os.path.join(exports_dir, 'playlists.csv')
     tracks_csv = os.path.join(exports_dir, 'playlist_tracks.csv')
@@ -263,7 +350,7 @@ def main():
     p.add_argument('-p', '--playlist', action='append', dest='names', metavar='NAME|ID', default=[],
                    help='build a specific playlist by name or spotify id (repeatable; overrides scope)')
     p.add_argument('--rescrape', action='store_true',
-                   help="re-run `export --mine` first to refresh the spotify csvs")
+                   help="refresh the spotify csvs first (full export; with -p, only the named playlists)")
     p.add_argument('--covers', action='store_true',
                    help='download each playlist cover to <name>.jpg (needs --rescrape or spotify auth)')
     p.add_argument('--reindex', action='store_true',

@@ -55,7 +55,12 @@ uv run spotify -u PLAYLISTS_PATH/exports/unmatched_urls.txt
 - `--all` builds followed/shared lists too.
 - `-p/--playlist` (repeatable) builds specific playlists by name or spotify id;
   overrides the scope.
-- `--rescrape` re-runs `export --mine` first to refresh the spotify csvs.
+- `--rescrape` re-runs `export --mine` first to refresh the spotify csvs. with
+  `-p` it only fetches the named playlist(s) (by name, id, or url) and patches
+  their rows into the existing csvs - no full walk of every owned playlist. a
+  name token resolves to an id via the existing `playlists.csv` (one you don't
+  already know can't be scraped by name - pass its url or id, or run a full
+  `--rescrape` first to learn it).
 - `--covers` (auto-useful with `--rescrape`) downloads each playlist's cover to
   `<name>.jpg` beside the `.m3u8`; needs spotify auth (the csvs have no image url).
 

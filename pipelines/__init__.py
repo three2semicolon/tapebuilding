@@ -1,1 +1,1 @@
-# Pipelines package for syncing and downloading music
+# Pipelines package
