@@ -35,3 +35,11 @@ token_cache
 # processing
 failed_downloads.txt
 soft_failures.txt
+retry_list.txt
+
+# organizing
+*config.yaml
+!organize/config.yaml.example
+
+# downloading
+*firebase-adminsdk*

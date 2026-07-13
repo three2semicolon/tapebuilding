@@ -1,9 +1,3 @@
-"""
-download a single track, set/playlist, or album from SoundCloud using yt-dlp.
-uses yt-dlp's python api directly. uses separate outtmpl for playlists vs
-single tracks to avoid windows issues with yt-dlp's conditional % syntax.
-"""
-
 import argparse
 import os
 import re
@@ -14,9 +8,8 @@ from organize.library import resolve_library_root
 
 load_dotenv()
 
-# separate templates — avoids %(playlist&...)s conditional syntax which
-# corrupts on windows due to yt-dlp's internal handling of null bytes in
-# the format string parser.
+# separate templates - the %(playlist&...)s conditional corrupts on Windows
+# due to yt-dlp's null-byte handling in its format-string parser
 OUTTMPL_SINGLE   = '%(uploader)s - %(title)s.%(ext)s'
 OUTTMPL_PLAYLIST = '%(playlist)s/%(playlist_index)02d - %(uploader)s - %(title)s.%(ext)s'
 
@@ -67,7 +60,6 @@ def download_soundcloud(url, output_dir=None, audio_format='mp3', audio_quality=
                     print(f"{i}. {title}" if is_playlist_url(url) else title)
         return True
 
-    # pick template based on url type
     tmpl = OUTTMPL_PLAYLIST if is_playlist_url(url) else OUTTMPL_SINGLE
     outtmpl = os.path.join(final_output_dir, tmpl)
 
@@ -97,7 +89,7 @@ def download_soundcloud(url, output_dir=None, audio_format='mp3', audio_quality=
         ydl_opts['postprocessors'].append({'key': 'EmbedThumbnail'})
         ydl_opts['writethumbnail'] = True
 
-    ffmpeg = ffmpeg_path or os.getenv('ffmpeg_path')
+    ffmpeg = ffmpeg_path or os.getenv('FFMPEG_PATH') or os.getenv('ffmpeg_path')
     if ffmpeg:
         ydl_opts['ffmpeg_location'] = ffmpeg
 

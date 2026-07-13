@@ -1,0 +1,48 @@
+directory: /path/to/crate
+library: /path/to/crate/beets.db
+
+pluginpath:
+  - organize   # relative to repo root; use an absolute path if running beets directly
+
+paths:
+  default: albums/$albumartist - $album%aunique{}/$track - $artist - $title    # albums/AlbumArtist - Album/NN - TrackArtist - Title.ext
+  comp: albums/$albumartist - $album%aunique{}/$track - $artist - $title       # compilations: albums/Various Artists - Album/NN - TrackArtist - Title.ext
+  singleton: singles/$artist - $title                                          # pass 2: singles/TrackArtist - Title.ext
+
+import:
+  move: yes
+  copy: no
+  write: yes
+  duplicate_action: skip
+  resume: yes
+  log: /path/to/crate/beets_import.log
+  quiet_fallback: asis   # import even when MusicBrainz can't match - keep file tags instead of skipping (this library is mostly beat tapes/bootlegs that won't match MB)
+
+match:
+  strong_rec_thresh: 0.90
+  preferred:
+    countries: [US, GB, XW]
+    media: [Digital Media, CD]
+
+plugins:
+  - normalize_artists   # custom - normalizes artist strings at import
+  - fetchart
+  - embedart
+  - duplicates
+  - missing
+  - info
+
+fetchart:
+  auto: yes
+  sources:
+    - filesystem
+    - coverart
+    - itunes
+    - amazon
+  store_source: yes
+
+embedart:
+  auto: yes
+
+ui:
+  color: yes

@@ -1,7 +1,3 @@
-"""
-download music from Spotify URLs using spotDL.
-"""
-
 import argparse
 import os
 import sys
@@ -9,12 +5,14 @@ import subprocess
 import csv
 import glob
 import re
+import time
+
 from .spotify_utils import get_export_dir
-from organize.library import resolve_library_root, scan_existing, build_library_index, scan_existing_fuzzy
+from organize.library import resolve_library_root, build_library_index, scan_existing_fuzzy
 
 
 def sanitize_filename(filename):
-    """sanitize filename to match spotdl's default behavior (remove invalid characters)."""
+    # must match spotdl's sanitization so predicted filenames == what spotdl writes
     filename = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', filename)
     filename = filename.strip('. ')
     return filename
@@ -32,8 +30,6 @@ def _predict_output_filename(artist_names, track_name, fmt):
 
 
 def _read_csv_metadata_from_file(csv_path):
-    """read per-URL track metadata from a single CSV file.
-    returns {url: (artist_names, track_name)} or {} on failure."""
     metadata = {}
     try:
         with open(csv_path, 'r', encoding='utf-8') as f:
@@ -58,8 +54,6 @@ def _read_csv_metadata_from_file(csv_path):
 
 
 def _read_csv_metadata(url_file):
-    """read per-URL track metadata from a CSV file or directory of CSVs.
-    returns {url: (artist_names, track_name)} or None if no usable metadata found."""
     if os.path.isdir(url_file):
         merged = {}
         for csv_path in glob.glob(os.path.join(url_file, '*.csv')):
@@ -76,8 +70,7 @@ def _read_csv_metadata(url_file):
 
 
 def _check_existing(urls, metadata, output_dir, fmt):
-    """check how many urls already exist in the output dir using fuzzy index.
-    returns (existing_count, new_count, no_meta_count, library_root, library_index)."""
+    # returns (existing, new, no_meta, library_root, library_index)
     library_root = output_dir or resolve_library_root()
     print(f"scanning output folder for existing files...")
     library_index = build_library_index(library_root)
@@ -97,7 +90,6 @@ def _check_existing(urls, metadata, output_dir, fmt):
 def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
                    overwrite_errors=False, skip_existing=False, verbose=False,
                    validate_only=False, batch_size=1, pre_skip_existing=False):
-    """download music using spotDL from Spotify URLs (file, csv, or directory)."""
     print(f"processing spotify source: {url_file}")
 
     if not os.path.exists(url_file):
@@ -107,8 +99,8 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
     urls = []
     try:
         if os.path.isdir(url_file):
-            # prefer spotify_manifest.csv — it's already deduplicated across
-            # liked songs + all playlists, so we avoid triple-counting URLs
+            # spotify_manifest.csv is already deduplicated across liked songs + playlists;
+            # using it avoids triple-counting urls
             manifest = os.path.join(url_file, 'spotify_manifest.csv')
             if os.path.exists(manifest):
                 print(f"  using manifest: spotify_manifest.csv")
@@ -116,10 +108,10 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
             else:
                 csv_files = glob.glob(os.path.join(url_file, '*.csv'))
                 if not csv_files:
-                    print(f"no CSV files found in directory: {url_file}")
+                    print(f"no csv files found in directory: {url_file}")
                     return False
                 for csv_file in csv_files:
-                    print(f"  reading URLs from: {os.path.basename(csv_file)}")
+                    print(f"  reading urls from: {os.path.basename(csv_file)}")
                     urls.extend(_extract_urls_from_csv(csv_file))
         elif url_file.lower().endswith('.csv'):
             urls = _extract_urls_from_csv(url_file)
@@ -130,7 +122,6 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
         print(f"error reading url source: {e}")
         return False
 
-    # deduplicate while preserving order
     seen = set()
     deduped_urls = []
     for url in urls:
@@ -144,13 +135,12 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
         print("no urls found")
         return False
 
-    print(f"url validation complete: {url_count} unique URLs.")
+    print(f"url validation complete: {url_count} unique urls.")
 
-    # always run pre-skip check if requested, regardless of validate_only
     if pre_skip_existing:
         metadata = _read_csv_metadata(url_file)
         if metadata is None:
-            print("warning: no CSVs with track_name/artist_names columns found — skipping existence check.")
+            print("warning: no csvs with track_name/artist_names columns found - skipping existence check.")
         else:
             existing, new, no_meta, library_root, library_index = _check_existing(urls, metadata, output_dir, format)
             print(f"\nexistence check against: {library_root}")
@@ -158,13 +148,12 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
             print(f"  new (to download)  : {new - no_meta}")
             if no_meta:
                 print(f"  no metadata        : {no_meta} (will attempt download)")
-            print(f"  total unique URLs  : {url_count}")
+            print(f"  total unique urls  : {url_count}")
 
             if validate_only:
                 print("\nuse without --validate-only to download.")
                 return True
 
-            # filter to only new urls using the same fuzzy index
             new_urls = []
             for url in urls:
                 a, t = metadata.get(url, ('', ''))
@@ -181,13 +170,13 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
             urls = new_urls
             url_count = len(urls)
             if url_count == 0:
-                print("all files already exist — nothing to download.")
+                print("all files already exist - nothing to download.")
                 return True
     elif validate_only:
         print("use without --validate-only to download.")
         return True
 
-    # soft failure patterns — spotDL exits 0 but nothing was downloaded
+    # spotdl exits 0 even when nothing downloads - scan output for these markers
     SOFT_FAILURE_PATTERNS = [
         'AudioProviderError',
         'LookupError',
@@ -196,25 +185,24 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
         'YT-DLP download error',
         'returned no usable results',
     ]
-    # hard failure patterns — track is genuinely gone, no point retrying
+    # track is genuinely gone, no point retrying
     HARD_FAILURE_PATTERNS = [
         'Track no longer exists',
         'SongError',
     ]
-    # MAX_RETRIES = 2
     MAX_RETRIES = 0
-    RETRY_DELAY = 3  # seconds between retries
+    RETRY_DELAY = 3
 
     overall_success = True
     num_batches = (url_count + batch_size - 1) // batch_size
-    print(f"\nprocessing {url_count} URLs in {num_batches} batch(es) of up to {batch_size}")
+    print(f"\nprocessing {url_count} urls in {num_batches} batch(es) of up to {batch_size}")
 
     for batch_idx in range(num_batches):
         start = batch_idx * batch_size
         end = min(start + batch_size, url_count)
         batch = urls[start:end]
         batch_num = batch_idx + 1
-        print(f"\n--- Batch {batch_num}/{num_batches} ({len(batch)} URLs) ---")
+        print(f"\n--- batch {batch_num}/{num_batches} ({len(batch)} urls) ---")
 
         cmd = [sys.executable, "-m", "spotdl", "download"] + batch
         cmd.extend(["--format", format, "--bitrate", bitrate])
@@ -228,7 +216,7 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
 
         cmd.extend(["--output", _resolve_output_dir(output_dir)])
 
-        ffmpeg_path = os.getenv('ffmpeg_path')
+        ffmpeg_path = os.getenv('FFMPEG_PATH') or os.getenv('ffmpeg_path')
         if ffmpeg_path:
             cmd.extend(["--ffmpeg", ffmpeg_path])
 
@@ -236,7 +224,6 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
             print(f"running spotdl for: {batch}")
 
         attempt = 0
-        result = None
         while attempt <= MAX_RETRIES:
             try:
                 proc = subprocess.Popen(
@@ -248,10 +235,7 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
                     print(line, end='', flush=True)
                     captured_lines.append(line)
                 proc.wait()
-
-                class _Result:
-                    returncode = proc.returncode
-                result = _Result()
+                returncode = proc.returncode
                 combined_output = ''.join(captured_lines)
             except Exception as e:
                 print(f"error running spotdl: {e}")
@@ -259,18 +243,15 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
                 _log_urls('failed_downloads.txt', batch)
                 break
 
-            # hard failure — log and move on, no retry
             if any(p in combined_output for p in HARD_FAILURE_PATTERNS):
                 print(f"hard failure (track unavailable): {batch}")
                 _log_urls('failed_downloads.txt', batch, reason='track_unavailable')
                 break
 
-            # non-zero exit — retry
-            if result.returncode != 0:
+            if returncode != 0:
                 attempt += 1
                 if attempt <= MAX_RETRIES:
-                    print(f"exit code {result.returncode}, retrying ({attempt}/{MAX_RETRIES})...")
-                    import time
+                    print(f"exit code {returncode}, retrying ({attempt}/{MAX_RETRIES})...")
                     time.sleep(RETRY_DELAY)
                     continue
                 else:
@@ -279,22 +260,18 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
                     _log_urls('failed_downloads.txt', batch, reason='download_failed')
                     break
 
-            # exit 0 but soft failure pattern in output
             if any(p in combined_output for p in SOFT_FAILURE_PATTERNS):
                 attempt += 1
                 if attempt <= MAX_RETRIES:
                     print(f"soft failure detected, retrying ({attempt}/{MAX_RETRIES})...")
-                    import time
                     time.sleep(RETRY_DELAY)
                     continue
                 else:
-                    # classify which soft failure it was
                     reason = next((p for p in SOFT_FAILURE_PATTERNS if p in combined_output), 'soft_failure')
                     print(f"soft failure after {MAX_RETRIES} retries ({reason}): {batch}")
                     _log_urls('soft_failures.txt', batch, reason=reason)
                 break
 
-            # clean success
             print(f"batch {batch_num} downloaded successfully")
             break
 
@@ -306,7 +283,6 @@ def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
 
 
 def _log_urls(filename, urls, reason=None):
-    """append urls to a failure log file with optional reason annotation."""
     with open(filename, 'a', encoding='utf-8') as f:
         for url in urls:
             line = f"{url}  # {reason}" if reason else url
@@ -314,7 +290,6 @@ def _log_urls(filename, urls, reason=None):
 
 
 def _extract_urls_from_csv(csv_path):
-    """extract Spotify URLs from a CSV file (expects 'spotify_url' column)."""
     urls = []
     try:
         with open(csv_path, 'r', encoding='utf-8') as f:
@@ -324,7 +299,7 @@ def _extract_urls_from_csv(csv_path):
                 if url and url.strip():
                     urls.append(url.strip())
     except Exception as e:
-        print(f"warning: failed to read CSV {csv_path}: {e}")
+        print(f"warning: failed to read csv {csv_path}: {e}")
     return urls
 
 

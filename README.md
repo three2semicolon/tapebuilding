@@ -1,265 +1,132 @@
 # tapebuilding
 
-building and managing my personal music library
+building and managing my personal music library.
 
 ## overview
 
-this project provides tools for managing a personal music library, including:
+tools for managing a personal music library:
 
-- exporting spotify playlists and liked songs to csv
-- downloading music from spotify urls using spotdl
-- organizing downloaded music
+- export spotify playlists and liked songs to csv
+- download music from spotify urls via spotdl
+- download from soundcloud via yt-dlp
+- organize downloads with beets
 
-## installation
+## install
 
-1. clone the repository:
+```bash
+git clone <repository-url>
+cd tapebuilding
+uv sync
+```
 
-   ```bash
-   git clone <repository-url>
-   cd tapebuilding
-   ```
-2. install dependencies with uv:
-
-   ```bash
-   uv sync
-   ```
-
-   this creates a virtual environment and installs the package in editable mode, making the `download` and `export` commands available.
+installs the `export`, `download`, and `soundcloud` commands in editable mode.
 
 ## export spotify data
 
-the `export` module exports your spotify data (playlists, liked songs, etc.) to csv files for backup and processing.
-
-### usage
-
-#### basic usage
-
 ```bash
-# export all data (default)
-export
-
-# export only your own playlists
-export --mine
-
-# specify output directory
-export -o /path/to/export
+export                                  # all playlists + liked songs (default)
+export --mine                            # only your own playlists
+export -o /path/to/export               # custom output directory
+export -p "<playlist-url-or-id>"        # a single playlist
 ```
 
-#### export specific playlist
+outputs (in the export directory):
 
-```bash
-# by url
-export -p "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"
-
-# by id
-export -p "37i9dQZF1DXcBWIGoYBM5M"
-```
-
-#### output files
-
-when exporting, the following files are created in the export directory:
-
-- `playlists.csv`: playlist metadata (name, description, owner, track count, etc.)
-- `playlist_tracks.csv`: all tracks from all playlists (includes duplicates if a track appears in multiple playlists)
-- `liked_songs.csv`: all your liked/saved tracks
-- `spotify_manifest.csv`: deduplicated master list of all unique tracks from playlists + liked songs
-- `spotify_manifest_urls.txt`: plain text file with spotify urls (one per line) for use with the download module
+- `playlists.csv` - playlist metadata
+- `playlist_tracks.csv` - all playlist tracks (with cross-playlist duplicates)
+- `liked_songs.csv` - saved tracks
+- `spotify_manifest.csv` - deduplicated master track list (fuzzy match collapses remasters/regional versions, keeping the most popular)
+- `spotify_manifest_urls.txt` - track urls, one per line, for `download`
 
 ## download music
 
-the `download` module allows you to download music from spotify urls (tracks, albums, playlists, etc.) using spotdl.
-
-### supported input formats
-
-the download module accepts the following as input (`--url-file` or `-u`):
-
-- **text files (.txt)**: one spotify url per line
-- **csv files (.csv)**: must contain a column named `spotify_url` (case-sensitive)
-- **directories**: processes all `.csv` files in the directory (non-recursive), each must have a `spotify_url` column
-
-### usage
-
-#### basic usage
+downloads from spotify urls (tracks, albums, playlists) via spotdl. `--url-file` accepts a `.txt` (one url per line), a `.csv` (must have a `spotify_url` column), or a directory of `.csv` files.
 
 ```bash
-# using the default url file (export/spotify_manifest_urls.txt)
-download
-
-# specifying a custom url file
+download                                            # export/spotify_manifest_urls.txt
 download -u path/to/urls.txt
-
-# specifying an output directory
-download -u path/to/urls.txt -o /path/to/output
-
-# processing a directory of csv files (e.g., your export folder)
-download -u /path/to/export/directory
+download -u /path/to/export/directory -o /path/to/music
+download -u path/to/urls.txt --batch-size 25        # urls per spotdl call (default 1)
+download -u path/to/urls.txt --pre-skip-existing    # skip tracks already in the library (needs csv metadata)
+download -u path/to/urls.txt --validate-only        # check existence without downloading
 ```
 
-#### batch processing
+options:
 
-to improve performance, you can process multiple urls in each spotdl call (avoids restarting spotdl for each url):
+- `--format` (default mp3), `--bitrate` (default 320k)
+- `--overwrite-errors` - re-download files that errored previously
+- `--skip-existing` - pass `--skip-existing` through to spotdl
+- `--verbose` - verbose spotdl output
+- `-o, --output` - output directory (default: library root)
+
+urls are deduplicated preserving first-seen order. spotdl's exit code is unreliable - it returns 0 even when nothing downloads - so output is scanned for soft/hard failure markers and logged to `failed_downloads.txt` / `soft_failures.txt`.
+
+## retry failed downloads
+
+compiles `soft_failures.txt` + `failed_downloads.txt` into a single `retry_list.txt` of bare urls (one per line, ready for `download -u`), filtered against what's already in the library so you only retry what's still missing.
 
 ```bash
-# process 10 urls per batch (adjust based on command line length limits)
-download -u path/to/urls.txt --batch-size 10
-
-# for large exports, try 20-50
-download -u export/spotify_manifest_urls.txt --batch-size 30
+retry                                             # retry_list.txt, drop unavailable, check vs library
+retry --include-unavailable                       # keep track_unavailable too
+retry --no-check                                   # combine + dedupe without the library check
+retry --metadata <export-dir-or-csv> --library <music-root>
+retry --report-csv manual_hunt.csv                 # named + sorted manual-hunt sheet (see below)
+retry -o retry_list.txt -v                         # custom output + print grouped breakdown
 ```
 
-#### validation only
+urls are deduped across and within both files (a track can fail soft, then hard, many times); reasons are unioned per url. `track_unavailable` (hard) is excluded by default - those tracks are gone. the existence check reuses `download`'s exact matching path (export CSV metadata → predicted spotDL filename → normalized library index), so `retry_list.txt` is consistent with what `download --pre-skip-existing` would itself skip. falls back to combining everything if the export CSVs aren't found; pass `--metadata` to point at them (needs CSVs with `track_name` + `artist_names` columns).
 
-verify urls without downloading:
+typical flow: run `download -u retry_list.txt`, then re-run `retry` - the library check drops whatever the retry round just succeeded on, so the next `retry_list.txt` is only what's still missing.
 
-```bash
-download -u path/to/urls.txt --validate-only
-```
+output categories (`-v` shows the urls): already on disk (skipped), no metadata (kept - can't predict a filename, spotDL re-checks), hard excluded, and the retry list. then: `download -u retry_list.txt`.
 
-#### additional options
+`--report-csv` writes the remaining tracks to a manual-hunt sheet - one row per still-missing track with `artist, track, album, reason, spotify_url, search` (the `search` column is a clickable YouTube results link), sorted by artist → album → track so you can source them by hand. needs the same export CSVs as the existence check (names come from there).
 
-- `--format`: audio format (default: mp3)
-- `--bitrate`: audio bitrate (default: 320k)
-- `--overwrite-errors`: re-download files that had errors in previous attempts
-- `--skip-existing`: skip files that already exist in output directory
-- `--verbose`: enable verbose output from spotdl
+## soundcloud
 
-## download from soundcloud
-
-the `soundcloud` command downloads a single track, set/playlist, or album from a soundcloud url using yt-dlp (which ships a first-class SoundCloud extractor). unlike the spotdl `download` command, this takes one url directly -- no url file or batching -- and yt-dlp walks a playlist/set url itself.
-
-### usage
+downloads a single track, set/playlist, or album from a soundcloud url via yt-dlp. takes one url directly - yt-dlp walks a playlist/set itself.
 
 ```bash
-# single track
 soundcloud "https://soundcloud.com/artist/track"
-
-# a set / playlist (drops into a "Set Name/" subfolder, tracks numbered)
-soundcloud "https://soundcloud.com/artist/sets/my-set"
-
-# an album
-soundcloud "https://soundcloud.com/artist/albums/my-album"
-
-# specify an output directory (default: library root, same as `download`)
-soundcloud -o /path/to/music "https://soundcloud.com/artist/track"
-
-# keep the original audio container instead of transcoding to mp3
-soundcloud -f best "https://soundcloud.com/artist/track"
-
-# list the tracks in a set/album without downloading (playlist preview)
-soundcloud -m "https://soundcloud.com/artist/sets/my-set"
+soundcloud "https://soundcloud.com/artist/sets/my-set"     # set → "Set Name/NN - Uploader - Title.ext"
+soundcloud -o /path/to/music "https://..."                 # custom output (default: library root)
+soundcloud -f best "https://..."                           # keep original container, no transcode
+soundcloud -m "https://soundcloud.com/artist/sets/my-set"  # list tracks without downloading
 ```
 
-### options
+options:
 
-- `url`: soundcloud track, set/playlist, or album url (positional)
-- `-o, --output`: output directory (default: library root, via `archive_path` or `~/music/tapebuilding`)
-- `-f, --format`: transcode target audio format -- `mp3` (default), `m4a`, `opus`, `vorbis`, `wav`, `flac`, `alac`, `aac`, or `best` (keep original container, no transcode)
-- `-q, --audio-quality`: transcoding quality, 0 (best) to 10 (worst) on yt-dlp's scale (default: 0)
-- `--no-thumbnail`: do not embed the cover-art thumbnail
-- `--overwrite`: re-download files that already exist (default: skip existing)
-- `-v, --verbose`: enable verbose yt-dlp output
-- `-m, --metadata-only`: list the tracks in the url without downloading (playlist preview)
-- `--cookies-from-browser`: browser to read soundcloud cookies from (e.g. `chrome`); needed for soundcloud go+ and some restricted tracks
-- `--ffmpeg`: path to ffmpeg (default: `ffmpeg_path` env var, then system path)
+- `-o, --output` - output directory (default: library root)
+- `-f, --format` - `mp3` (default), `m4a`, `opus`, `vorbis`, `wav`, `flac`, `alac`, `aac`, or `best` (no transcode)
+- `-q, --audio-quality` - 0 (best) to 10 (worst), default 0
+- `--no-thumbnail` - don't embed cover art
+- `--overwrite` - re-download existing files (default: skip)
+- `-v, --verbose` - verbose yt-dlp output
+- `-m, --metadata-only` - list tracks without downloading
+- `--cookies-from-browser` - browser for soundcloud cookies (e.g. `chrome`); needed for go+ / restricted tracks
+- `--ffmpeg` - ffmpeg path (default: `ffmpeg_path` env var, then system path)
 
-### notes
+filenames follow `Uploader - Title.ext` (singles) or `Set Name/NN - Uploader - Title.ext` (sets/albums), so they sit alongside spotdl downloads in the same library root. soundcloud's metadata is sparser than spotify's - you reliably get uploader, title, duration, cover, but usually not album/track number/release date (except on sets).
 
-- metadata (title, artist/uploader, cover) is embedded with `--embed-metadata --embed-thumbnail`, analogous to spotdl. soundcloud's metadata is sparser than spotify's -- you reliably get uploader, title, duration, and cover, but usually not album / track number / release date (except on sets, which provide an album name and playlist index)
-- filenames follow `Uploader - Title.ext` for singles and `Set Name/NN - Uploader - Title.ext` for set/album tracks, so they sit alongside your spotdl downloads in the same library root
-- transcoding to mp3 requires ffmpeg; `--ffmpeg` or the `ffmpeg_path` env var overrides the system path lookup
-- if the `soundcloud` command isn't available after `uv sync`, run it as `python -m download.soundcloud_downloader ...` in the meantime
+## organize with beets
 
-## complete workflow
-
-here's the recommended full workflow for maintaining your music library with tapebuilding:
-
-### 1. initial setup
+two-pass beets importer (`organize/beets_import.py`): pass 1 imports multi-track albums to `albums/Artist - Album/`, pass 2 imports remaining loose tracks as singletons to `singles/Artist - Title`.
 
 ```bash
-# clone the repository and set up the environment
-git clone <repository-url>
-cd tapebuilding
-uv sync  # creates virtual environment and installs dependencies
+uv run python -m organize.beets_import -i <input> -o <output>
+uv run python -m organize.beets_import -i <input> -o <output> --dry-run
+uv run python -m organize.beets_import -i <input> -o <output> --pass albums   # or --pass singles
+uv run python -m organize.beets_import --export-csv                             # dump library to csv
 ```
 
-### 2. export your spotify data
+the `normalize_artists` beets plugin (`organize/normalize_artists.py`) rewrites artist strings to a consistent `"A, B & C"` form at import (handles `feat.`/`ft.`, collab `x`, `and`). enable it via `config.yaml`'s `plugins` list + `pluginpath`.
 
-```bash
-# activate the virtual environment (if not already activated)
-# windows: .venv\Scripts\activate
-# bash: source .venv/bin/activate
+## environment variables
 
-# export all your spotify data (playlists, liked songs, etc.)
-export --all
+set in `.env` (see `.env.example`):
 
-# optional: export only your own playlists
-# export --mine
-
-# files will be created in the export/ directory by default
-# key files: spotify_manifest.csv and spotify_manifest_urls.txt
-```
-
-### 3. validate your urls (recommended)
-
-```bash
-# check that all urls are valid and accessible
-download --validate-only
-
-# or validate a specific file
-download -u export/spotify_manifest_urls.txt --validate-only
-```
-
-### 4. download your music
-
-```bash
-# download using the default manifest (export/spotify_manifest_urls.txt)
-# using batch size of 25 for good performance
-download --batch-size 25
-
-# specify custom output directory
-download -o /path/to/music/library --batch-size 25
-
-# process a specific playlist csv
-download -u export/playlist_my-favorites.csv --batch-size 10
-```
-
-### 5. verify and organize
-
-after downloading, you can:
-
-- check the output directory for your downloaded music files
-- use your preferred music organizing tools to sort by artist/album/genre
-- create backups of your music library
-
-### maintenance / updates
-
-to keep your library up to date with new music:
-
-```bash
-# repeat steps 2-4 periodically (weekly/monthly)
-# the download process will skip existing files by default (unless --overwrite-errors is used)
-# to only get new music, you can:
-# 1. export again to get updated url lists
-# 2. run download with --skip-existing to avoid re-downloading existing files
-
-# example monthly update:
-export --all
-download --batch-size 25 --skip-existing
-```
-
-### environment variables
-
-you can set the following in your `.env` file:
-
-- `archive_path`: default output directory for downloads (defaults to `~/music/tapebuilding`)
-- `ffmpeg_path`: path to ffmpeg executable (if not in your system path)
-- `spotify_client_id`: your spotify api client id
-- `spotify_client_secret`: your spotify api client secret
-- `spotify_user_id`: your spotify user id
-- `spotify_redirect_uri`: redirect uri for spotify auth (default: http://127.0.0.1:8888/callback)
-
-### notes
-
-- the download process automatically removes duplicate urls while preserving the order of first appearance
-- when processing a directory, all `.csv` files are read (non-recursive)
-- csv files must contain a column named `spotify_url` (exact case match)
+- `archive_path` - default download/library root (default `~/music/tapebuilding`)
+- `ffmpeg_path` - ffmpeg executable if not on `PATH`
+- `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_USER_ID` - spotify api creds
+- `SPOTIFY_REDIRECT_URI` - oauth redirect (default `http://127.0.0.1:8888/callback`)
+- `FIREBASE_PROJECT_ID`, `FIREBASE_CREDENTIALS_PATH` - for the soundbyte album export (`download/soundbyte_albums.py`)

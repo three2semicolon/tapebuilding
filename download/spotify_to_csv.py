@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""
-export Spotify playlists and liked songs to CSV files.
-"""
+"""export spotify playlists + liked songs to csv, and build a deduplicated
+manifest of track urls for `download`."""
 
 import argparse
 import os
@@ -18,12 +17,6 @@ from .spotify_utils import (
 )
 
 def extract_playlist_id_from_url(url):
-    """extract playlist ID from a Spotify playlist URL.
-
-    formats like:
-    https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M
-    spotify:playlist:37i9dQZF1DXcBWIGoYBM5M
-    """
     if 'open.spotify.com/playlist/' in url:
         return url.split('open.spotify.com/playlist/')[1].split('?')[0]
     elif url.startswith('spotify:playlist:'):
@@ -32,7 +25,6 @@ def extract_playlist_id_from_url(url):
         return url
 
 def export_specific_playlist(sp, playlist_identifier, export_dir):
-    """export a specific playlist by URL or ID."""
     print(f"exporting playlist: {playlist_identifier}")
 
     playlist_id = extract_playlist_id_from_url(playlist_identifier)
@@ -55,7 +47,7 @@ def export_specific_playlist(sp, playlist_identifier, export_dir):
         with open(txt_filepath, 'w', encoding='utf-8') as f:
             for track in tracks:
                 f.write(track.get('spotify_url', '') + '\n')
-        print(f"exported {len(tracks)} Spotify URLs to {txt_filepath}")
+        print(f"exported {len(tracks)} spotify urls to {txt_filepath}")
 
         return tracks
 
@@ -65,7 +57,6 @@ def export_specific_playlist(sp, playlist_identifier, export_dir):
 
 
 def export_all_data(sp, export_dir, my_playlists_only=False):
-    """export all playlists and liked songs (the original functionality)."""
     print("starting full Spotify export...")
 
     user = sp.current_user()
@@ -104,21 +95,20 @@ def export_all_data(sp, export_dir, my_playlists_only=False):
     print("- playlist_tracks.csv: all tracks from playlists (with duplicates)")
     print("- liked_songs.csv: all liked/saved tracks")
     print("- spotify_manifest.csv: deduplicated master manifest")
-    print("- spotify_manifest_urls.txt: spotify URLs for spotDL input")
+    print("- spotify_manifest_urls.txt: spotify urls for spotdl input")
 
     return manifest_tracks
 
 def main():
-    """cli."""
-    parser = argparse.ArgumentParser(description='Export Spotify data for tapebuilding project')
+    parser = argparse.ArgumentParser(description='export spotify data for the tapebuilding project')
     parser.add_argument('--playlist', '-p', type=str,
-                        help='Export specific playlist by URL or ID (e.g., "https://open.spotify.com/playlist/..." or "37i9dQZF1DXcBWIGoYBM5M")')
+                        help='export a specific playlist by url or id (e.g. "https://open.spotify.com/playlist/..." or "37i9dQZF1DXcBWIGoYBM5M")')
     parser.add_argument('--output', '-o', type=str,
-                        help='Output directory for CSV files (defaults to ./export/)')
+                        help='output directory for csv files (defaults to ./export/)')
     parser.add_argument('--all', '-a', action='store_true',
-                        help='Export all playlists and liked songs (default behavior)')
+                        help='export all playlists and liked songs (default)')
     parser.add_argument('--mine', action='store_true',
-                        help='Export only your own playlists (not followed/shared playlists)')
+                        help='export only your own playlists (not followed/shared)')
 
     args = parser.parse_args()
 
@@ -132,14 +122,12 @@ def main():
             export_dir = get_export_dir()
 
         if args.playlist:
-            # Export specific playlist
             export_specific_playlist(sp, args.playlist, export_dir)
         else:
-            # Export all data (default)
             export_all_data(sp, export_dir, my_playlists_only=args.mine)
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"error: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""
-shared functionality for authenticating with Spotify and fetching playlist/track data.
-"""
 
 import os
+import re
 import csv
 import json
 from datetime import datetime
@@ -20,7 +18,6 @@ SPOTIFY_USER_ID = os.getenv('SPOTIFY_USER_ID')
 
 
 def authenticate_spotify():
-    """authenticate with spotify and return spotipy client."""
     if not all([SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET]):
         raise ValueError("spotify credentials not found, set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in .env")
 
@@ -38,7 +35,6 @@ def authenticate_spotify():
 
 
 def get_user_playlists(sp, my_playlists_only=False):
-    """get all playlists for the current user."""
     print("fetching user playlists...")
     playlists = []
     results = sp.current_user_playlists(limit=50)
@@ -49,7 +45,7 @@ def get_user_playlists(sp, my_playlists_only=False):
             current_user = sp.current_user()
             current_user_id = current_user.get('id')
         except Exception as e:
-            print(f"warning: could not get current user ID for filtering: {e}")
+            print(f"warning: could not get current user id for filtering: {e}")
             current_user_id = None
 
     while results:
@@ -81,7 +77,6 @@ def get_user_playlists(sp, my_playlists_only=False):
 
 
 def get_playlist_tracks(sp, playlist_id, playlist_name):
-    """get all tracks from a specific playlist."""
     print(f"  fetching tracks from playlist: {playlist_name}")
     tracks = []
     results = sp.playlist_tracks(playlist_id, limit=100)
@@ -139,7 +134,6 @@ def get_playlist_tracks(sp, playlist_id, playlist_name):
 
 
 def get_liked_songs(sp):
-    """get all liked/saved tracks for the user."""
     print("fetching liked songs...")
     tracks = []
     results = sp.current_user_saved_tracks(limit=50)
@@ -197,8 +191,6 @@ def get_liked_songs(sp):
 
 
 def _normalize_title(s):
-    """normalize a string for fuzzy title dedup."""
-    import re
     s = s.lower()
     s = re.sub(r'\s*(feat\.?|ft\.?|featuring)\s+.*', '', s)
     s = re.sub(r'\s*\(.*?\)', '', s)
@@ -208,7 +200,6 @@ def _normalize_title(s):
 
 
 def _fuzzy_key(track):
-    """normalized primary-artist + title key for cross-ID duplicate detection."""
     artists = track.get('artist_names', '')
     primary = artists.split(',')[0].strip() if artists else ''
     title = track.get('track_name', '')
@@ -216,8 +207,9 @@ def _fuzzy_key(track):
 
 
 def merge_and_deduplicate(playlists_data, liked_songs_data):
-    """merge all track data and deduplicate by spotify track ID, then by
-    normalized artist+title to catch remasters/regional duplicates."""
+    """two-pass: dedup by spotify track id, then by normalized primary-artist + title
+    to collapse remasters/regional versions; on a fuzzy collision keep the more
+    popular track as the canonical download url."""
     print("merging and deduplicating tracks...")
 
     all_tracks = playlists_data + liked_songs_data
@@ -243,7 +235,6 @@ def merge_and_deduplicate(playlists_data, liked_songs_data):
                 if playlist_id_val:
                     track_dict[track_id]['playlist_ids'].append(playlist_id_val)
 
-    # first-pass results keyed by track_id
     id_deduped = []
     for track_id, track_data in track_dict.items():
         id_deduped.append({
@@ -260,9 +251,8 @@ def merge_and_deduplicate(playlists_data, liked_songs_data):
             'spotify_url': track_data.get('spotify_url', '')
         })
 
-    # second-pass: fuzzy dedup by normalized primary-artist + title
-    # when two track IDs resolve to the same song (remaster, regional version, etc.)
-    # keep the one with higher popularity as the canonical download URL
+    # second pass: fuzzy dedup by primary-artist + title; on collision, merge the
+    # dropped track's playlist memberships into the keeper
     fuzzy_dict = {}
     for track in id_deduped:
         key = _fuzzy_key(track)
@@ -271,7 +261,6 @@ def merge_and_deduplicate(playlists_data, liked_songs_data):
         else:
             existing = fuzzy_dict[key]
             if track.get('popularity', 0) > existing.get('popularity', 0):
-                # merge playlist membership from the dropped duplicate into the keeper
                 existing_playlists = set(existing.get('playlist_names', '').split('; '))
                 new_playlists = set(track.get('playlist_names', '').split('; '))
                 merged = sorted([p for p in existing_playlists | new_playlists if p])
@@ -279,7 +268,6 @@ def merge_and_deduplicate(playlists_data, liked_songs_data):
                 track['playlist_count'] = len(merged)
                 fuzzy_dict[key] = track
             else:
-                # keep existing but absorb the new playlist names
                 existing_playlists = set(existing.get('playlist_names', '').split('; '))
                 new_playlists = set(track.get('playlist_names', '').split('; '))
                 merged = sorted([p for p in existing_playlists | new_playlists if p])
@@ -296,20 +284,12 @@ def merge_and_deduplicate(playlists_data, liked_songs_data):
 
 
 def export_to_csv(data, filename, export_dir):
-    """export data to CSV file."""
     if not data:
         print(f"no data to export for {filename}")
         return
 
     filepath = os.path.join(export_dir, filename)
-    if not data:
-        return
-
-    if data and len(data) > 0:
-        fieldnames = data[0].keys()
-    else:
-        return
-
+    fieldnames = data[0].keys()
     with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
@@ -319,7 +299,6 @@ def export_to_csv(data, filename, export_dir):
 
 
 def export_manifest_as_txt(tracks, export_dir):
-    """export manifest as TXT file with Spotify URLs for spotDL."""
     txt_filepath = os.path.join(export_dir, 'spotify_manifest_urls.txt')
 
     with open(txt_filepath, 'w', encoding='utf-8') as f:
@@ -329,11 +308,10 @@ def export_manifest_as_txt(tracks, export_dir):
                 f.write(spotify_url + '\n')
 
     url_count = len([t for t in tracks if t.get('spotify_url', '')])
-    print(f"exported {url_count} Spotify URLs to {txt_filepath}")
+    print(f"exported {url_count} spotify urls to {txt_filepath}")
 
 
 def get_export_dir(base_dir=None):
-    """get or create the export directory."""
     if base_dir is None:
         base_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'export')
 
