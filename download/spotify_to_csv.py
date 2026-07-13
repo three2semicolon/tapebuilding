@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """export spotify playlists + liked songs to csv, and build a deduplicated
-manifest of track urls for `download`."""
+manifest of track urls for `spotify`."""
 
 import argparse
 import os

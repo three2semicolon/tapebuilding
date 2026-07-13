@@ -29,7 +29,7 @@ def _resolve_output_dir(output_dir, create=True):
     return final
 
 
-def download_soundcloud(url, output_dir=None, audio_format='mp3', audio_quality='0',
+def download_ytdl(url, output_dir=None, audio_format='mp3', audio_quality='0',
                         embed_thumbnail=True, overwrite=False, verbose=False,
                         metadata_only=False, cookies_from_browser=None, ffmpeg_path=None):
     try:
@@ -109,7 +109,8 @@ def download_soundcloud(url, output_dir=None, audio_format='mp3', audio_quality=
 
 def main():
     parser = argparse.ArgumentParser(
-        description='download a track, set/playlist, or album from soundcloud using yt-dlp'
+        description='download a track, set/playlist, or album from any yt-dlp-supported '
+                    'source (soundcloud, youtube, ...) via yt-dlp'
     )
     parser.add_argument('url', type=str)
     parser.add_argument('-o', '--output', type=str)
@@ -125,7 +126,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        success = download_soundcloud(
+        success = download_ytdl(
             url=args.url,
             output_dir=args.output,
             audio_format=args.format,

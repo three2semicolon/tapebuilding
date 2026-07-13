@@ -4,11 +4,11 @@ building and managing my personal music library.
 
 ## overview
 
-tools for managing a personal music library:
+tools:
 
 - export spotify playlists and liked songs to csv
 - download music from spotify urls via spotdl
-- download from soundcloud via yt-dlp
+- download from soundcloud, youtube, etc. via yt-dlp
 - organize downloads with beets
 
 ## install
@@ -19,7 +19,7 @@ cd tapebuilding
 uv sync
 ```
 
-installs the `export`, `download`, and `soundcloud` commands in editable mode.
+installs the `export`, `spotify`, and `ytdl` commands in editable mode.
 
 ## export spotify data
 
@@ -36,19 +36,19 @@ outputs (in the export directory):
 - `playlist_tracks.csv` - all playlist tracks (with cross-playlist duplicates)
 - `liked_songs.csv` - saved tracks
 - `spotify_manifest.csv` - deduplicated master track list (fuzzy match collapses remasters/regional versions, keeping the most popular)
-- `spotify_manifest_urls.txt` - track urls, one per line, for `download`
+- `spotify_manifest_urls.txt` - track urls, one per line, for `spotify`
 
-## download music
+## download music from spotify
 
 downloads from spotify urls (tracks, albums, playlists) via spotdl. `--url-file` accepts a `.txt` (one url per line), a `.csv` (must have a `spotify_url` column), or a directory of `.csv` files.
 
 ```bash
-download                                            # export/spotify_manifest_urls.txt
-download -u path/to/urls.txt
-download -u /path/to/export/directory -o /path/to/music
-download -u path/to/urls.txt --batch-size 25        # urls per spotdl call (default 1)
-download -u path/to/urls.txt --pre-skip-existing    # skip tracks already in the library (needs csv metadata)
-download -u path/to/urls.txt --validate-only        # check existence without downloading
+spotify                                            # export/spotify_manifest_urls.txt
+spotify -u path/to/urls.txt
+spotify -u /path/to/export/directory -o /path/to/music
+spotify -u path/to/urls.txt --batch-size 25        # urls per spotdl call (default 1)
+spotify -u path/to/urls.txt --pre-skip-existing    # skip tracks already in the library (needs csv metadata)
+spotify -u path/to/urls.txt --validate-only        # check existence without downloading
 ```
 
 options:
@@ -63,7 +63,7 @@ urls are deduplicated preserving first-seen order. spotdl's exit code is unrelia
 
 ## retry failed downloads
 
-compiles `soft_failures.txt` + `failed_downloads.txt` into a single `retry_list.txt` of bare urls (one per line, ready for `download -u`), filtered against what's already in the library so you only retry what's still missing.
+compiles `soft_failures.txt` + `failed_downloads.txt` into a single `retry_list.txt` of bare urls (one per line, ready for `spotify -u`), filtered against what's already in the library so you only retry what's still missing.
 
 ```bash
 retry                                             # retry_list.txt, drop unavailable, check vs library
@@ -74,24 +74,24 @@ retry --report-csv manual_hunt.csv                 # named + sorted manual-hunt 
 retry -o retry_list.txt -v                         # custom output + print grouped breakdown
 ```
 
-urls are deduped across and within both files (a track can fail soft, then hard, many times); reasons are unioned per url. `track_unavailable` (hard) is excluded by default - those tracks are gone. the existence check reuses `download`'s exact matching path (export CSV metadata → predicted spotDL filename → normalized library index), so `retry_list.txt` is consistent with what `download --pre-skip-existing` would itself skip. falls back to combining everything if the export CSVs aren't found; pass `--metadata` to point at them (needs CSVs with `track_name` + `artist_names` columns).
+urls are deduped across and within both files (a track can fail soft, then hard, many times); reasons are unioned per url. `track_unavailable` (hard) is excluded by default - those tracks are gone. the existence check reuses `spotify`'s exact matching path (export CSV metadata → predicted spotDL filename → normalized library index), so `retry_list.txt` is consistent with what `spotify --pre-skip-existing` would itself skip. falls back to combining everything if the export CSVs aren't found; pass `--metadata` to point at them (needs CSVs with `track_name` + `artist_names` columns).
 
-typical flow: run `download -u retry_list.txt`, then re-run `retry` - the library check drops whatever the retry round just succeeded on, so the next `retry_list.txt` is only what's still missing.
+typical flow: run `spotify -u retry_list.txt`, then re-run `retry` - the library check drops whatever the retry round just succeeded on, so the next `retry_list.txt` is only what's still missing.
 
-output categories (`-v` shows the urls): already on disk (skipped), no metadata (kept - can't predict a filename, spotDL re-checks), hard excluded, and the retry list. then: `download -u retry_list.txt`.
+output categories (`-v` shows the urls): already on disk (skipped), no metadata (kept - can't predict a filename, spotDL re-checks), hard excluded, and the retry list. then: `spotify -u retry_list.txt`.
 
 `--report-csv` writes the remaining tracks to a manual-hunt sheet - one row per still-missing track with `artist, track, album, reason, spotify_url, search` (the `search` column is a clickable YouTube results link), sorted by artist → album → track so you can source them by hand. needs the same export CSVs as the existence check (names come from there).
 
-## soundcloud
+## download from yt-dlp
 
-downloads a single track, set/playlist, or album from a soundcloud url via yt-dlp. takes one url directly - yt-dlp walks a playlist/set itself.
+downloads a single track, set/playlist, or album from any yt-dlp-supported url (soundcloud, youtube, etc.) via yt-dlp. takes one url directly - yt-dlp walks a playlist/set itself.
 
 ```bash
-soundcloud "https://soundcloud.com/artist/track"
-soundcloud "https://soundcloud.com/artist/sets/my-set"     # set → "Set Name/NN - Uploader - Title.ext"
-soundcloud -o /path/to/music "https://..."                 # custom output (default: library root)
-soundcloud -f best "https://..."                           # keep original container, no transcode
-soundcloud -m "https://soundcloud.com/artist/sets/my-set"  # list tracks without downloading
+ytdl "https://soundcloud.com/artist/track"
+ytdl "https://soundcloud.com/artist/sets/my-set"     # set → "Set Name/NN - Uploader - Title.ext"
+ytdl -o /path/to/music "https://..."                 # custom output (default: library root)
+ytdl -f best "https://..."                           # keep original container, no transcode
+ytdl -m "https://soundcloud.com/artist/sets/my-set"  # list tracks without downloading
 ```
 
 options:
@@ -103,10 +103,10 @@ options:
 - `--overwrite` - re-download existing files (default: skip)
 - `-v, --verbose` - verbose yt-dlp output
 - `-m, --metadata-only` - list tracks without downloading
-- `--cookies-from-browser` - browser for soundcloud cookies (e.g. `chrome`); needed for go+ / restricted tracks
+- `--cookies-from-browser` - browser to read cookies from (e.g. `chrome`); needed for go+ / restricted tracks on soundcloud and other sources
 - `--ffmpeg` - ffmpeg path (default: `ffmpeg_path` env var, then system path)
 
-filenames follow `Uploader - Title.ext` (singles) or `Set Name/NN - Uploader - Title.ext` (sets/albums), so they sit alongside spotdl downloads in the same library root. soundcloud's metadata is sparser than spotify's - you reliably get uploader, title, duration, cover, but usually not album/track number/release date (except on sets).
+filenames follow `Uploader - Title.ext` (singles) or `Set Name/NN - Uploader - Title.ext` (sets/albums), so they sit alongside spotdl downloads in the same library root. yt-dlp's metadata is sparser than spotdl's - you reliably get uploader, title, duration, cover, but usually not album/track number/release date (varies by source; soundcloud sets include them).
 
 ## organize with beets
 

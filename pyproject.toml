@@ -23,8 +23,8 @@ packages = ["download", "organize"]
 
 [project.scripts]
 export = "download.spotify_to_csv:main"
-download = "download.download_music:main"
-soundcloud = "download.soundcloud_downloader:main"
+spotify = "download.download_spotify:main"
+ytdl = "download.yt_dlp_downloader:main"
 retry = "download.retry_failures:main"
 cleanup = "organize.cleanup:main"
 soundbyte = "download.soundbyte_albums:main"

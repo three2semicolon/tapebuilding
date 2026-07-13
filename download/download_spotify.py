@@ -87,7 +87,7 @@ def _check_existing(urls, metadata, output_dir, fmt):
     return existing, new + no_meta, no_meta, library_root, library_index
 
 
-def download_music(url_file, output_dir=None, format='mp3', bitrate='320k',
+def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
                    overwrite_errors=False, skip_existing=False, verbose=False,
                    validate_only=False, batch_size=1, pre_skip_existing=False):
     print(f"processing spotify source: {url_file}")
@@ -327,7 +327,7 @@ def main():
         print(f"using default url file: {url_file}")
 
     try:
-        success = download_music(
+        success = download_spotify(
             url_file=url_file,
             output_dir=args.output,
             format=args.format,

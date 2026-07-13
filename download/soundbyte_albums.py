@@ -16,8 +16,8 @@ tracks and outputs a track-level manifest:
   soundbyte_track_urls.txt    spotify track urls (one per line)
 
 spotdl accepts album urls directly, so for a plain download you can skip
-expansion and feed soundbyte_album_urls.txt straight to `download`. the only
-reason to expand first is to run `download --pre-skip-existing` against your
+expansion and feed soundbyte_album_urls.txt straight to `spotify`. the only
+reason to expand first is to run `spotify --pre-skip-existing` against your
 library - that flag predicts `artist - title.mp3` filenames from the csv's
 track metadata, and the album-url text file has no track metadata, so its
 existence check skips nothing. the expanded track csv has that metadata.
@@ -48,7 +48,7 @@ load_dotenv()
 DEFAULT_LIMIT = 200
 
 # columns of spotify_manifest.csv - the track-level csv we expand into must
-# match this exactly so download_music's --pre-skip-existing can read
+# match this exactly so download_spotify's --pre-skip-existing can read
 # track_name/artist_names and predict `artist - title.mp3` filenames.
 MANIFEST_FIELDS = [
     'track_id', 'track_name', 'artist_names', 'album_name',
@@ -300,7 +300,7 @@ def expand_albums_to_tracks(albums, delay=0.3):
 
 def export_tracks(track_rows, output_dir):
     """write the track-level manifest (spotify_manifest.csv columns) + a txt of
-    track urls. feed the csv - not the txt - to `download --pre-skip-existing`;
+    track urls. feed the csv - not the txt - to `spotify --pre-skip-existing`;
     the txt has no track metadata, so its existence check would skip nothing."""
     os.makedirs(output_dir, exist_ok=True)
 
@@ -336,7 +336,7 @@ def main():
     parser.add_argument('--expand-albums', action='store_true',
                         help='also expand each spotify album into its tracks and write '
                              'soundbyte_tracks.csv (spotify_manifest.csv format) for use '
-                             'with download --pre-skip-existing')
+                             'with spotify --pre-skip-existing')
     args = parser.parse_args()
 
     try:

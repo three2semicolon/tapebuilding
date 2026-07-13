@@ -6,19 +6,19 @@ optionally write a manual-hunt csv (--report-csv) of the remaining tracks with
 artist, track, album, failure reason, the spotify url, and a clickable search
 link, so you can source the stubborn ones by hand.
 
-the failure logs are written by download_music._log_urls as `url  # reason` (or a
+the failure logs are written by download_spotify._log_urls as `url  # reason` (or a
 bare `url`), and a track can show up multiple times across/within both files -
 sometimes as a soft reason (e.g. LookupError) and later as track_unavailable. so
 urls are deduped and their reasons unioned; if track_unavailable appears for a
 url at all it's treated as hard (genuinely gone) and excluded unless
 --include-unavailable.
 
-the existence check reuses download_music's exact matching path: read export csvs
+the existence check reuses download_spotify's exact matching path: read export csvs
 for url -> (artist, track) metadata, predict the spotdl filename, normalize, and
 look it up in the library index. matching this path keeps `retry_list.txt`
-consistent with what `download --pre-skip-existing` would itself skip.
+consistent with what `spotify --pre-skip-existing` would itself skip.
 
-typical flow: run `download -u retry_list.txt`, then re-run this command - the
+typical flow: run `spotify -u retry_list.txt`, then re-run this command - the
 library check drops whatever the retry round just succeeded on, so the retry
 list (and any --report-csv) reflects only what's still missing.
 """
@@ -34,7 +34,7 @@ from collections import OrderedDict
 
 from dotenv import load_dotenv
 
-from download.download_music import _predict_output_filename
+from download.download_spotify import _predict_output_filename
 from download.spotify_utils import get_export_dir
 from organize.library import resolve_library_root, build_library_index, _normalize
 
@@ -85,9 +85,9 @@ def _collect_urls(*paths):
 
 def _read_full_metadata_from_file(csv_path):
     """read one csv into url -> {artist, track, album}; first-seen wins per file.
-    mirrors download_music._read_csv_metadata_from_file (same sniffer, same
+    mirrors download_spotify._read_csv_metadata_from_file (same sniffer, same
     track_name + artist_names gate, same first-seen rule) but keeps album_name too,
-    so the existence check stays byte-identical to `download --pre-skip-existing`
+    so the existence check stays byte-identical to `spotify --pre-skip-existing`
     while the report also gets an album column."""
     rows = {}
     try:
@@ -115,7 +115,7 @@ def _read_full_metadata_from_file(csv_path):
 
 def _read_full_metadata(source):
     """read export csv(s) into url -> {artist, track, album}; first-seen wins across
-    files (mirrors download_music._read_csv_metadata). returns None if no usable csv
+    files (mirrors download_spotify._read_csv_metadata). returns None if no usable csv
     has the track_name + artist_names columns."""
     if os.path.isdir(source):
         merged = {}
@@ -132,7 +132,7 @@ def _read_full_metadata(source):
 
 def _filter_existing(urls, metadata, library_index, fmt):
     """split urls into (retry, already_on_disk, no_metadata) using the same matching
-    path as download_music's --pre-skip-existing: predict the spotdl filename from
+    path as download_spotify's --pre-skip-existing: predict the spotdl filename from
     export csv metadata, normalize the stem, look it up in the library index."""
     retry = []
     on_disk = []
@@ -297,7 +297,7 @@ def build_retry_list(failed_path, soft_path, output_path, metadata_source,
                 print(f"  {u}  # {', '.join(combined.get(u, []))}")
 
     if retry:
-        print(f"\nnext: download -u {output_path}")
+        print(f"\nnext: spotify -u {output_path}")
     else:
         print("\nnothing to retry - all failures are unavailable or already downloaded.")
     return True
