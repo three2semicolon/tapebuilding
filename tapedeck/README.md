@@ -67,7 +67,12 @@ The inverse of load: remove the tapedeck mirror of each file the resolved spec
 would have staged, then prune the now-empty parent dirs. Playlist unload is
 refcounted — an audio file is removed only if no *other* `.m3u8` still staged under
 `tapedeck/playlists/` references it, so two playlists sharing a track don't drop it
-when one unloads. Always dry-run first.
+when one unloads. **The refcount is playlist-scope only** — it does *not* see
+album/song loads. If a track on the deck is there both because a playlist references
+it *and* because you `load album`-ed its parent independently, unloading the playlist
+removes that track and punches a hole in the album copy (the deck doesn't track which
+load staged a file). Avoid unloading a playlist whose tracks you also staged as part
+of album/song loads, or re-load the album afterward. Always dry-run first.
 
 ## flags
 
