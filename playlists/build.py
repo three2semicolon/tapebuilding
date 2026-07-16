@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """playlists - build/maintain local .m3u8 files from spotify playlists.
 
 for each spotify playlist (default: only the ones you own), resolve every track

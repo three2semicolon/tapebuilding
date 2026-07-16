@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """compile soft_failures.txt + failed_downloads.txt into a single retry list,
 filtered against the existing library so only still-missing tracks remain.
 

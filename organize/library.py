@@ -8,6 +8,14 @@ def resolve_library_root():
         or os.path.expanduser('~/music/tapebuilding')
 
 
+def resolve_tapedeck_root(cli=None):
+    """tapedeck root, from --tapedeck-path or the dual-case TAPEDECK_PATH env, with
+    the same ~/music/tapebuilding-style fallback as the crate resolve. the tapedeck is
+    a rotation subset mirrored to devices via syncthing (see tapedeck/README.md)."""
+    return cli or os.getenv('TAPEDECK_PATH') or os.getenv('tapedeck_path') \
+        or os.path.expanduser('~/music/tapedeck')
+
+
 def _normalize(s):
     s = s.lower()
     s = re.sub(r'[^\w\s]', '', s)

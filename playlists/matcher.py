@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """matcher - map a spotify track row to a local file via progressive relaxation.
 
 no ISRC is available in the exports and the library is mostly beat tapes/bootlegs

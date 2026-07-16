@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """m3u - write extended .m3u8 playlists with a spotify-id comment line.
 
 format (one entry per matched track, spotify playlist order preserved):

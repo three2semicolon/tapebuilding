@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """
 cleanup.py - reorganize the beets crate into proper albums and singles.
 

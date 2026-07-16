@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """indexer - build a local catalog of the music library for track matching.
 
 walks the crate (`ARCHIVE_PATH`) recursively, reading audio tags with mediafile,

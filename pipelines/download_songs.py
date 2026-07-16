@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """pipelines/download_songs - download, import, and refresh in one pass.
 
 stitches the three existing clis together, so the real work (and the real

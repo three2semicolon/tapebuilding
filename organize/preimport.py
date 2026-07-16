@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """
 preimport.py - stage unorganized/ so the beets importer does the right thing.
 

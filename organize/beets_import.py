@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """
 two-pass beets importer:
   pass 1 - album mode:    groups multi-track albums, moves to albums/Artist - Album/

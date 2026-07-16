@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["download", "organize", "playlists"]
+packages = ["download", "organize", "playlists", "tapedeck"]
 
 [project.scripts]
 export = "download.spotify_to_csv:main"
@@ -31,3 +31,4 @@ soundbyte = "download.soundbyte_albums:main"
 beets-import = "organize.beets_import:main"
 preimport = "organize.preimport:main"
 playlists = "playlists.build:main"
+tapedeck = "tapedeck.deck:main"
