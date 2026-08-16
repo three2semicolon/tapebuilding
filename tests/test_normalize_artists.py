@@ -1,0 +1,1 @@
+# Normalize artists tests placeholder
