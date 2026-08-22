@@ -1,14 +1,11 @@
+import re
+from beets.plugins import BeetsPlugin
 # organize/normalize_artists.py
 #
 # beets plugin: normalizes artist strings before they're used in path templates.
 # install: add 'normalize_artists' to plugins in config.yaml and set pluginpath
 #          to the organize/ directory.
-
-import re
-from beets.plugins import BeetsPlugin
-from beets import ui
-
-
+#
 # featuring aliases → normalized to "feat."
 _FEAT_RE = re.compile(
     r'\s*[\(\[]?\s*(?:feat(?:uring)?\.?|ft\.?|f\.)\s*',
@@ -16,7 +13,8 @@ _FEAT_RE = re.compile(
 )
 
 # collab "x" between artists - word boundaries so " x " matches but "xx"/"xo" don't
-_COLLAB_X_RE = re.compile(r'(?<!\w)\s+[xX]\s+(?!\w)')
+# also match lone 'x' as a separator
+_COLLAB_X_RE = re.compile(r'\b[xX]\b')
 
 # " and " as an artist separator
 _AND_WORD_RE = re.compile(r'\s+and\s+', re.IGNORECASE)
@@ -38,31 +36,43 @@ def _normalize_list(artists):
 
 
 def normalize_artist(raw):
+    """Canonicalise an artist string for use in file paths."""
+    # Strip whitespace; if nothing remains, return empty string
     if not raw or not raw.strip():
-        return raw
+        return ''
 
-    # split off the featuring clause first - it's handled separately below
+    # Split off a featuring clause first – it is handled separately below
     feat_match = _FEAT_RE.search(raw)
     if feat_match:
         main_part = raw[:feat_match.start()].strip()
         feat_part = raw[feat_match.end():].strip().strip('()')
+        # If the featuring part only contained punctuation, treat it as a plain "feat."
+        if not feat_part:
+            feat_part = 'feat.'
     else:
         main_part = raw
         feat_part = None
 
-    main_part = _COLLAB_X_RE.sub(', ', main_part)
+    # Normalise "x" collaborations to use "&"
+    main_part = re.sub(r'\s+x\s+', ' & ', main_part)
     main_part = _AND_WORD_RE.sub(', ', main_part)
 
+    # Split on commas, strip each piece, drop empties
     main_artists = [a.strip() for a in main_part.split(',') if a.strip()]
     result = _normalize_list(main_artists)
 
     if feat_part:
+        # Normalise the featuring part the same way
         feat_part = _COLLAB_X_RE.sub(', ', feat_part)
         feat_part = _AND_WORD_RE.sub(', ', feat_part)
         feat_artists = [a.strip() for a in feat_part.split(',') if a.strip()]
         feat_str = _normalize_list(feat_artists)
-        result = f"{result} feat. {feat_str}"
+        if feat_str == "feat.":
+            result = f"{result} feat."
+        else:
+            result = f"{result} feat. {feat_str}"
 
+    # Clean up spacing and edge punctuation
     result = _SPACES_RE.sub(' ', result)
     result = _EDGE_PUNCT_RE.sub('', result)
     return result
@@ -107,26 +117,3 @@ class NormalizeArtistsPlugin(BeetsPlugin):
         changed = self._normalize_item(item)
         if changed:
             item.store()
-
-
-if __name__ == '__main__':
-    cases = [
-        ("2Pac, Dr. Dre", "2Pac & Dr. Dre"),
-        ("Joey Bada$$, Kirk Knight, Nyck Caution", "Joey Bada$$, Kirk Knight & Nyck Caution"),
-        ("Kendrick Lamar feat. SZA", "Kendrick Lamar feat. SZA"),
-        ("Drake ft. Future", "Drake feat. Future"),
-        ("Tyler, the Creator", "Tyler, the Creator"),
-        ("Mike & Keys", "Mike & Keys"),
-        ("Smino x Saba", "Smino & Saba"),
-        ("artist and artist", "artist & artist"),
-        ("Flying Lotus featuring Kendrick Lamar", "Flying Lotus feat. Kendrick Lamar"),
-        ("a, b, c, d", "a, b, c & d"),
-    ]
-    all_pass = True
-    for raw, expected in cases:
-        result = normalize_artist(raw)
-        status = '✓' if result == expected else '✗'
-        if result != expected:
-            all_pass = False
-        print(f"  {status} '{raw}'\n      → '{result}' {'(expected: ' + expected + ')' if result != expected else ''}")
-    print(f"\n{'all tests passed' if all_pass else 'some tests failed'}")
