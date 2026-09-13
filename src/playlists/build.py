@@ -28,6 +28,10 @@ import sys
 from dotenv import load_dotenv
 load_dotenv()
 
+if os.name == "nt":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 from download.spotify_utils import authenticate_spotify, get_playlist_tracks
 from download.spotify_to_csv import export_all_data, extract_playlist_id_from_url
 
@@ -58,7 +62,7 @@ def _read_csv(path):
     """read a csv into a list of dicts, or [] if missing."""
     if not os.path.exists(path):
         return []
-    with open(path, 'r', encoding='utf-8', newline='') as f:
+    with open(path, 'r', encoding='utf-8-sig', newline='') as f:
         return list(csv.DictReader(f))
 
 
@@ -67,7 +71,7 @@ def _write_csv(path, rows, fields):
     (editor/scanner holding it) warns rather than aborting the build."""
     tmp = path + '.tmp'
     try:
-        with open(tmp, 'w', encoding='utf-8', newline='') as f:
+        with open(tmp, 'w', encoding='utf-8-sig', newline='') as f:
             w = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
             w.writeheader()
             w.writerows(rows)
@@ -323,7 +327,7 @@ def _write_unmatched(exports_dir, rows):
                         (txt_path, '\n'.join(urls) + ('\n' if urls else ''))):
         try:
             tmp = path + '.tmp'
-            with open(tmp, 'w', encoding='utf-8', newline='') as f:
+            with open(tmp, 'w', encoding='utf-8-sig', newline='') as f:
                 f.write(text)
             os.replace(tmp, path)
         except OSError as e:

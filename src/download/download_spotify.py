@@ -88,8 +88,10 @@ def _check_existing(urls, metadata, output_dir, fmt):
 
 
 def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
-                   overwrite_errors=False, skip_existing=False, verbose=False,
-                   validate_only=False, batch_size=1, pre_skip_existing=False):
+                   overwrite_errors=False, skip_existing=False,
+                   validate_only=False, batch_size=1, pre_skip_existing=False,
+                   retries=3, retry_delay=3, cookies_from_browser=None, cookie_file=None,
+                   debug=False):
     print(f"processing spotify source: {url_file}")
 
     if not os.path.exists(url_file):
@@ -190,12 +192,14 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
         'Track no longer exists',
         'SongError',
     ]
-    MAX_RETRIES = 0
-    RETRY_DELAY = 3
+
+    # resolve once so it matches whatever the pre-skip existence check used
+    resolved_output_dir = _resolve_output_dir(output_dir)
 
     overall_success = True
     num_batches = (url_count + batch_size - 1) // batch_size
     print(f"\nprocessing {url_count} urls in {num_batches} batch(es) of up to {batch_size}")
+    print(f"output directory: {resolved_output_dir}")
 
     for batch_idx in range(num_batches):
         start = batch_idx * batch_size
@@ -206,25 +210,32 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
 
         cmd = [sys.executable, "-m", "spotdl", "download"] + batch
         cmd.extend(["--format", format, "--bitrate", bitrate])
+        cmd.extend(["--output", os.path.join(resolved_output_dir, "{artists} - {title}.{output-ext}")])
 
         if overwrite_errors:
             cmd.append("--overwrite")
         if skip_existing:
             cmd.append("--skip-existing")
-        if verbose:
-            cmd.append("--verbose")
-
-        cmd.extend(["--output", _resolve_output_dir(output_dir)])
-
+        if cookie_file:
+            cmd.extend(["--cookie-file", cookie_file])
+        elif cookies_from_browser:
+            cmd.extend(["--cookies-from-browser", cookies_from_browser])
+        yt_dlp_extra_args = (
+            '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+            '(KHTML, like Gecko) Chrome/127.0 Safari/537.36" '
+            '--referer "https://music.youtube.com/"'
+        )
+        cmd.append("--lyrics")
+        log_level = "DEBUG" if debug else "INFO"
+        cmd.extend(["--log-level",log_level,"--print-errors","--yt-dlp-args",yt_dlp_extra_args])
         ffmpeg_path = os.getenv('FFMPEG_PATH') or os.getenv('ffmpeg_path')
         if ffmpeg_path:
             cmd.extend(["--ffmpeg", ffmpeg_path])
 
-        if not verbose:
-            print(f"running spotdl for: {batch}")
+        print(f"running spotdl for: {batch}")
 
         attempt = 0
-        while attempt <= MAX_RETRIES:
+        while attempt <= retries:
             try:
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -250,25 +261,25 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
 
             if returncode != 0:
                 attempt += 1
-                if attempt <= MAX_RETRIES:
-                    print(f"exit code {returncode}, retrying ({attempt}/{MAX_RETRIES})...")
-                    time.sleep(RETRY_DELAY)
+                if attempt <= retries:
+                    print(f"exit code {returncode}, retrying ({attempt}/{retries})...")
+                    time.sleep(retry_delay)
                     continue
                 else:
-                    print(f"batch failed after {MAX_RETRIES} retries")
+                    print(f"batch failed after {retries} retries")
                     overall_success = False
                     _log_urls('failed_downloads.txt', batch, reason='download_failed')
                     break
 
             if any(p in combined_output for p in SOFT_FAILURE_PATTERNS):
                 attempt += 1
-                if attempt <= MAX_RETRIES:
-                    print(f"soft failure detected, retrying ({attempt}/{MAX_RETRIES})...")
-                    time.sleep(RETRY_DELAY)
+                if attempt <= retries:
+                    print(f"soft failure detected, retrying ({attempt}/{retries})...")
+                    time.sleep(retry_delay)
                     continue
                 else:
                     reason = next((p for p in SOFT_FAILURE_PATTERNS if p in combined_output), 'soft_failure')
-                    print(f"soft failure after {MAX_RETRIES} retries ({reason}): {batch}")
+                    print(f"soft failure after {retries} retries ({reason}): {batch}")
                     _log_urls('soft_failures.txt', batch, reason=reason)
                 break
 
@@ -313,10 +324,14 @@ def main():
     parser.add_argument('--bitrate', '-b', type=str, default='320k')
     parser.add_argument('--overwrite-errors', action='store_true')
     parser.add_argument('--skip-existing', action='store_true')
-    parser.add_argument('--verbose', '-v', action='store_true')
     parser.add_argument('--validate-only', action='store_true')
     parser.add_argument('--batch-size', type=int, default=1)
+    parser.add_argument('--retries', type=int, default=3)
+    parser.add_argument('--retry-delay', type=float, default=3, help='Delay between retries in seconds')
     parser.add_argument('--pre-skip-existing', action='store_true')
+    parser.add_argument('--cookies-from-browser', type=str)
+    parser.add_argument('--cookie-file', type=str, help='Path to a Netscape-format cookies.txt (preferred over --cookies-from-browser; avoids the browser file-lock issue)')
+    parser.add_argument('--debug', action='store_true', help='Use DEBUG log level for spotdl/yt-dlp instead of INFO')
 
     args = parser.parse_args()
 
@@ -334,10 +349,14 @@ def main():
             bitrate=args.bitrate,
             overwrite_errors=args.overwrite_errors,
             skip_existing=args.skip_existing,
-            verbose=args.verbose,
             validate_only=args.validate_only,
             batch_size=args.batch_size,
             pre_skip_existing=args.pre_skip_existing,
+            retries=args.retries,
+            retry_delay=args.retry_delay,
+            cookies_from_browser=args.cookies_from_browser,
+            cookie_file=args.cookie_file,
+            debug=args.debug,
         )
         if not success:
             sys.exit(1)

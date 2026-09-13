@@ -290,7 +290,7 @@ def export_to_csv(data, filename, export_dir):
 
     filepath = os.path.join(export_dir, filename)
     fieldnames = data[0].keys()
-    with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
+    with open(filepath, 'w', newline='', encoding='utf-8-sig') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(data)

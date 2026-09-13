@@ -1,4 +1,3 @@
-
 """m3u - write extended .m3u8 playlists with a spotify-id comment line.
 
 format (one entry per matched track, spotify playlist order preserved):
@@ -9,8 +8,7 @@ format (one entry per matched track, spotify playlist order preserved):
 paths are written forward-slashed and relative to the .m3u8's own folder, so the
 file stays portable to any device that mirrors the crate tree via syncthing.
 the `#SPOTIFY:<id>` comment is ignored by players but lets a future reverse-sync
-(edits on a synced device -> spotify) recover track uris without re-resolving
-filenames.
+recover track uris without re-resolving filenames.
 
 unresolved spotify rows are omitted from the .m3u8 (the playlist stays playable)
 and logged to the unmatched handoff instead.
@@ -18,14 +16,20 @@ and logged to the unmatched handoff instead.
 
 import os
 import re
+import unicodedata
 
 _WIN_ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 def safe_name(name):
     """filesystem-safe playlist stem - readable, not underscored.
-    strips the full windows-illegal set (incl. *) and trailing dots/spaces."""
-    s = _WIN_ILLEGAL.sub('', name or '')
+    transliterates non‑ASCII characters to ASCII, then strips illegal chars."""
+    if not name:
+        return '_'
+    # Normalize and transliterate
+    normalized = unicodedata.normalize('NFKD', name)
+    ascii_str = normalized.encode('ASCII', 'ignore').decode('ASCII')
+    s = _WIN_ILLEGAL.sub('', ascii_str)
     s = s.strip().rstrip('.')
     return s or '_'
 
