@@ -1,88 +1,47 @@
-import argparse
+"""download.spotify_download - download audio from spotify urls via spotdl.
+
+was download_spotify.py. changes from the original beyond the cli.py split:
+- organize.library.resolve_library_root() -> lib.paths.archive_path()
+- organize.library.build_library_index()/scan_existing_fuzzy() ->
+  download.existing (see that module's docstring for why this stayed
+  download-package-local instead of moving into lib/)
+- organize.library._normalize() -> lib.text.normalize_key()
+- the FFMPEG_PATH/ffmpeg_path dual-case getenv -> lib.paths.ffmpeg_path()
+  (dual-case fallback dropped project-wide, see REFACTOR_PLAN.md)
+- sanitize_filename()/_predict_output_filename()/csv-metadata-reading moved
+  out to download.manifest, shared with retry.py (see that module's
+  docstring - this was the second near-identical copy of the same csv
+  reader, now consolidated).
+"""
+
 import os
 import sys
 import subprocess
 import csv
 import glob
-import re
 import time
 
-from download.spotify_utils import get_export_dir
-from organize.library import resolve_library_root, build_library_index, scan_existing_fuzzy
-
-
-def sanitize_filename(filename):
-    # must match spotdl's sanitization so predicted filenames == what spotdl writes
-    filename = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', filename)
-    filename = filename.strip('. ')
-    return filename
-
-
-def _resolve_output_dir(output_dir, create=True):
-    final = output_dir or resolve_library_root()
-    if create:
-        os.makedirs(final, exist_ok=True)
-    return final
-
-
-def _predict_output_filename(artist_names, track_name, fmt):
-    return sanitize_filename(f"{artist_names} - {track_name}.{fmt}")
-
-
-def _read_csv_metadata_from_file(csv_path):
-    metadata = {}
-    try:
-        with open(csv_path, 'r', encoding='utf-8') as f:
-            sample = f.read(1024)
-            f.seek(0)
-            delimiter = csv.Sniffer().sniff(sample).delimiter
-            reader = csv.DictReader(f, delimiter=delimiter)
-            if reader.fieldnames:
-                reader.fieldnames = [name.strip() for name in reader.fieldnames]
-            if not {'track_name', 'artist_names'}.issubset(set(reader.fieldnames or [])):
-                return {}
-            for row in reader:
-                url = (row.get('spotify_url') or '').strip()
-                if url and url not in metadata:
-                    metadata[url] = (
-                        (row.get('artist_names') or '').strip(),
-                        (row.get('track_name') or '').strip(),
-                    )
-    except Exception as e:
-        print(f"warning: failed to read csv metadata from {csv_path}: {e}")
-    return metadata
-
-
-def _read_csv_metadata(url_file):
-    if os.path.isdir(url_file):
-        merged = {}
-        for csv_path in glob.glob(os.path.join(url_file, '*.csv')):
-            meta = _read_csv_metadata_from_file(csv_path)
-            # first-seen wins for dedup consistency
-            for url, val in meta.items():
-                if url not in merged:
-                    merged[url] = val
-        return merged if merged else None
-    elif url_file.lower().endswith('.csv'):
-        result = _read_csv_metadata_from_file(url_file)
-        return result if result else None
-    return None
+from lib.paths import archive_path, ffmpeg_path
+from lib.text import normalize_key
+from download.existing import build_library_index, scan_existing_fuzzy, resolve_output_dir
+from download.manifest import predict_output_filename, read_csv_metadata
 
 
 def _check_existing(urls, metadata, output_dir, fmt):
     # returns (existing, new, no_meta, library_root, library_index)
-    library_root = output_dir or resolve_library_root()
+    library_root = output_dir or archive_path()
     print(f"scanning output folder for existing files...")
     library_index = build_library_index(library_root)
     print(f"found {len(library_index)} audio files on disk.")
     candidates = []
     no_meta = 0
     for url in urls:
-        artist_names, track_name = metadata.get(url, ('', ''))
+        meta = metadata.get(url) or {}
+        artist_names, track_name = meta.get('artist', ''), meta.get('track', '')
         if not artist_names or not track_name:
             no_meta += 1
         else:
-            candidates.append(_predict_output_filename(artist_names, track_name, fmt))
+            candidates.append(predict_output_filename(artist_names, track_name, fmt))
     existing, new = scan_existing_fuzzy(candidates, library_index)
     return existing, new + no_meta, no_meta, library_root, library_index
 
@@ -140,8 +99,8 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
     print(f"url validation complete: {url_count} unique urls.")
 
     if pre_skip_existing:
-        metadata = _read_csv_metadata(url_file)
-        if metadata is None:
+        metadata = read_csv_metadata(url_file)
+        if not metadata:
             print("warning: no csvs with track_name/artist_names columns found - skipping existence check.")
         else:
             existing, new, no_meta, library_root, library_index = _check_existing(urls, metadata, output_dir, format)
@@ -158,14 +117,14 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
 
             new_urls = []
             for url in urls:
-                a, t = metadata.get(url, ('', ''))
+                meta = metadata.get(url) or {}
+                a, t = meta.get('artist', ''), meta.get('track', '')
                 if not a or not t:
                     new_urls.append(url)
                 else:
-                    predicted = _predict_output_filename(a, t, format)
+                    predicted = predict_output_filename(a, t, format)
                     stem = os.path.splitext(predicted)[0]
-                    from organize.library import _normalize
-                    if _normalize(stem) not in library_index:
+                    if normalize_key(stem) not in library_index:
                         new_urls.append(url)
             skipped = len(urls) - len(new_urls)
             print(f"\npre-skip: skipping {skipped} existing files, {len(new_urls)} to download.")
@@ -194,7 +153,7 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
     ]
 
     # resolve once so it matches whatever the pre-skip existence check used
-    resolved_output_dir = _resolve_output_dir(output_dir)
+    resolved_output_dir = resolve_output_dir(output_dir)
 
     overall_success = True
     num_batches = (url_count + batch_size - 1) // batch_size
@@ -228,9 +187,9 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
         cmd.append("--lyrics")
         log_level = "DEBUG" if debug else "INFO"
         cmd.extend(["--log-level",log_level,"--print-errors","--yt-dlp-args",yt_dlp_extra_args])
-        ffmpeg_path = os.getenv('FFMPEG_PATH') or os.getenv('ffmpeg_path')
-        if ffmpeg_path:
-            cmd.extend(["--ffmpeg", ffmpeg_path])
+        resolved_ffmpeg = ffmpeg_path()
+        if resolved_ffmpeg:
+            cmd.extend(["--ffmpeg", resolved_ffmpeg])
 
         print(f"running spotdl for: {batch}")
 
@@ -312,58 +271,3 @@ def _extract_urls_from_csv(csv_path):
     except Exception as e:
         print(f"warning: failed to read csv {csv_path}: {e}")
     return urls
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description='download music from spotify urls using spotdl'
-    )
-    parser.add_argument('--url-file', '-u', type=str)
-    parser.add_argument('--output', '-o', type=str)
-    parser.add_argument('--format', '-f', type=str, default='mp3')
-    parser.add_argument('--bitrate', '-b', type=str, default='320k')
-    parser.add_argument('--overwrite-errors', action='store_true')
-    parser.add_argument('--skip-existing', action='store_true')
-    parser.add_argument('--validate-only', action='store_true')
-    parser.add_argument('--batch-size', type=int, default=1)
-    parser.add_argument('--retries', type=int, default=3)
-    parser.add_argument('--retry-delay', type=float, default=3, help='Delay between retries in seconds')
-    parser.add_argument('--pre-skip-existing', action='store_true')
-    parser.add_argument('--cookies-from-browser', type=str)
-    parser.add_argument('--cookie-file', type=str, help='Path to a Netscape-format cookies.txt (preferred over --cookies-from-browser; avoids the browser file-lock issue)')
-    parser.add_argument('--debug', action='store_true', help='Use DEBUG log level for spotdl/yt-dlp instead of INFO')
-
-    args = parser.parse_args()
-
-    url_file = args.url_file
-    if not url_file:
-        export_dir = get_export_dir()
-        url_file = os.path.join(export_dir, 'spotify_manifest_urls.txt')
-        print(f"using default url file: {url_file}")
-
-    try:
-        success = download_spotify(
-            url_file=url_file,
-            output_dir=args.output,
-            format=args.format,
-            bitrate=args.bitrate,
-            overwrite_errors=args.overwrite_errors,
-            skip_existing=args.skip_existing,
-            validate_only=args.validate_only,
-            batch_size=args.batch_size,
-            pre_skip_existing=args.pre_skip_existing,
-            retries=args.retries,
-            retry_delay=args.retry_delay,
-            cookies_from_browser=args.cookies_from_browser,
-            cookie_file=args.cookie_file,
-            debug=args.debug,
-        )
-        if not success:
-            sys.exit(1)
-    except Exception as e:
-        print(f"error: {e}")
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()

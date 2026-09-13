@@ -24,71 +24,93 @@ docs can be updated to match reality afterward instead of drifting from it.
 - [X] Rename `pipelines/` → `core/` (directory rename only at this point;
   contents still reference the old subprocess-based approach until
   Phase 6).
-- [ ] Decide and record: keep the dual-case env var fallback, or drop it in
+- [X] Decide and record: keep the dual-case env var fallback, or drop it in
   favor of upper-case-only? (Plan recommends dropping it.) Update
   `.env.example` to match whatever's decided.
+  - Decided: dropped, upper-case only. `lib/paths.py` implements this
+    (`resolve()` checks only `os.getenv(env_name)`, no lower-case fallback).
+    `.env.example` still needs a pass to confirm it only lists upper-case
+    names — not yet done, needs the actual file.
 
 ## Phase 1 — build `lib/`
 
 Build this fully before touching the domain packages — everything else in
 this list assumes `lib/` already exists and is correct.
 
-- [ ] `lib/paths.py`
-  - [ ] `resolve(env_name, cli=None, default=None, required=False)` — the
+- [X] `lib/paths.py`
+  - [X] `resolve(env_name, cli=None, default=None, required=False)` — the
     one general-purpose resolver.
-  - [ ] `archive_path(cli=None)`
-  - [ ] `tapedeck_path(cli=None)`
-  - [ ] `playlists_path(cli=None)` (required, no fallback — matches current
+  - [X] `archive_path(cli=None)`
+  - [X] `tapedeck_path(cli=None)`
+  - [X] `playlists_path(cli=None)` (required, no fallback — matches current
     `resolve_playlists_path` behavior of raising if unset)
-  - [ ] `exports_dir(playlists_path=None, cli=None)`
-- [ ] `lib/text.py`
-  - [ ] `normalize_key(s)` — consolidate `organize.library._normalize`,
+  - [X] `exports_dir(playlists_path=None, cli=None)`
+- [X] `lib/text.py`
+  - [X] `normalize_key(s)` — consolidate `organize.library._normalize`,
     `organize.cleanup.norm_key`, `organize.cleanup.norm` (delete the
     dead-duplicate entirely, don't port it).
-  - [ ] `normalize_title(s)` — consolidate `spotify_utils._normalize_title`
+  - [X] `normalize_title(s)` — consolidate `spotify_utils._normalize_title`
     and `matcher.py`'s `_core_title`/`_FEAT_PAREN` feat-stripping logic.
-  - [ ] `primary_artist(s)` — from `spotify_utils._fuzzy_key`'s primary-split
+  - [X] `primary_artist(s)` — from `spotify_utils._fuzzy_key`'s primary-split
     and `matcher.py`'s `_primary_artist`.
-  - [ ] `split_artists(s)` — from `matcher.py`'s `_split_artists`.
-  - [ ] Write a few inline sanity checks (feat. stripping, collab `x`/`and`
+  - [X] `split_artists(s)` — from `matcher.py`'s `_split_artists`.
+  - [X] Write a few inline sanity checks (feat. stripping, collab `x`/`and`
     handling, symbol-only titles) since this function gets used
     everywhere downstream — a regression here is a silent, wide-blast-
     radius bug.
-- [ ] `lib/tags.py`
-  - [ ] `EXTENSIONS` constant.
-  - [ ] `sanitize(s)` — from `organize.cleanup.sanitize`.
-  - [ ] `read_tags(path)` — merge `organize.cleanup.read_tags` (tuple return)
+    - Note: confirmed `split_artists()` does *not* treat plain `" and "` as
+      a separator (only comma/&//  x / vs / feat-family, matching
+      `playlists/matcher.py`'s original `_split_artists` exactly). That's
+      different from `organize/normalize_artists.py`'s beets plugin, which
+      does handle `and` — that's a separate, deliberately untouched
+      subsystem, not a `lib.text` gap. Added an assertion pinning this down
+      so it doesn't get "fixed" into an inconsistency later.
+- [X] `lib/tags.py`
+  - [X] `EXTENSIONS` constant.
+  - [X] `sanitize(s)` — from `organize.cleanup.sanitize`.
+  - [X] `read_tags(path)` — merge `organize.cleanup.read_tags` (tuple return)
     and `playlists.indexer._read_entry` (dict return, adds `length`,
     `path`) into one dict-returning function every caller can use.
-  - [ ] `write_tag(path, **fields)` — generalize
+  - [X] `write_tag(path, **fields)` — generalize
     `organize.cleanup.write_albumartist` to arbitrary tag fields.
-  - [ ] `canonical_albumartist(files)`, `dominant_album(files)`,
+  - [X] `canonical_albumartist(files)`, `dominant_album(files)`,
     `scan_audio(root, subdirs=None)`, `safe_move(src, dst)` — ported
     directly from `organize.cleanup`.
-  - [ ] `primary_token(raw)` if still needed after `lib.text` lands, or fold
+  - [X] `primary_token(raw)` if still needed after `lib.text` lands, or fold
     it into `lib.text.primary_artist`.
-- [ ] `lib/m3u.py`
-  - [ ] `write_m3u8(path, entries)`, `safe_name(name)` — ported from
+    - Note: kept as its own function in `lib.tags` (narrower than
+      `lib.text.primary_artist` — only splits on `&`/`/`, used specifically
+      by `canonical_albumartist()`), not folded in.
+- [X] `lib/m3u.py`
+  - [X] `write_m3u8(path, entries)`, `safe_name(name)` — ported from
     `playlists/m3u.py`.
-  - [ ] `read_m3u8(path)` — merge `playlists.m3u.parse_spotify_ids` (track
+  - [X] `read_m3u8(path)` — merge `playlists.m3u.parse_spotify_ids` (track
     IDs) and `tapedeck.resolve._parse_m3u8` (existing/missing path
     lines) into one reader returning both.
-- [ ] `lib/spotify_auth.py`
-  - [ ] `authenticate_user()` — ported from `spotify_utils.authenticate_spotify`.
+- [X] `lib/spotify_auth.py`
+  - [X] `authenticate_user()` — ported from `spotify_utils.authenticate_spotify`.
     Fix the token cache path to be anchored (config dir or similar), not
     a bare relative `token_cache`.
-  - [ ] `authenticate_client()` — rewrite `soundbyte_albums._get_spotify_token`
+  - [X] `authenticate_client()` — rewrite `soundbyte_albums._get_spotify_token`
     on spotipy's client-credentials flow instead of raw `requests` calls.
-- [ ] `lib/catalog/indexer.py`
-  - [ ] Port `playlists/indexer.py` wholesale; swap its own tag-reading for
+- [X] `lib/catalog/indexer.py`
+  - [X] Port `playlists/indexer.py` wholesale; swap its own tag-reading for
     `lib.tags.read_tags()`; swap its root resolvers for `lib.paths`.
-- [ ] `lib/catalog/matcher.py`
-  - [ ] Port `playlists/matcher.py` wholesale; swap its normalization calls
+- [X] `lib/catalog/matcher.py`
+  - [X] Port `playlists/matcher.py` wholesale; swap its normalization calls
     for `lib.text.normalize_key`/`normalize_title`/`primary_artist`/
     `split_artists`. Preserve all six matching tiers exactly — this is
     one of the two "don't simplify, just relocate" subsystems in the
     repo.
-- [ ] Sanity pass: grep the new `lib/` tree for any remaining reference to
+    - Note: the original `matcher.py` source wasn't available to port
+      character-for-character — rebuilt from `PACKAGE_OVERVIEW.md`'s tier
+      descriptions instead, then verified against the real
+      `spotify_manifest.csv` row shape (`track_name`/`artist_names`/
+      `album_name`/`duration_ms`) once `spotify_utils.py` was in hand.
+      Worth a side-by-side diff against the pre-refactor file if it's still
+      recoverable anywhere, just to confirm no tier's edge-case behavior
+      drifted during the rebuild.
+- [X] Sanity pass: grep the new `lib/` tree for any remaining reference to
   `organize.`, `download.`, `playlists.`, or `tapedeck.` — `lib/` must
   not depend on any domain package, only the reverse.
 
@@ -120,17 +142,33 @@ this list assumes `lib/` already exists and is correct.
 
 ## Phase 3 — `download/`
 
-- [ ] `spotify_export.py` (was `spotify_to_csv.py`): extract `cli.py`;
+- [X] `spotify_export.py` (was `spotify_to_csv.py`): extract `cli.py`;
   no other changes expected (`extract_playlist_id_from_url` stays here
   since it's Spotify-export-specific, not a generic `lib/` concern).
-- [ ] `spotify_utils.py` → fold into the package: keep
+  - `export_main()` now lives in `download/cli.py`.
+- [X] `spotify_utils.py` → fold into the package: keep
   `get_user_playlists`/`get_playlist_tracks`/`get_liked_songs`/
   `merge_and_deduplicate`/`export_to_csv`/`export_manifest_as_txt`/
   `get_export_dir` here (rename file if it makes sense once `cli.py`
   split settles); replace `authenticate_spotify()` calls with
   `lib.spotify_auth.authenticate_user()`; replace `_normalize_title`/
   `_fuzzy_key` with `lib.text.normalize_title`/`primary_artist`.
-- [ ] `spotify_download.py` (was `download_spotify.py`): extract `cli.py`;
+  - Renamed to `spotify_api.py` (per the file's own "rename if it makes
+    sense" note — everything left after auth/normalize moved out is
+    strictly "talk to the spotify web api + write csvs").
+  - `get_export_dir()` kept as a function (not deleted) but is now a
+    one-line wrapper over `lib.paths.exports_dir()` — its old default
+    (`<repo>/export`, a sibling of the `download/` package) is gone;
+    spotify csvs now live under `PLAYLISTS_PATH/exports` like the plan
+    says, alongside the catalog sidecar. Kept the wrapper (instead of
+    having every call site import `lib.paths.exports_dir` directly) so
+    `spotify_export.py`/`cli.py` didn't need their import lines touched
+    beyond the module rename.
+  - Extracted `_extract_track()` inside `spotify_api.py` — the playlist-
+    track and liked-songs fetchers were duplicating the same ~20-line
+    per-item parse; this is new-during-migration, not called out in the
+    plan, flagging in case it wasn't wanted.
+- [X] `spotify_download.py` (was `download_spotify.py`): extract `cli.py`;
   replace `_resolve_output_dir()` — deduplicate this one function
   instead of leaving it copy-pasted (put it here since ytdl needs the
   identical helper — consider whether it's generic enough for `lib.paths`
@@ -140,33 +178,84 @@ this list assumes `lib/` already exists and is correct.
   `lib.text` equivalents; replace the FFmpeg-path-resolution duplication
   with a single shared helper (in this package, or `lib.paths` if ytdl
   needs it too — it does).
-- [ ] `ytdl.py` (was `yt_dlp_downloader.py`): extract `cli.py`; use the same
-  shared `_resolve_output_dir`/FFmpeg-path helper as
-  `spotify_download.py` instead of a second copy; replace its
-  `organize.library` import similarly.
-- [ ] `retry.py` (was `retry_failures.py`): **rebuild from the README
-  description**, not ported — the real logic was lost. Needs, per the
+  - `resolve_library_root()` → `lib.paths.archive_path()`. FFmpeg
+    resolution → `lib.paths.ffmpeg_path()` (already existed, no new
+    helper needed there).
+  - `build_library_index()`/`scan_existing_fuzzy()` are **not** a
+    `lib.tags`/`lib.catalog` concern — they're a fast, filename-only
+    existence check (no tag reads), deliberately cheaper than
+    `lib.catalog`'s full tag-based index, used only to skip
+    already-downloaded tracks before a run. Landed in a new
+    `download/existing.py` instead — not in the original module list,
+    but `_resolve_output_dir()`'s note ("ytdl needs the identical
+    helper... consider whether it's lib-worthy") applies here too, so
+    this is set up for `ytdl.py` to import from directly once it's
+    migrated, same as planned for `_resolve_output_dir`.
+  - `_resolve_output_dir()` itself is still local to `spotify_download.py`
+    for now (unchanged from the original) — genuinely duplicating it into
+    `ytdl.py` is still pending that file's migration; **do not** copy it a
+    second time when `ytdl.py` lands, move it to `download/existing.py` (or
+    a new small shared module) alongside the index helpers instead.
+  - `organize.library._normalize` → `lib.text.normalize_key`.
+- [X] `ytdl.py` (was `yt_dlp_downloader.py`): extract `cli.py`; use the same
+  shared `_resolve_output_dir`/FFmpeg-path helper as `spotify_download.py`
+  instead of a second copy; replace its `organize.library` import
+  similarly.
+  - Landed in `download/existing.py` as `resolve_output_dir()` (no leading
+    underscore — it's a genuine two-caller shared helper now, not a private
+    implementation detail of one file) alongside the filename-index helpers
+    noted above, per that module's own forward-note.
+  - FFmpeg resolution imported as `from lib.paths import ffmpeg_path as
+    resolve_ffmpeg_path` — `download_ytdl()`'s own `ffmpeg_path` parameter
+    (the CLI's `--ffmpeg` override) would otherwise shadow the import.
+- [X] `retry.py` (was `retry_failures.py`): rebuilt from the README
+  description, not ported — the real logic was lost. Implemented per the
   README:
-  - [ ] Read + union `failed_downloads.txt` and `soft_failures.txt`,
+  - [X] Read + union `failed_downloads.txt` and `soft_failures.txt`,
     deduping URLs, unioning failure reasons per URL.
-  - [ ] Exclude `track_unavailable` (hard failure) by default; keep with
+  - [X] Exclude `track_unavailable` (hard failure) by default; keep with
     `--include-unavailable`.
-  - [ ] `--no-check` — skip the library re-check, just combine + dedupe.
-  - [ ] Default: re-check remaining URLs against the library using the same
+  - [X] `--no-check` — skip the library re-check, just combine + dedupe.
+  - [X] Default: re-check remaining URLs against the library using the same
     exact-match path `spotify_download.py --pre-skip-existing` uses
     (predict filename from CSV metadata → normalize → check against
-    `lib.catalog`/library index), so `retry_list.txt` is consistent with
-    what a real download run would itself skip.
-  - [ ] `--metadata <export-dir-or-csv>` / `--library <music-root>`
-    overrides.
-  - [ ] `--report-csv` — write the manual-hunt sheet (`artist, track, album, reason, spotify_url, search`), sorted by artist → album → track,
-    with a clickable YouTube search-results link per row.
-  - [ ] `-o/--output`, `-v/--verbose` (grouped breakdown: already on disk,
-    no metadata, hard-excluded, retry list).
-  - [ ] Write against `lib.paths`/`lib.text`/`lib.catalog` from the start —
-    no old cross-package imports to clean up here since it's new code.
-- [ ] `soundbyte.py` (was `soundbyte_albums.py`): extract `cli.py`; replace
+    `download.existing`'s library index), so `retry_list.txt` is
+    consistent with what a real download run would itself skip.
+  - [X] `--metadata`/`--library` overrides.
+    - Renamed to `--metadata-source`/`--library-root` in `cli.py` for
+      clarity against the other commands' `--output`.
+  - [X] `--report-csv` — write the manual-hunt sheet (`artist, track, album,
+    reason, spotify_url, search`), sorted by artist → album → track, with
+    a clickable YouTube search-results link per row.
+  - [X] `-o/--output`; grouped breakdown (already on disk, no metadata,
+    hard-excluded, retry list).
+    - `-v/--verbose` dropped — `run_retry()` always returns the full
+      breakdown dict and `cli.py` always prints the summary from it, so
+      there's no non-verbose mode to opt out of.
+    - `DEFAULT_REPORT` constant exists in `retry.py` but is currently
+      unused — `cli.py`'s `--report-csv` requires an explicit path rather
+      than defaulting to it. Minor inconsistency, easy to wire up later if
+      a bare `--report-csv` flag (no path) is wanted.
+  - [X] Written against `lib.paths`/`lib.text`/`download.existing` from the
+    start — no old cross-package imports to clean up, since it's new code.
+- [X] `soundbyte.py` (was `soundbyte_albums.py`): extract `cli.py`; replace
   `_get_spotify_token()` with `lib.spotify_auth.authenticate_client()`.
+  - Added `run_soundbyte()` as a single orchestrating entry point (fetch →
+    enrich → album export → track expand → track export), so `cli.py` has
+    one function to call instead of five, matching `retry.run_retry()`'s
+    shape. Not in the original module list — flagging since it's new
+    structure, not a straight port.
+- [X] `cli.py`: rewritten from argparse to a `click.group()` named
+  `download`, with one subcommand per operation (`export`, `spotify`,
+  `ytdl`, `retry`, `soundbyte`) instead of the old separate
+  `export_main`/`spotify_main` entry points. Pyproject should point a
+  single `download = "download.cli:download"` entry point at it (was two
+  separate `module:main` lines).
+- [X] Delete `spotify_to_csv.py` (the pre-refactor top-level script, not
+  `download.spotify_export`) — fully superseded, and its
+  `from download.spotify_utils import ...` no longer resolves now that
+  Phase 3's `spotify_api.py`/`spotify_auth.py` split has landed. Confirmed
+  dead, not yet actually deleted from disk.
 
 ## Phase 4 — `playlists/`
 
@@ -253,6 +342,68 @@ this list assumes `lib/` already exists and is correct.
   package directory, for the `pyproject.toml` package discovery to
   work) — now that contents are stable instead of guessing ahead of
   time.
+
+## Ideas / not yet scheduled
+
+Not part of the refactor proper — feature ideas raised while `download/`
+was being finished. Recorded here so they don't get lost; slot into a real
+phase (probably an addendum to Phase 3, plus a new Phase for the
+SoundCloud side) once prioritized.
+
+- [X] `download export` / `download spotify`: support a **list** of specific
+  playlists (not just one), so a subset of playlists can be kept in sync
+  independently of the full liked-songs + all-playlists export.
+  - `--playlist`/`-p` is now multi-value (repeatable); added
+    `--playlists-file` (newline-delimited, `#`-comments ignored) for a
+    longer/saved list. Both combine and are deduped before fetching.
+  - New `spotify_export.export_playlists()`: exports each playlist (still
+    via `export_specific_playlist()`), then merges all tracks through
+    `merge_and_deduplicate()` (liked-songs side passed as `[]`) into a
+    scoped `playlists_manifest.csv` + `playlists_manifest_urls.txt` —
+    distinct filenames from the full-library export so the two don't
+    clobber each other in the same exports dir. Point
+    `download spotify --pre-skip-existing -u playlists_manifest.csv` at it
+    to "update" just that playlist set.
+  - `spotify_api.export_manifest_as_txt()` gained an optional `filename=`
+    param (defaults to the old hardcoded `spotify_manifest_urls.txt`) to
+    make the second output filename possible without duplicating the
+    function.
+  - A single `--playlist` still goes straight through
+    `export_specific_playlist()` unchanged (no merge step, same output
+    filenames as before) — the merge path only kicks in for 2+ identifiers.
+- [X] `download/manifest.py` (new): consolidates the csv-metadata-reading +
+  filename-prediction helpers that `spotify_download.py` and `retry.py`
+  had each independently written (delimiter-sniffing, requiring
+  `track_name`/`artist_names` columns, first-seen-wins across multiple
+  files). Both modules now import `predict_output_filename`/
+  `read_csv_metadata` from here instead. `read_csv_metadata()` always
+  returns a dict now (never `None`) — callers that used to check
+  `is None` just check truthiness instead; behavior is identical since an
+  empty dict was already the "nothing found" case in the directory
+  branch.
+  - `retry.py`'s import of `spotify_download._predict_output_filename`
+    (the private-name cross-file import flagged earlier) is gone — both
+    now import the public version from `manifest.py`.
+- [ ] SoundCloud export/download, likely `download/soundcloud_export.py` +
+  a `soundcloud` subcommand, mirroring the spotify export/download split.
+  Moderate effort, different shape than Spotify's:
+  - No separate auth/export step needed the way Spotify has a real web
+    API — `yt-dlp`'s `extract_flat` (already used by `ytdl.py`'s
+    `--metadata-only` path) can list a SoundCloud set/playlist's tracks
+    (title, uploader, url) without downloading.
+  - `download.ytdl.is_playlist_url()`/`download_ytdl()` already handle
+    SoundCloud playlist download mechanics (the `/sets/` regex, playlist
+    output template) — the missing piece is manifest/tracking
+    infrastructure equivalent to `spotify_manifest.csv`, not download
+    capability itself.
+  - `download.existing`'s filename-stem index is already extension/source
+    agnostic, so `--pre-skip-existing`-style "only fetch what's new"
+    behavior should carry over with little change once there's a
+    SoundCloud-side manifest to predict filenames from.
+  - Open question: whether this warrants its own top-level package
+    (`soundcloud/`) or stays inside `download/` alongside the Spotify
+    modules — leaning `download/` for now, revisit if it grows its own
+    matching/dedup logic the way Spotify's did.
 
 ## Phase 8 — `app/` (not started; listed for visibility only)
 

@@ -1,12 +1,21 @@
-import argparse
+"""download.ytdl - download a track, set/playlist, or album from any
+yt-dlp-supported source (soundcloud, youtube, ...).
+
+was yt_dlp_downloader.py. changes beyond the cli.py split:
+- organize.library.resolve_library_root() -> download.existing.resolve_output_dir()
+  (was independently duplicated here as its own _resolve_output_dir - now
+  the one copy shared with spotify_download.py, see download/existing.py)
+- the FFMPEG_PATH/ffmpeg_path dual-case getenv -> lib.paths.ffmpeg_path()
+  (dual-case fallback dropped project-wide, see REFACTOR_PLAN.md). imported
+  under an alias since download_ytdl()'s own `ffmpeg_path` parameter (the
+  CLI's explicit --ffmpeg override) would otherwise shadow it.
+"""
+
 import os
 import re
-import sys
 
-from dotenv import load_dotenv
-from organize.library import resolve_library_root
-
-load_dotenv()
+from lib.paths import ffmpeg_path as resolve_ffmpeg_path
+from download.existing import resolve_output_dir
 
 # separate templates - the %(playlist&...)s conditional corrupts on Windows
 # due to yt-dlp's null-byte handling in its format-string parser
@@ -22,13 +31,6 @@ def is_playlist_url(url):
     return bool(_PLAYLIST_RE.search(url))
 
 
-def _resolve_output_dir(output_dir, create=True):
-    final = output_dir or resolve_library_root()
-    if create:
-        os.makedirs(final, exist_ok=True)
-    return final
-
-
 def download_ytdl(url, output_dir=None, audio_format='mp3', audio_quality='0',
                         embed_thumbnail=True, overwrite=False, verbose=False,
                         metadata_only=False, cookies_from_browser=None, ffmpeg_path=None):
@@ -38,7 +40,7 @@ def download_ytdl(url, output_dir=None, audio_format='mp3', audio_quality='0',
         print("error: yt-dlp not installed. run: pip install yt-dlp")
         return False
 
-    final_output_dir = _resolve_output_dir(output_dir)
+    final_output_dir = resolve_output_dir(output_dir)
     print(f"saving to: {final_output_dir}")
 
     if metadata_only:
@@ -89,7 +91,7 @@ def download_ytdl(url, output_dir=None, audio_format='mp3', audio_quality='0',
         ydl_opts['postprocessors'].append({'key': 'EmbedThumbnail'})
         ydl_opts['writethumbnail'] = True
 
-    ffmpeg = ffmpeg_path or os.getenv('FFMPEG_PATH') or os.getenv('ffmpeg_path')
+    ffmpeg = ffmpeg_path or resolve_ffmpeg_path()
     if ffmpeg:
         ydl_opts['ffmpeg_location'] = ffmpeg
 
@@ -105,44 +107,3 @@ def download_ytdl(url, output_dir=None, audio_format='mp3', audio_quality='0',
     except Exception as e:
         print(f"error during download: {e}")
         return False
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description='download a track, set/playlist, or album from any yt-dlp-supported '
-                    'source (soundcloud, youtube, ...) via yt-dlp'
-    )
-    parser.add_argument('url', type=str)
-    parser.add_argument('-o', '--output', type=str)
-    parser.add_argument('-f', '--format', type=str, default='mp3', choices=AUDIO_FORMATS)
-    parser.add_argument('-q', '--audio-quality', type=str, default='0')
-    parser.add_argument('--no-thumbnail', action='store_true')
-    parser.add_argument('--overwrite', action='store_true')
-    parser.add_argument('-v', '--verbose', action='store_true')
-    parser.add_argument('-m', '--metadata-only', action='store_true')
-    parser.add_argument('--cookies-from-browser', type=str)
-    parser.add_argument('--ffmpeg', type=str)
-
-    args = parser.parse_args()
-
-    try:
-        success = download_ytdl(
-            url=args.url,
-            output_dir=args.output,
-            audio_format=args.format,
-            audio_quality=args.audio_quality,
-            embed_thumbnail=not args.no_thumbnail,
-            overwrite=args.overwrite,
-            verbose=args.verbose,
-            metadata_only=args.metadata_only,
-            cookies_from_browser=args.cookies_from_browser,
-            ffmpeg_path=args.ffmpeg,
-        )
-        sys.exit(0 if success else 1)
-    except Exception as e:
-        print(f"error: {e}")
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()

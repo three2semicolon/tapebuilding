@@ -1,54 +1,41 @@
+"""download.soundbyte - pull top N albums from soundbyte firestore, search
+for each on spotify, and export a manifest spotdl/spotify_download can use.
 
-"""
-download/soundbyte_albums.py
+was soundbyte_albums.py. beyond the cli.py split:
+- _get_spotify_token() (a second, hand-rolled client-credentials flow using
+  raw `requests` calls) -> lib.spotify_auth.authenticate_client(). this is
+  more than swapping the token source: authenticate_client() hands back a
+  spotipy.Spotify client, not a bearer token, so search_spotify_album() and
+  fetch_album_tracks() are rewritten on sp.search()/sp.album() instead of
+  hand-rolled requests.get() calls against the raw web api. behavior
+  (progressively loosened search queries, exact-title preference, paginated
+  track fetch) is preserved - only the transport changed.
+- `requests` is now only used for the firestore-unrelated... actually not at
+  all - it was exclusively the old auth/search transport, so the import is
+  dropped entirely.
+- get_export_dir() default output dir (was a bare 'export' cwd-relative
+  string) -> download.spotify_api.get_export_dir(), so soundbyte's csvs land
+  in the same PLAYLISTS_PATH/exports as spotify_export.py's, unless
+  --output overrides it. flagging this as a behavior change worth
+  double-checking - the original always wrote to ./export regardless of
+  .env.
 
-pulls top N albums from soundbyte firestore, searches for each on spotify,
-and outputs:
-  soundbyte_albums.csv        rank, title, artist, year, album_id, spotify_url
-  soundbyte_album_urls.txt    spotify album urls for spotdl (one per line)
-
-with --expand-albums, also expands each spotify album into its individual
-tracks and outputs a track-level manifest:
-  soundbyte_tracks.csv        track_id,track_name,artist_names,album_name,
-                              duration_ms,explicit,popularity,
-                              playlist_names,playlist_ids,playlist_count,
-                              spotify_url   (same columns as spotify_manifest.csv)
-  soundbyte_track_urls.txt    spotify track urls (one per line)
-
-spotdl accepts album urls directly, so for a plain download you can skip
-expansion and feed soundbyte_album_urls.txt straight to `spotify`. the only
-reason to expand first is to run `spotify --pre-skip-existing` against your
-library - that flag predicts `artist - title.mp3` filenames from the csv's
-track metadata, and the album-url text file has no track metadata, so its
-existence check skips nothing. the expanded track csv has that metadata.
-
-requirements:
-  firebase-admin (a dependency in pyproject.toml)
-  FIREBASE_PROJECT_ID and FIREBASE_CREDENTIALS_PATH in .env
-
-usage:
-  uv run python -m download.soundbyte_albums
-  uv run python -m download.soundbyte_albums --limit 200 --output export/
-  uv run python -m download.soundbyte_albums --limit 200 --skip-spotify
-  uv run python -m download.soundbyte_albums --limit 200 --expand-albums
+requirements unchanged: firebase-admin, FIREBASE_PROJECT_ID +
+FIREBASE_CREDENTIALS_PATH in .env.
 """
 
-import argparse
-import csv
 import os
 import re
 import sys
 import time
 
-import requests
-from dotenv import load_dotenv
-
-load_dotenv()
+from lib.spotify_auth import authenticate_client
+from download.spotify_api import get_export_dir
 
 DEFAULT_LIMIT = 200
 
 # columns of spotify_manifest.csv - the track-level csv we expand into must
-# match this exactly so download_spotify's --pre-skip-existing can read
+# match this exactly so spotify_download's --pre-skip-existing can read
 # track_name/artist_names and predict `artist - title.mp3` filenames.
 MANIFEST_FIELDS = [
     'track_id', 'track_name', 'artist_names', 'album_name',
@@ -110,22 +97,7 @@ def fetch_from_firestore(limit=DEFAULT_LIMIT):
     return albums
 
 
-def _get_spotify_token():
-    client_id = os.getenv('SPOTIFY_CLIENT_ID')
-    client_secret = os.getenv('SPOTIFY_CLIENT_SECRET')
-    if not client_id or not client_secret:
-        raise ValueError("SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET must be set in .env")
-    resp = requests.post(
-        'https://accounts.spotify.com/api/token',
-        data={'grant_type': 'client_credentials'},
-        auth=(client_id, client_secret),
-        timeout=10,
-    )
-    resp.raise_for_status()
-    return resp.json()['access_token']
-
-
-def search_spotify_album(token, title, artist):
+def search_spotify_album(sp, title, artist):
     """search spotify for an album, return its url or '' if not found.
     tries progressively looser queries until something matches."""
     queries = [
@@ -133,18 +105,11 @@ def search_spotify_album(token, title, artist):
         f'album:"{title}" {artist}',             # loose artist
         f'{title} {artist}',                     # freeform
     ]
-    headers = {'Authorization': f'Bearer {token}'}
 
     for query in queries:
         try:
-            resp = requests.get(
-                'https://api.spotify.com/v1/search',
-                headers=headers,
-                params={'q': query, 'type': 'album', 'limit': 5},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            items = resp.json().get('albums', {}).get('items', [])
+            results = sp.search(q=query, type='album', limit=5)
+            items = results.get('albums', {}).get('items', [])
             if not items:
                 continue
             # prefer exact title match
@@ -160,17 +125,11 @@ def search_spotify_album(token, title, artist):
     return ''
 
 
-def enrich_with_spotify(albums, delay=0.3):
+def enrich_with_spotify(sp, albums, delay=0.3):
     """add spotify_url to each album dict in place."""
     print(f"\nsearching spotify for {len(albums)} albums...")
-    try:
-        token = _get_spotify_token()
-    except Exception as e:
-        print(f"error getting spotify token: {e}")
-        return
-
     for i, album in enumerate(albums, 1):
-        url = search_spotify_album(token, album['title'], album['artist'])
+        url = search_spotify_album(sp, album['title'], album['artist'])
         album['spotify_url'] = url
         status = '✓' if url else '✗'
         print(f"  [{i}/{len(albums)}] {status}  {album['artist']} - {album['title']}")
@@ -178,6 +137,7 @@ def enrich_with_spotify(albums, delay=0.3):
 
 
 def export_albums(albums, output_dir):
+    import csv
     os.makedirs(output_dir, exist_ok=True)
 
     csv_path = os.path.join(output_dir, 'soundbyte_albums.csv')
@@ -211,30 +171,23 @@ def _extract_album_id(spotify_url):
     return m.group(1) if m else ''
 
 
-def fetch_album_tracks(token, album_id, delay=0.3):
-    """fetch an album's tracks from spotify /v1/albums/{id} (paginated).
-    returns (album_name, [simplified track items]). simplified items lack
-    popularity, so popularity defaults to 0 in the row builder below."""
-    headers = {'Authorization': f'Bearer {token}'}
-    url = f'https://api.spotify.com/v1/albums/{album_id}'
+def fetch_album_tracks(sp, album_id, delay=0.3):
+    """fetch an album's tracks via spotipy's sp.album()/sp.next() paging
+    (was a hand-rolled requests.get() + manual `next` url loop against
+    /v1/albums/{id}). returns (album_name, [simplified track items]).
+    simplified items lack popularity, so popularity defaults to 0 in the
+    row builder below - same as before."""
     album_name = ''
     items = []
-    first = True
     try:
-        while url:
-            resp = requests.get(url, headers=headers, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            if first:
-                album_name = data.get('name', '')
-                paging = data.get('tracks', {})
-                items.extend(paging.get('items', []))
-                url = paging.get('next')
-                first = False
-            else:
-                items.extend(data.get('items', []))
-                url = data.get('next')
+        album = sp.album(album_id)
+        album_name = album.get('name', '')
+        results = album.get('tracks', {})
+        items.extend(results.get('items', []))
+        while results.get('next'):
             time.sleep(delay)
+            results = sp.next(results)
+            items.extend(results.get('items', []))
     except Exception as e:
         print(f"  warning: failed to fetch tracks for album {album_id}: {e}")
     return album_name, items
@@ -261,16 +214,10 @@ def _track_row(simplified_track, album_name):
     }
 
 
-def expand_albums_to_tracks(albums, delay=0.3):
+def expand_albums_to_tracks(sp, albums, delay=0.3):
     """expand each spotify album url into its tracks. returns a list of track
     dicts (MANIFEST_FIELDS shape) in album-rank order, deduped by spotify_url
     (a track on both a top album and a compilation only needs one file)."""
-    try:
-        token = _get_spotify_token()
-    except Exception as e:
-        print(f"error getting spotify token: {e}")
-        return []
-
     found = [a for a in albums if a.get('spotify_url')]
     print(f"\nexpanding {len(found)} album(s) into tracks...")
 
@@ -282,7 +229,7 @@ def expand_albums_to_tracks(albums, delay=0.3):
             print(f"  [{i}/{len(found)}] ✗  {album['artist']} - {album['title']}: bad url")
             continue
 
-        album_name, items = fetch_album_tracks(token, album_id, delay)
+        album_name, items = fetch_album_tracks(sp, album_id, delay)
         added = 0
         for item in items:
             row = _track_row(item, album_name)
@@ -302,6 +249,7 @@ def export_tracks(track_rows, output_dir):
     """write the track-level manifest (spotify_manifest.csv columns) + a txt of
     track urls. feed the csv - not the txt - to `spotify --pre-skip-existing`;
     the txt has no track metadata, so its existence check would skip nothing."""
+    import csv
     os.makedirs(output_dir, exist_ok=True)
 
     csv_path = os.path.join(output_dir, 'soundbyte_tracks.csv')
@@ -321,43 +269,36 @@ def export_tracks(track_rows, output_dir):
     return csv_path, urls_path
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='export top soundbyte albums from firestore and find them on spotify'
-    )
-    parser.add_argument('--limit', '-n', type=int, default=DEFAULT_LIMIT,
-                        help=f'number of top albums to fetch (default: {DEFAULT_LIMIT})')
-    parser.add_argument('--output', '-o', type=str, default='export',
-                        help='output directory (default: export/)')
-    parser.add_argument('--skip-spotify', action='store_true',
-                        help='fetch from firestore only, skip spotify search')
-    parser.add_argument('--delay', type=float, default=0.3,
-                        help='seconds between spotify api calls (default: 0.3)')
-    parser.add_argument('--expand-albums', action='store_true',
-                        help='also expand each spotify album into its tracks and write '
-                             'soundbyte_tracks.csv (spotify_manifest.csv format) for use '
-                             'with spotify --pre-skip-existing')
-    args = parser.parse_args()
+def run_soundbyte(limit=DEFAULT_LIMIT, output_dir=None, delay=0.3):
+    """full pipeline: firestore top-N albums -> spotify album search ->
+    album csv/urls -> expand matched albums into a track-level manifest
+    (MANIFEST_FIELDS-shaped, same columns as spotify_manifest.csv) that
+    `spotify_download`/`spotify --pre-skip-existing` can consume directly.
 
-    try:
-        albums = fetch_from_firestore(limit=args.limit)
-        if not args.skip_spotify:
-            enrich_with_spotify(albums, delay=args.delay)
-        export_albums(albums, args.output)
+    single entry point for cli.py, same shape as retry.run_retry(): the
+    step functions above already do their own progress printing (unlike
+    run_retry, which reports purely via its return dict), so this just
+    sequences them and hands back the artifact paths for cli.py to
+    summarize/exit-code on.
+    """
+    output_dir = output_dir or get_export_dir()
 
-        if args.expand_albums:
-            if args.skip_spotify:
-                print("note: --expand-albums needs spotify urls - skipping (drop --skip-spotify).")
-            else:
-                tracks = expand_albums_to_tracks(albums, delay=args.delay)
-                if tracks:
-                    export_tracks(tracks, args.output)
-                else:
-                    print("no tracks to export.")
-    except Exception as e:
-        print(f"error: {e}")
-        sys.exit(1)
+    albums = fetch_from_firestore(limit=limit)
 
+    sp = authenticate_client()
+    enrich_with_spotify(sp, albums, delay=delay)
+    album_csv_path, album_urls_path = export_albums(albums, output_dir)
 
-if __name__ == '__main__':
-    main()
+    track_rows = expand_albums_to_tracks(sp, albums, delay=delay)
+    track_csv_path, track_urls_path = export_tracks(track_rows, output_dir)
+
+    return {
+        'albums': albums,
+        'album_csv_path': album_csv_path,
+        'album_urls_path': album_urls_path,
+        'track_rows': track_rows,
+        'track_csv_path': track_csv_path,
+        'track_urls_path': track_urls_path,
+        'matched_count': len([a for a in albums if a.get('spotify_url')]),
+        'total_count': len(albums),
+    }

@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "beets[embedart,fetchart,lyrics]>=2.12.0",
+    "click>=8.1.0",
     "deno>=2.9.1",
     "firebase-admin>=7.5.0",
     "pytest>=9.1.1",
@@ -21,19 +22,17 @@ dependencies = [
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["download", "organize", "playlists", "tapedeck", "pipelines"]
+packages = ["lib", "lib.catalog", "download", "organize", "playlists", "tapedeck", "core"]
 
 [project.scripts]
-export = "download.spotify_to_csv:main"
-spotify = "download.download_spotify:main"
-ytdl = "download.yt_dlp_downloader:main"
-retry = "download.retry_failures:main"
+download = "download.cli:download"
 cleanup = "organize.cleanup:main"
-soundbyte = "download.soundbyte_albums:main"
 import = "organize.beets_import:main"
 preimport = "organize.preimport:main"
 playlists = "playlists.build:main"
 tapedeck = "tapedeck.deck:main"
-pipelines = "pipelines.build:main"
+core = "core.build:main"
+
 [project.optional-dependencies]
 test = ["pytest"]
+    

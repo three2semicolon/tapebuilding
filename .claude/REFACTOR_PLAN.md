@@ -99,7 +99,8 @@ One general-purpose resolver, plus named convenience wrappers for the roots
 that actually exist:
 
 ```python
-def resolve(env_name, cli=None, default=None, required=False):
+def resolve(env_name, 
+            cli=None, default=None, required=False):
     """cli override > ENV_NAME > env_name (lowercase) > default.
     raises if required and nothing resolves."""
 
@@ -230,7 +231,9 @@ needs any at all once catalog moves out).
 
 ## Per-package `cli.py` split
 
-Mechanical pattern for every package: `cli.py` owns `argparse` setup and
+Mechanical pattern for every package: `cli.py` 
+
+use click for cli across all packages
 subcommand dispatch (where relevant, e.g. `tapedeck load/unload/list`), and
 calls into plain functions in the sibling modules. Nothing in the non-cli
 modules should call `sys.exit()`, print `--help`, or otherwise assume it's
@@ -250,8 +253,7 @@ will want to consume later.
 
 ## `core/` — from subprocess to in-process
 
-`pipelines/download_songs.py` today shells out via `python -m
-download.download_spotify`, etc., and only gets a shell exit code back. The
+`pipelines/download_songs.py` today shells out via `python -m download.download_spotify`, etc., and only gets a shell exit code back. The
 refactor changes the *mechanism*, not the *shape* of the workflow:
 
 ```python
@@ -275,6 +277,7 @@ the CLI-facing behavior doesn't regress.
 
 Benefits this unlocks, not required immediately but worth keeping in mind
 while writing `core/`'s function signatures:
+
 - Structured return values (counts, per-step results) instead of a bare exit
   code — useful for the CLI's own summary printing today, essential for
   `app/` later.
@@ -291,6 +294,7 @@ while writing `core/`'s function signatures:
 
 Not part of this refactor pass. Once `lib/`, the four domain packages, and
 `core/` are done, `app/` is meant to be a thin layer that:
+
 - imports `lib/`, the domain packages, and `core/` directly (no subprocess,
   no shelling out to CLIs it doesn't own),
 - runs locally as a browser app for manipulating the library,

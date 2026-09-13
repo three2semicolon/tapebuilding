@@ -1,37 +1,24 @@
+"""download.spotify_api - spotify web api fetchers + csv export helpers used
+by spotify_export.py.
 
+was spotify_utils.py. renamed since what's left after the lib/ split is
+purely "talk to the spotify api and write csvs" - the two things that moved
+out (authenticate_spotify -> lib.spotify_auth.authenticate_user,
+_normalize_title/_fuzzy_key -> lib.text.normalize_title/primary_artist) were
+the only things making the old name ambiguous.
+
+get_export_dir() is now a thin wrapper over lib.paths.exports_dir() rather
+than its own `<repo>/export` default - per REFACTOR_PLAN.md, spotify csvs +
+the cached catalog sidecar both live under PLAYLISTS_PATH/exports now, one
+resolver. kept as a wrapper (not deleted) so call sites don't all need to
+change their import.
+"""
 
 import os
-import re
 import csv
-import json
-from datetime import datetime
-from dotenv import load_dotenv
-import spotipy
-from spotipy.oauth2 import SpotifyOAuth
 
-load_dotenv()
-
-SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
-SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
-SPOTIFY_REDIRECT_URI = os.getenv('SPOTIFY_REDIRECT_URI', 'http://localhost:8888/callback')
-SPOTIFY_USER_ID = os.getenv('SPOTIFY_USER_ID')
-
-
-def authenticate_spotify():
-    if not all([SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET]):
-        raise ValueError("spotify credentials not found, set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in .env")
-
-    scope = "playlist-read-private playlist-read-collaborative user-library-read user-follow-read"
-
-    auth_manager = SpotifyOAuth(
-        client_id=SPOTIFY_CLIENT_ID,
-        client_secret=SPOTIFY_CLIENT_SECRET,
-        redirect_uri=SPOTIFY_REDIRECT_URI,
-        scope=scope,
-        cache_path="token_cache"
-    )
-
-    return spotipy.Spotify(auth_manager=auth_manager)
+from lib.paths import exports_dir
+from lib.text import normalize_title, primary_artist
 
 
 def get_user_playlists(sp, my_playlists_only=False):
@@ -76,6 +63,42 @@ def get_user_playlists(sp, my_playlists_only=False):
     return playlists
 
 
+def _extract_track(item, playlist_id, playlist_name):
+    track = item.get('track')
+    if not track:
+        return None
+
+    artists = track.get('artists', [])
+    artist_names = ', '.join([artist.get('name', '') for artist in artists]) if artists else ''
+    album = track.get('album', {})
+    album_name = album.get('name', '') if album else ''
+    added_by = item.get('added_by', {})
+    added_by_id = added_by.get('id') if added_by else None
+
+    spotify_url = ''
+    external_urls = track.get('external_urls', {})
+    if isinstance(external_urls, dict):
+        spotify_url = external_urls.get('spotify', '')
+
+    return {
+        'playlist_id': playlist_id,
+        'playlist_name': playlist_name,
+        'track_id': track.get('id', ''),
+        'track_name': track.get('name', ''),
+        'artist_names': artist_names,
+        'album_name': album_name,
+        'duration_ms': track.get('duration_ms', 0),
+        'explicit': track.get('explicit', False),
+        'popularity': track.get('popularity', 0),
+        'added_at': item.get('added_at', ''),
+        'added_by': added_by_id,
+        'spotify_url': spotify_url,
+        'track_number': track.get('track_number', 0),
+        'disc_number': track.get('disc_number', 0),
+        'is_local': track.get('is_local', False),
+    }
+
+
 def get_playlist_tracks(sp, playlist_id, playlist_name):
     print(f"  fetching tracks from playlist: {playlist_name}")
     tracks = []
@@ -83,47 +106,9 @@ def get_playlist_tracks(sp, playlist_id, playlist_name):
 
     while results:
         for item in results.get('items', []):
-            track = item.get('track')
-            if track:
-                track_id = track.get('id', '')
-                track_name = track.get('name', '')
-                artists = track.get('artists', [])
-                artist_names = ', '.join([artist.get('name', '') for artist in artists]) if artists else ''
-                album = track.get('album', {})
-                album_name = album.get('name', '') if album else ''
-                duration_ms = track.get('duration_ms', 0)
-                explicit = track.get('explicit', False)
-                popularity = track.get('popularity', 0)
-                added_at = item.get('added_at', '')
-                added_by = item.get('added_by', {})
-                added_by_id = added_by.get('id') if added_by else None
-
-                spotify_url = ''
-                external_urls = track.get('external_urls', {})
-                if isinstance(external_urls, dict):
-                    spotify_url = external_urls.get('spotify', '')
-
-                track_number = track.get('track_number', 0)
-                disc_number = track.get('disc_number', 0)
-                is_local = track.get('is_local', False)
-
-                tracks.append({
-                    'playlist_id': playlist_id,
-                    'playlist_name': playlist_name,
-                    'track_id': track_id,
-                    'track_name': track_name,
-                    'artist_names': artist_names,
-                    'album_name': album_name,
-                    'duration_ms': duration_ms,
-                    'explicit': explicit,
-                    'popularity': popularity,
-                    'added_at': added_at,
-                    'added_by': added_by_id,
-                    'spotify_url': spotify_url,
-                    'track_number': track_number,
-                    'disc_number': disc_number,
-                    'is_local': is_local
-                })
+            entry = _extract_track(item, playlist_id, playlist_name)
+            if entry:
+                tracks.append(entry)
 
         if results.get('next'):
             results = sp.next(results)
@@ -140,47 +125,9 @@ def get_liked_songs(sp):
 
     while results:
         for item in results.get('items', []):
-            track = item.get('track')
-            if track:
-                track_id = track.get('id', '')
-                track_name = track.get('name', '')
-                artists = track.get('artists', [])
-                artist_names = ', '.join([artist.get('name', '') for artist in artists]) if artists else ''
-                album = track.get('album', {})
-                album_name = album.get('name', '') if album else ''
-                duration_ms = track.get('duration_ms', 0)
-                explicit = track.get('explicit', False)
-                popularity = track.get('popularity', 0)
-                added_at = item.get('added_at', '')
-                added_by = item.get('added_by', {})
-                added_by_id = added_by.get('id') if added_by else None
-
-                spotify_url = ''
-                external_urls = track.get('external_urls', {})
-                if isinstance(external_urls, dict):
-                    spotify_url = external_urls.get('spotify', '')
-
-                track_number = track.get('track_number', 0)
-                disc_number = track.get('disc_number', 0)
-                is_local = track.get('is_local', False)
-
-                tracks.append({
-                    'playlist_id': 'liked_songs',
-                    'playlist_name': 'Liked Songs',
-                    'track_id': track_id,
-                    'track_name': track_name,
-                    'artist_names': artist_names,
-                    'album_name': album_name,
-                    'duration_ms': duration_ms,
-                    'explicit': explicit,
-                    'popularity': popularity,
-                    'added_at': added_at,
-                    'added_by': added_by_id,
-                    'spotify_url': spotify_url,
-                    'track_number': track_number,
-                    'disc_number': disc_number,
-                    'is_local': is_local
-                })
+            entry = _extract_track(item, 'liked_songs', 'Liked Songs')
+            if entry:
+                tracks.append(entry)
 
         if results.get('next'):
             results = sp.next(results)
@@ -190,26 +137,19 @@ def get_liked_songs(sp):
     return tracks
 
 
-def _normalize_title(s):
-    s = s.lower()
-    s = re.sub(r'\s*(feat\.?|ft\.?|featuring)\s+.*', '', s)
-    s = re.sub(r'\s*\(.*?\)', '', s)
-    s = re.sub(r'[^\w\s]', '', s)
-    s = re.sub(r'\s+', ' ', s).strip()
-    return s
-
-
 def _fuzzy_key(track):
-    artists = track.get('artist_names', '')
-    primary = artists.split(',')[0].strip() if artists else ''
+    """primary-artist + title dedup key, collapsing remasters/regional
+    versions. was spotify_utils._fuzzy_key / _normalize_title - now a thin
+    caller of lib.text instead of its own regex."""
+    primary = primary_artist(track.get('artist_names', ''))
     title = track.get('track_name', '')
-    return f"{_normalize_title(primary)}|||{_normalize_title(title)}"
+    return f"{normalize_title(primary)}|||{normalize_title(title)}"
 
 
 def merge_and_deduplicate(playlists_data, liked_songs_data):
-    """two-pass: dedup by spotify track id, then by normalized primary-artist + title
-    to collapse remasters/regional versions; on a fuzzy collision keep the more
-    popular track as the canonical download url."""
+    """two-pass: dedup by spotify track id, then by normalized primary-artist
+    + title to collapse remasters/regional versions; on a fuzzy collision
+    keep the more popular track as the canonical download url."""
     print("merging and deduplicating tracks...")
 
     all_tracks = playlists_data + liked_songs_data
@@ -251,8 +191,8 @@ def merge_and_deduplicate(playlists_data, liked_songs_data):
             'spotify_url': track_data.get('spotify_url', '')
         })
 
-    # second pass: fuzzy dedup by primary-artist + title; on collision, merge the
-    # dropped track's playlist memberships into the keeper
+    # second pass: fuzzy dedup by primary-artist + title; on collision, merge
+    # the dropped track's playlist memberships into the keeper
     fuzzy_dict = {}
     for track in id_deduped:
         key = _fuzzy_key(track)
@@ -298,8 +238,11 @@ def export_to_csv(data, filename, export_dir):
     print(f"exported {len(data)} rows to {filepath}")
 
 
-def export_manifest_as_txt(tracks, export_dir):
-    txt_filepath = os.path.join(export_dir, 'spotify_manifest_urls.txt')
+def export_manifest_as_txt(tracks, export_dir, filename='spotify_manifest_urls.txt'):
+    """filename is overridable so a scoped manifest (e.g. spotify_export's
+    multi-playlist export) doesn't clobber the full-library
+    spotify_manifest_urls.txt when both live in the same export dir."""
+    txt_filepath = os.path.join(export_dir, filename)
 
     with open(txt_filepath, 'w', encoding='utf-8') as f:
         for track in tracks:
@@ -312,8 +255,5 @@ def export_manifest_as_txt(tracks, export_dir):
 
 
 def get_export_dir(base_dir=None):
-    if base_dir is None:
-        base_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'export')
-
-    os.makedirs(base_dir, exist_ok=True)
-    return base_dir
+    """thin wrapper over lib.paths.exports_dir() - see module docstring."""
+    return exports_dir(cli=base_dir)
