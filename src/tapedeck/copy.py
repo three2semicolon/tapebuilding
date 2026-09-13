@@ -12,12 +12,16 @@ have staged, then prune the now-empty parent dirs up to the tapedeck root. playl
 unload is refcounted - an audio file is removed only if no *other* m3u8 still in
 tapedeck/playlists/ references it, so two playlists sharing a track don't drop it
 when one is unloaded.
+
+lib/ refactor: the playlist-refcount check now reads a still-staged m3u8 via
+lib.m3u.read_m3u8() instead of importing tapedeck.resolve's (now-removed) private
+_parse_m3u8 - one fewer duplicate reader of the .m3u8 format.
 """
 
 import os
 import shutil
 
-from tapedeck.resolve import _parse_m3u8   # m3u path-lines -> abs crate files
+from lib.m3u import read_m3u8   # m3u path-lines -> {track_ids, existing, missing}
 
 M3U_EXT = ('.m3u8', '.m3u')
 # the mirrored subtrees we prune back up to the tapedeck root on unload
@@ -157,7 +161,7 @@ def _remaining_playlist_refs(tapedeck, removing_rels):
         if _norm_rel(rel_norm) in removing_rels:
             continue
         m3u_abs = os.path.join(playlists_dir, fn)
-        for ref in _parse_m3u8(m3u_abs)[0]:          # existing referenced files
+        for ref in read_m3u8(m3u_abs)['existing']:   # existing referenced files
             r = _rel_under(ref, tapedeck)
             if r:
                 protected.add(_norm_rel(r))

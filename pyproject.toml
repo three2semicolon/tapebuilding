@@ -27,7 +27,7 @@ packages = ["lib", "lib.catalog", "download", "organize", "playlists", "tapedeck
 [project.scripts]
 download = "download.cli:download"
 organize = "organize.cli:organize"
-playlists = "playlists.build:main"
+playlists = "playlists.cli:playlists"
 tapedeck = "tapedeck.deck:main"
 core = "core.build:main"
 

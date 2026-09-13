@@ -1,5 +1,4 @@
-
-"""playlists - build/maintain local .m3u8 files from spotify playlists.
+"""playlists.build - build/maintain local .m3u8 files from spotify playlists.
 
 for each spotify playlist (default: only the ones you own), resolve every track
 to a file in the crate and write one .m3u8 (relative paths, with a #SPOTIFY:<id>
@@ -10,7 +9,11 @@ re-running is the add/remove/update semantic: the .m3u8 is rebuilt from current
 spotify membership, so adds/removes/reorders on spotify flow through on the next
 run. songs may be in multiple playlists.
 
-usage:
+cli.py owns argument parsing / exit codes; build_playlists() below is the
+plain, import-safe entry point - no argparse/sys.exit in here, so core/ can
+call it directly later without shelling out.
+
+usage (via playlists' cli):
   uv run playlists --playlist "_obs"                 # preview one (no files written)
   uv run playlists --apply --playlist "_obs"         # write it
   uv run playlists --apply --rescrape --playlist "_obs"  # rescrape just _obs, then build it
@@ -18,28 +21,33 @@ usage:
   uv run playlists --apply --all                     # include followed/shared lists
   uv run playlists --apply --rescrape --covers        # refresh from spotify + art
   uv run playlists --reindex                          # rebuild the local index sidecar
+
+lib/ refactor: indexer/matcher/m3u now come from lib.catalog.indexer,
+lib.catalog.matcher, lib.m3u instead of the (now-deleted) playlists.indexer/
+playlists.matcher/playlists.m3u; root resolution comes from lib.paths
+instead of playlists.indexer's own resolvers. download.spotify_utils /
+download.spotify_to_csv are gone post-Phase-3 - auth is
+lib.spotify_auth.authenticate_user(), and get_playlist_tracks/
+export_all_data/extract_playlist_id_from_url now live in
+download.spotify_api / download.spotify_export respectively.
 """
 
-import argparse
 import csv
 import os
 import sys
 
-from dotenv import load_dotenv
-load_dotenv()
+from lib.spotify_auth import authenticate_user
+from download.spotify_api import get_playlist_tracks
+from download.spotify_export import export_all_data, extract_playlist_id_from_url
 
-if os.name == "nt":
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.stderr.reconfigure(encoding="utf-8")
-
-from download.spotify_utils import authenticate_spotify, get_playlist_tracks
-from download.spotify_to_csv import export_all_data, extract_playlist_id_from_url
-
-from playlists.indexer import (
-    resolve_playlists_path, resolve_archive_path, resolve_exports_dir, get_index,
+from lib.paths import (
+    archive_path as resolve_archive_path,
+    playlists_path as resolve_playlists_path,
+    exports_dir as resolve_exports_dir,
 )
-from playlists.matcher import MatchIndex, match_rows
-from playlists.m3u import safe_name, write_m3u8
+from lib.catalog.indexer import get_index
+from lib.catalog.matcher import MatchIndex, match_rows
+from lib.m3u import safe_name, write_m3u8
 
 try:
     sys.stdout.reconfigure(encoding='utf-8')  # non-ascii artist names on windows
@@ -96,15 +104,17 @@ def _group_tracks_by_playlist(rows):
     return groups
 
 
-def _select_playlists(playlists_csv, args):
-    """apply scope (--name over --all over --mine) -> [(meta_row), ...]."""
+def _select_playlists(playlists_csv, names, all_playlists):
+    """apply scope (names over all_playlists over the 'mine' default) ->
+    [(meta_row), ...]. unchanged from the pre-lib/ version - just takes the
+    two scope values directly instead of an argparse Namespace."""
     rows = _read_csv(playlists_csv)
     if not rows:
         raise ValueError(f"no playlists.csv found at {playlists_csv} - run `export` or --rescrape first")
 
-    if args.names:
+    if names:
         wanted = []
-        for token in args.names:
+        for token in names:
             as_id = extract_playlist_id_from_url(token)
             is_id = len(as_id) >= 16          # bare id, or id extracted from a url
             wanted.append((token, as_id, is_id))
@@ -117,22 +127,22 @@ def _select_playlists(playlists_csv, args):
                     selected.append(meta); break
         return selected
 
-    if args.all:
+    if all_playlists:
         return rows
 
-    # --mine (default)
-    user_id = os.getenv('SPOTIFY_USER_ID') or os.getenv('spotify_user_id')
+    # default: only your own playlists
+    user_id = os.getenv('SPOTIFY_USER_ID')
     if not user_id:
         print("warning: SPOTIFY_USER_ID not set - can't filter to your playlists; building all.")
         return rows
     return [r for r in rows if (r.get('owner') or '') == user_id]
 
 
-def _read_existing_index(args, exports_dir):
-    library = resolve_archive_path(args.archive_path)
+def _read_existing_index(archive_path, exports_dir, reindex, verbose):
+    library = resolve_archive_path(archive_path)
     if not os.path.isdir(library):
         raise ValueError(f"library root not found: {library} (ARCHIVE_PATH / --archive-path)")
-    return get_index(library, exports_dir, reindex=args.reindex, verbose=args.verbose)
+    return get_index(library, exports_dir, reindex=reindex, verbose=verbose)
 
 
 def _download_cover(sp, playlist_id, dest_path):
@@ -157,7 +167,7 @@ def _download_cover(sp, playlist_id, dest_path):
     return True
 
 
-def _scope_rescrape(sp, args, exports_dir):
+def _scope_rescrape(sp, names, exports_dir):
     """--rescrape with -p: fetch only the named playlist(s) from spotify and
     patch their rows into playlists.csv + playlist_tracks.csv, instead of the
     full export_all_data walk of every owned playlist. a name token resolves to
@@ -171,7 +181,7 @@ def _scope_rescrape(sp, args, exports_dir):
     name_to_id = {m.get('name'): m.get('id') for m in metas if m.get('name') and m.get('id')}
 
     to_fetch, missing = [], []
-    for token in args.names:
+    for token in names:
         as_id = extract_playlist_id_from_url(token)
         if len(as_id) >= 16:                         # bare id, or id extracted from a url
             to_fetch.append((token, as_id))
@@ -222,32 +232,44 @@ def _scope_rescrape(sp, args, exports_dir):
     _write_csv(tracks_csv, out_tracks, PLAYLIST_TRACKS_FIELDS)
 
 
-def build_playlists(args):
-    playlists_path = resolve_playlists_path(args.playlists_path)
-    exports_dir = resolve_exports_dir(playlists_path, args.exports_dir)
-    os.makedirs(playlists_path, exist_ok=True)
+def build_playlists(apply=False, all_playlists=False, names=None, rescrape=False,
+                     covers=False, reindex=False, verbose=False,
+                     playlists_path=None, archive_path=None, exports_dir=None):
+    """build/refresh local .m3u8s from current spotify playlist membership.
+
+    plain, import-safe entry point - cli.py resolves click options into
+    these kwargs and turns exceptions into exit codes; nothing in here
+    calls sys.exit(), so core/ can call this directly later. `mine` isn't
+    a parameter here on purpose: it was always a no-op in the original too
+    (argparse only used it for the --all/--mine mutual-exclusion error,
+    never inspected past that) - that check now lives in cli.py.
+    """
+    names = names or []
+    playlists_path_resolved = resolve_playlists_path(playlists_path)
+    exports_dir_resolved = resolve_exports_dir(playlists_path_resolved, exports_dir)
+    os.makedirs(playlists_path_resolved, exist_ok=True)
 
     sp = None
-    if args.rescrape or args.covers:
-        sp = authenticate_spotify()
-    if args.rescrape:
-        if args.names:
-            _scope_rescrape(sp, args, exports_dir)
+    if rescrape or covers:
+        sp = authenticate_user()
+    if rescrape:
+        if names:
+            _scope_rescrape(sp, names, exports_dir_resolved)
         else:
-            print("rescraping spotify (--rescrape) into " + exports_dir)
-            export_all_data(sp, exports_dir, my_playlists_only=True)
+            print("rescraping spotify (--rescrape) into " + exports_dir_resolved)
+            export_all_data(sp, exports_dir_resolved, my_playlists_only=True)
 
-    playlists_csv = os.path.join(exports_dir, 'playlists.csv')
-    tracks_csv = os.path.join(exports_dir, 'playlist_tracks.csv')
-    selected = _select_playlists(playlists_csv, args)
+    playlists_csv = os.path.join(exports_dir_resolved, 'playlists.csv')
+    tracks_csv = os.path.join(exports_dir_resolved, 'playlist_tracks.csv')
+    selected = _select_playlists(playlists_csv, names, all_playlists)
     grouped = _group_tracks_by_playlist(_read_csv(tracks_csv))
 
     print(f"\nbuilding {len(selected)} playlist(s) from {tracks_csv}")
-    if len(selected) <= 12 or args.verbose:
+    if len(selected) <= 12 or verbose:
         for m in selected:
             print(f"  - {m.get('name')} ({m.get('track_count')} tracks on spotify)")
 
-    index = _read_existing_index(args, exports_dir)
+    index = _read_existing_index(archive_path, exports_dir_resolved, reindex, verbose)
     mindex = MatchIndex(index)
 
     total_tracks = total_matched = total_unmatched = total_written = 0
@@ -257,7 +279,7 @@ def build_playlists(args):
         pid = meta.get('id')
         name = meta.get('name') or meta.get('id') or 'Unknown'
         rows = grouped.get(pid, [])
-        results = match_rows(rows, mindex, verbose=args.verbose)
+        results = match_rows(rows, index=mindex, verbose=verbose)
 
         matched_entries = []
         for rec in results:
@@ -287,23 +309,24 @@ def build_playlists(args):
         unmatched_count = len(rows) - len(matched_entries)
         print(f"\n[{i}/{len(selected)}] {name} - {len(matched_entries)}/{len(rows)} matched ({unmatched_count} unmatched)")
 
-        if args.apply and matched_entries:
-            m3u8_path = os.path.join(playlists_path, safe_name(name) + '.m3u8')
+        if apply and matched_entries:
+            m3u8_path = os.path.join(playlists_path_resolved, safe_name(name) + '.m3u8')
             write_m3u8(m3u8_path, matched_entries)
             total_written += 1
             print(f"  wrote {m3u8_path}")
-            if args.covers:
-                cover = os.path.join(playlists_path, safe_name(name) + '.jpg')
+            if covers:
+                cover = os.path.join(playlists_path_resolved, safe_name(name) + '.jpg')
                 got = _download_cover(sp, pid, cover)
                 if got:
                     print(f"  wrote {cover}")
 
-    _write_unmatched(exports_dir, unmatched_rows)
+    _write_unmatched(exports_dir_resolved, unmatched_rows)
 
     print(f"\ndone. {total_written}/{len(selected)} playlists written "
           f"({total_matched} matched / {total_unmatched} unmatched of {total_tracks} tracks)")
-    print(f"unmatched -> {os.path.join(exports_dir, 'unmatched.csv')}, "
-          f"{os.path.join(exports_dir, 'unmatched_urls.txt')}")
+    print(f"unmatched -> {os.path.join(exports_dir_resolved, 'unmatched.csv')}, "
+          f"{os.path.join(exports_dir_resolved, 'unmatched_urls.txt')}")
+    return True
 
 
 def _write_unmatched(exports_dir, rows):
@@ -340,37 +363,3 @@ def _csv_escape(v):
     if ',' in v or '"' in v or '\n' in v:
         v = '"' + v.replace('"', '""') + '"'
     return v
-
-
-def main():
-    p = argparse.ArgumentParser(description='build local .m3u8 playlists from spotify playlists',
-                                allow_abbrev=False)
-    p.add_argument('--apply', action='store_true',
-                   help='write the .m3u8 files (default is a preview)')
-    scope = p.add_mutually_exclusive_group()
-    scope.add_argument('--all', action='store_true',
-                       help='build every playlist in playlists.csv (incl. followed/shared)')
-    scope.add_argument('--mine', action='store_true', help='only your own playlists (default)')
-    p.add_argument('-p', '--playlist', action='append', dest='names', metavar='NAME|ID', default=[],
-                   help='build a specific playlist by name or spotify id (repeatable; overrides scope)')
-    p.add_argument('--rescrape', action='store_true',
-                   help="refresh the spotify csvs first (full export; with -p, only the named playlists)")
-    p.add_argument('--covers', action='store_true',
-                   help='download each playlist cover to <name>.jpg (needs --rescrape or spotify auth)')
-    p.add_argument('--reindex', action='store_true',
-                   help='rebuild the local .playlist_index.jsonl sidecar before matching')
-    p.add_argument('--verbose', action='store_true', help='print every match decision')
-    p.add_argument('-o', '--playlists-path', help='PLAYLISTS_PATH override')
-    p.add_argument('--archive-path', help='ARCHIVE_PATH (crate root) override')
-    p.add_argument('--exports-dir', help='exports dir override (default PLAYLISTS_PATH/exports)')
-    args = p.parse_args()
-
-    try:
-        build_playlists(args)
-    except Exception as e:
-        print(f"error: {e}")
-        sys.exit(1)
-
-
-if __name__ == '__main__':
-    main()

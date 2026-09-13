@@ -12,19 +12,38 @@ against the crate. resolution returns four buckets:
 
 the bucket split keeps copy.py ignorant of kind: it just expands folders, copies
 files + m3u8s, and writes to the same crate-relative path under the tapedeck.
+
+lib/ refactor: normalization comes from lib.text (was organize.cleanup.norm_key /
+playlists.matcher._split_artists - the latter is public now as split_artists).
+m3u8 reading for playlist resolution goes through lib.m3u.read_m3u8() instead of
+a private local _parse_m3u8 - that function and playlists/m3u.py's
+parse_spotify_ids were the two independent readers of the same file format
+lib.m3u.read_m3u8() was written to replace (see lib/m3u.py's own docstring).
+copy.py's playlist-refcount check now calls read_m3u8() directly too, instead of
+importing this module's (removed) private function.
+
+deviation from TODO.md's Phase 5 note: that note also called for repointing a
+`playlists.matcher.MatchIndex` import here - there wasn't one to repoint.
+`MatchIndex` was imported in the pre-refactor file but never referenced in its
+body (only `_split_artists` was actually used), so it's dropped instead of
+being carried forward as a second, now-also-unused import from lib.catalog.matcher.
 """
 
 import os
 
-from organize.cleanup import norm_key, EXTENSIONS
-from playlists.matcher import MatchIndex, _split_artists
+from lib.text import normalize_key, split_artists
+from lib.tags import EXTENSIONS
+from lib.m3u import read_m3u8
 
 AUDIO_EXT = EXTENSIONS                       # .mp3 .flac .m4a .opus .ogg .wav .aac
+                                              # (kept for parity - not currently
+                                              # referenced anywhere in this file,
+                                              # same as before the refactor)
 M3U_EXT = ('.m3u8', '.m3u')
 
 
 def _norm(s):
-    return norm_key(s)
+    return normalize_key(s)
 
 
 # --- path-or-name probe -----------------------------------------------------
@@ -105,25 +124,6 @@ def _list_m3u8s(playlists_path):
     return out
 
 
-def _parse_m3u8(m3u_abs):
-    """(existing_files, missing_rels) from a crate .m3u8. the m3u's path lines are
-    relative to its own folder (../albums/...), so resolve them against dirname."""
-    existing, missing = [], []
-    base = os.path.dirname(m3u_abs)
-    with open(m3u_abs, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-            rel = line.replace('\\', '/')
-            abs_p = os.path.normpath(os.path.join(base, rel))
-            if os.path.isfile(abs_p):
-                existing.append(abs_p)
-            else:
-                missing.append(rel)
-    return existing, missing
-
-
 # --- per-kind resolution ---------------------------------------------------
 
 def _resolve_album(spec, crate, index):
@@ -178,7 +178,7 @@ def _resolve_song(spec, crate, index, mindex):
     nt = _norm(title_part)
     cands = list(mindex.candidates_exact(nt))
     if artist_part:
-        spot = {_norm(s) for s in _split_artists(artist_part)}
+        spot = {_norm(s) for s in split_artists(artist_part)}
         cands = [c for c in cands if spot & c['artists']]
     if not cands:
         warnings.append(f"song {spec!r}: no title match in the index")
@@ -243,7 +243,8 @@ def _resolve_playlist(spec, crate, playlists_path):
 
 def _add_playlist(m3u8_path, warnings, files, m3u8):
     m3u8.append(m3u8_path)
-    existing, missing = _parse_m3u8(m3u8_path)
+    parsed = read_m3u8(m3u8_path)
+    existing, missing = parsed['existing'], parsed['missing']
     files.extend(existing)
     if missing:
         warnings.append(f"{os.path.basename(m3u8_path)}: {len(missing)} track(s) "

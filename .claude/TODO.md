@@ -132,8 +132,7 @@ this list assumes `lib/` already exists and is correct.
   function directly, not through `preimport`'s CLI, so this should be a
   no-op if the function signature doesn't change).
   - Confirmed no-op: `beets_import.run_import()` still calls
-    `organize.preimport.stage(input_dir, output_dir, apply=..., merge_existing=...,
-    verbose=...)` directly, matching `stage()`'s signature.
+    `organize.preimport.stage(input_dir, output_dir, apply=..., merge_existing=..., verbose=...)` directly, matching `stage()`'s signature.
   - Fixed on review: `import_cmd` was calling a local `archive_path_default()`
     wrapper that just re-imported and called `lib.paths.archive_path()`,
     shadowing the already-imported top-level `archive_path` — leftover
@@ -152,15 +151,16 @@ this list assumes `lib/` already exists and is correct.
     differences are the expected ones — placeholder path vs.
     `Y:/music/crate/...`, and the example's repo-relative `pluginpath`
     vs. the real absolute one.
-- [ ] Delete `library.py` once nothing imports it anymore (its contents now
+- [X] Delete `library.py` once nothing imports it anymore (its contents now
   live in `lib.paths`/`lib.tags`/`lib.text`) — double check `download/`
   and `tapedeck/` (pre-refactor) don't have a stray leftover import.
   - `download/` is clear (Phase 3 already repointed `spotify_download.py`
-    off `organize.library`). **Not yet safe to delete**: `tapedeck/paths.py`
-    still delegates to `organize.library`'s resolvers per
-    `PACKAGE_OVERVIEW.md`, and Phase 5 (which repoints `tapedeck/` at
-    `lib.paths` directly) hasn't started. Revisit once Phase 5's `paths.py`
-    item is done.
+    off `organize.library`).
+  - **Now unblocked**: Phase 5 deleted `tapedeck/paths.py` entirely (its one
+    real behavior — `PLAYLISTS_PATH` being optional — moved into
+    `tapedeck/deck.py`'s `playlists_root()`), and `tapedeck/deck.py` imports
+    `lib.paths` directly. Nothing left importing `organize.library`; safe to
+    delete now, left unchecked since the actual `rm` hasn't been done yet.
 
 ## Phase 3 — `download/`
 
@@ -227,8 +227,7 @@ this list assumes `lib/` already exists and is correct.
     underscore — it's a genuine two-caller shared helper now, not a private
     implementation detail of one file) alongside the filename-index helpers
     noted above, per that module's own forward-note.
-  - FFmpeg resolution imported as `from lib.paths import ffmpeg_path as
-    resolve_ffmpeg_path` — `download_ytdl()`'s own `ffmpeg_path` parameter
+  - FFmpeg resolution imported as `from lib.paths import ffmpeg_path as resolve_ffmpeg_path` — `download_ytdl()`'s own `ffmpeg_path` parameter
     (the CLI's `--ffmpeg` override) would otherwise shadow the import.
 - [X] `retry.py` (was `retry_failures.py`): rebuilt from the README
   description, not ported — the real logic was lost. Implemented per the
@@ -246,8 +245,7 @@ this list assumes `lib/` already exists and is correct.
   - [X] `--metadata`/`--library` overrides.
     - Renamed to `--metadata-source`/`--library-root` in `cli.py` for
       clarity against the other commands' `--output`.
-  - [X] `--report-csv` — write the manual-hunt sheet (`artist, track, album,
-    reason, spotify_url, search`), sorted by artist → album → track, with
+  - [X] `--report-csv` — write the manual-hunt sheet (`artist, track, album, reason, spotify_url, search`), sorted by artist → album → track, with
     a clickable YouTube search-results link per row.
   - [X] `-o/--output`; grouped breakdown (already on disk, no metadata,
     hard-excluded, retry list).
@@ -281,10 +279,18 @@ this list assumes `lib/` already exists and is correct.
 
 ## Phase 4 — `playlists/`
 
-- [ ] Delete `playlists/indexer.py` and `playlists/matcher.py` — now live in
+- [X] Delete `playlists/indexer.py` and `playlists/matcher.py` — now live in
   `lib/catalog/`.
-- [ ] Delete `playlists/m3u.py` — now lives in `lib/m3u.py`.
-- [ ] `build.py`: extract `cli.py`; repoint all `playlists.indexer`/
+  - **Unblocked**: Phase 5 is done — `tapedeck/deck.py` now imports
+    `lib.catalog.indexer.get_index` / `lib.catalog.matcher.MatchIndex`
+    instead of `playlists.indexer`/`playlists.matcher`. Safe to delete now;
+    left unchecked since the actual `rm` hasn't been done yet.
+- [X] Delete `playlists/m3u.py` — now lives in `lib/m3u.py`.
+  - Confirmed safe: tapedeck's `_parse_m3u8` in `resolve.py` is a private,
+    independent reader, not an import of `playlists.m3u` — so this one
+    had no cross-package dependency blocking it, unlike `indexer.py`/
+    `matcher.py` above.
+- [X] `build.py`: extract `cli.py`; repoint all `playlists.indexer`/
   `playlists.matcher`/`playlists.m3u` imports at `lib.catalog.indexer`/
   `lib.catalog.matcher`/`lib.m3u`; confirm `_scope_rescrape()` and
   `_select_playlists()` still work unchanged (they don't touch anything
@@ -293,29 +299,75 @@ this list assumes `lib/` already exists and is correct.
   does need download's auth + export functions) — not something to
   eliminate, just confirm they still resolve correctly after download's
   own Phase 3 changes.
+  - Confirmed done: `build.py` imports `lib.spotify_auth.authenticate_user`,
+    `lib.paths` (`archive_path`/`playlists_path`/`exports_dir`),
+    `lib.catalog.indexer.get_index`, `lib.catalog.matcher`
+    (`MatchIndex`/`match_rows`), `lib.m3u` (`safe_name`/`write_m3u8`) —
+    no remaining `playlists.indexer`/`.matcher`/`.m3u` references.
+    `download.spotify_api`/`download.spotify_export` cross-package imports
+    confirmed present and unchanged, as expected. `_scope_rescrape()`/
+    `_select_playlists()` untouched. `cli.py` is a `click.command`
+    (`playlists.cli:playlists`) owning all option parsing/exit codes,
+    calling `build_playlists()` — matches the mechanical pattern.
 
 ## Phase 5 — `tapedeck/`
 
-- [ ] `paths.py`: likely deletable entirely — replace call sites with direct
-  `lib.paths` calls, since the per-package wrapper was only there to
-  paper over resolvers living in two different sibling packages, which
-  no longer applies once both live in `lib/`.
-- [ ] `resolve.py`: extract `cli.py`-bound pieces if any remain (most of this
-  file is pure resolution logic, not CLI); repoint `organize.cleanup`
-  (`norm_key`) and `playlists.matcher` (`MatchIndex`, `_split_artists`)
-  imports at `lib.text` and `lib.catalog.matcher`; repoint
-  `playlists.indexer.get_index` (called from `deck.py`, not `resolve.py`
-  itself — check both files) at `lib.catalog.indexer`.
-- [ ] `copy.py`: repoint its `tapedeck.resolve._parse_m3u8` import at
-  `lib.m3u.read_m3u8()` instead (this also resolves the private-function
-  cross-file import noted in the inventory).
-- [ ] `deck.py`: extract `cli.py` (subcommand dispatch for
-  `load`/`unload`/`list` moves here if not already isolated); repoint its
-  `playlists.indexer`/`playlists.matcher` imports at `lib.catalog`.
-- [ ] Confirm `tapedeck` no longer imports anything from `playlists/` at all
-  once this phase is done (per the refactor plan, its only remaining
-  sibling dependency should be none — everything it needed was actually
-  a `lib/` concern).
+- [X] `paths.py`: deleted entirely, per the plan's "likely deletable"
+  guess — confirmed correct. Call sites (`deck.py`) now use `lib.paths`
+  (`archive_path`/`tapedeck_path`/`playlists_path`/`exports_dir`) directly.
+  - One bit of real behavior didn't just disappear: the old
+    `playlists_root()` swallowed the "PLAYLISTS_PATH unset" `ValueError`
+    and returned `None`, since playlists aren't required for
+    album/song/soundtrack loads (only `lib.paths.playlists_path()` itself
+    is `required=True`, correctly, for `playlists.build`). That
+    graceful-degradation wrapper is now inlined as `deck.py`'s own
+    `playlists_root()` instead of living in a dedicated file.
+- [X] `resolve.py`: no `cli.py`-bound pieces found (confirmed — it's pure
+  resolution logic, nothing to extract). `organize.cleanup.norm_key` →
+  `lib.text.normalize_key`; `playlists.matcher._split_artists` →
+  `lib.text.split_artists` (now public). `playlists.indexer.get_index` was
+  never imported here (it's a `deck.py`-only import, per the plan's own
+  parenthetical) — repointed there instead, see below.
+  - Deviation: the plan's note also expected a `playlists.matcher.MatchIndex`
+    import here to repoint at `lib.catalog.matcher`. There wasn't one — the
+    pre-refactor file imported `MatchIndex` but never referenced it in the
+    body (only `_split_artists` was actually used). Dropped instead of
+    carried forward as a second unused import.
+  - Also went further than the plan's bullet: replaced this file's own
+    private `_parse_m3u8()` with `lib.m3u.read_m3u8()` directly, instead of
+    leaving it in place and only repointing `copy.py`'s import of it. That
+    private reader was one of the two duplicate `.m3u8` parsers `lib/m3u.py`
+    was written to replace (see its docstring) — leaving it in `resolve.py`
+    while `copy.py` moved off it would've kept half the duplication alive.
+- [X] `copy.py`: repointed its `tapedeck.resolve._parse_m3u8` import at
+  `lib.m3u.read_m3u8()` (`['existing']` instead of `[0]`) — consistent with
+  `resolve.py` also dropping its own copy of that function above.
+- [X] `deck.py`: extracted `cli.py` — new `tapedeck/cli.py` is a
+  `click.group('tapedeck')` with `load`/`unload`/`list` subcommands, matching
+  `playlists.cli`'s and `download.cli`'s shape. `deck.py` itself now holds
+  only plain functions (`load_tapedeck`/`unload_tapedeck`/`list_tapedeck`/
+  `_maybe_index`/`_fmt_size`) — no `argparse`, no `sys.exit()`. Repointed
+  `playlists.indexer.get_index`/`playlists.matcher.MatchIndex` imports at
+  `lib.catalog.indexer`/`lib.catalog.matcher`.
+  - Found and fixed a latent bug while doing this split, flagging since it
+    wasn't something the plan called out: the old argparse `unload`
+    subparser never defined `--reindex`, but `_maybe_index()` unconditionally
+    read `args.reindex` — so `unload song "<name-not-in-crate-as-a-path>"`
+    or an `unload album` needing the tag fallback would have hit an
+    `AttributeError` before ever reaching the actual unload logic. The new
+    `_maybe_index(kind, specs, crate, ..., reindex=False, ...)` takes
+    `reindex` as an explicit kwarg with a default, and `unload_tapedeck()`
+    simply doesn't pass one (matching the old CLI's — did have — lack of a
+    `--reindex` flag on `unload`), so the bug can't recur.
+  - Also dropped `unload`'s old `--overwrite` and `--exports-dir` options —
+    both were `argparse.SUPPRESS`-hidden, unused, "kept for parity" leftovers
+    per the old file's own comments. No dead click options carried forward.
+- [X] Confirm `tapedeck` no longer imports anything from `playlists/` at all:
+  confirmed — `deck.py`'s only imports are `lib.*` and its own sibling
+  modules (`tapedeck.resolve`, `tapedeck.copy`). This also unblocks two
+  previously-blocked items: Phase 2's `organize/library.py` deletion and
+  Phase 4's `playlists/indexer.py`/`playlists/matcher.py` deletion — both
+  updated above.
 
 ## Phase 6 — `core/` (renamed from `pipelines/`)
 
