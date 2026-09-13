@@ -116,29 +116,51 @@ this list assumes `lib/` already exists and is correct.
 
 ## Phase 2 — `organize/`
 
-- [ ] Strip the toolkit half out of `cleanup.py`, leaving only the
+- [X] Strip the toolkit half out of `cleanup.py`, leaving only the
   regroup-in-place policy (`group_files`, `build_plan`,
   `prune_empty_dirs`, `rebuild_db`) plus its own `cli.py`-bound `main`.
-- [ ] Update `cleanup.py` to import the toolkit functions from `lib.tags`
+- [X] Update `cleanup.py` to import the toolkit functions from `lib.tags`
   and `lib.text` instead of defining them locally.
-- [ ] Update `preimport.py`'s imports the same way (it already imports most
+- [X] Update `preimport.py`'s imports the same way (it already imports most
   of its primitives from `cleanup.py` — repoint those imports at `lib.tags`
   and `lib.text` directly instead of via `cleanup.py`).
-- [ ] Extract `cli.py` from both `cleanup.py` and `preimport.py`'s existing
+  - Only `group_files`/`resolve_crate` still come from `organize.cleanup`,
+    deliberately — organize-specific policy, not a generic `lib/` concern.
+- [X] Extract `cli.py` from both `cleanup.py` and `preimport.py`'s existing
   `main()` functions; confirm `beets_import.py`'s call into
   `organize.preimport.stage()` still works unchanged (it calls the
   function directly, not through `preimport`'s CLI, so this should be a
   no-op if the function signature doesn't change).
-- [ ] `beets_import.py`: extract `cli.py`; replace the inline
+  - Confirmed no-op: `beets_import.run_import()` still calls
+    `organize.preimport.stage(input_dir, output_dir, apply=..., merge_existing=...,
+    verbose=...)` directly, matching `stage()`'s signature.
+  - Fixed on review: `import_cmd` was calling a local `archive_path_default()`
+    wrapper that just re-imported and called `lib.paths.archive_path()`,
+    shadowing the already-imported top-level `archive_path` — leftover
+    from the extraction. Now calls `archive_path()` directly. Also dropped
+    a stray duplicate `import os` near the bottom of the file (`os` is
+    already imported at the top).
+- [X] `beets_import.py`: extract `cli.py`; replace the inline
   `os.getenv('ARCHIVE_PATH') or os.getenv('archive_path')` with
   `lib.paths.archive_path()`.
-- [ ] `normalize_artists.py`: leave untouched (beets plugin, not a CLI tool,
+- [X] `normalize_artists.py`: leave untouched (beets plugin, not a CLI tool,
   no dependency on anything being refactored).
-- [ ] Confirm `config.yaml.example` still matches reality; leave the real
+- [X] Confirm `config.yaml.example` still matches reality; leave the real
   `config.yaml` as machine-specific/gitignored.
+  - Checked against the real `config.yaml`: matches on every setting
+    (`import`, `match`, `plugins`, `fetchart`, `embedart`, `ui`). Only
+    differences are the expected ones — placeholder path vs.
+    `Y:/music/crate/...`, and the example's repo-relative `pluginpath`
+    vs. the real absolute one.
 - [ ] Delete `library.py` once nothing imports it anymore (its contents now
   live in `lib.paths`/`lib.tags`/`lib.text`) — double check `download/`
   and `tapedeck/` (pre-refactor) don't have a stray leftover import.
+  - `download/` is clear (Phase 3 already repointed `spotify_download.py`
+    off `organize.library`). **Not yet safe to delete**: `tapedeck/paths.py`
+    still delegates to `organize.library`'s resolvers per
+    `PACKAGE_OVERVIEW.md`, and Phase 5 (which repoints `tapedeck/` at
+    `lib.paths` directly) hasn't started. Revisit once Phase 5's `paths.py`
+    item is done.
 
 ## Phase 3 — `download/`
 

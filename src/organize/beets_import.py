@@ -1,6 +1,4 @@
-
-"""
-two-pass beets importer:
+"""organize.beets_import - two-pass beets importer:
   pass 1 - album mode:    groups multi-track albums, moves to albums/Artist - Album/
   pass 2 - singles mode:  remaining loose tracks move to singles/Artist - Title
 
@@ -11,22 +9,27 @@ singles pass sweeps <input> for the leftover loose files. running both passes on
 a flat directory imports everything as one giant album - avoid that by keeping
 album folders under an albums/ subdir (or use --pass to target a specific subtree).
 
-usage:
-  uv run python -m organize.beets_import -i <crate>/unorganized -o <crate>
-  uv run python -m organize.beets_import -i ... -o ... --dry-run
-  uv run python -m organize.beets_import -i ... -o ... --pass albums   # album pass only
-  uv run python -m organize.beets_import -i ... -o ... --pass singles  # singles pass only
-  uv run python -m organize.beets_import --export-csv                   # dump library to csv
+cli.py owns argument parsing / exit codes; run_import() below is the plain,
+import-safe entry point (also what organize.cli calls). organize.preimport's
+stage() is called directly here, not through preimport's own cli - so this
+doesn't shell out or depend on preimport's argument parsing at all.
+
+usage (via organize's cli):
+  uv run organize import -i <crate>/unorganized -o <crate>
+  uv run organize import -i ... -o ... --dry-run
+  uv run organize import -i ... -o ... --pass albums   # album pass only
+  uv run organize import -i ... -o ... --pass singles  # singles pass only
+  uv run organize import --export-csv                   # dump library to csv
 """
 
-import argparse
 import os
 import subprocess
 import sys
 import csv
-from dotenv import load_dotenv
 
-load_dotenv()
+from lib.paths import archive_path
+from lib.tags import EXTENSIONS
+
 
 def _config_path():
     """config.yaml sits alongside this file in organize/."""
@@ -82,7 +85,7 @@ def _warn_singles_after_albums(input_dir):
     if not os.path.isdir(albums_subdir):
         return
     has_audio = any(
-        f.lower().endswith(('.mp3', '.flac', '.m4a', '.opus', '.ogg', '.wav', '.aac'))
+        f.lower().endswith(EXTENSIONS)
         for _0, _1, files in os.walk(albums_subdir) for f in files
     )
     if has_audio:
@@ -183,53 +186,30 @@ def print_library_stats(output_dir):
     print(f"  albums : {len(albums)}")
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='two-pass beets importer: albums then singletons'
-    )
-    parser.add_argument('--input', '-i', type=str,
-                        help='input directory of unorganized files')
-    parser.add_argument('--output', '-o', type=str,
-                        help='output/library root (defaults to ARCHIVE_PATH)')
-    parser.add_argument('--dry-run', '-n', action='store_true',
-                        help='preview what beets would do without moving any files')
-    parser.add_argument('--pass', dest='only_pass', choices=['albums', 'singles'],
-                        help='run only one pass (default: run both)')
-    parser.add_argument('--timid', action='store_true',
-                        help='prompt on uncertain matches instead of skipping them')
-    parser.add_argument('--no-preimport', action='store_true',
-                        help='skip the pre-import staging step (raw two-pass beets)')
-    parser.add_argument('--no-merge-existing', action='store_true',
-                        help="don't merge incoming tracks into existing crate album folders")
-    parser.add_argument('--verbose', '-v', action='store_true',
-                        help='print every staging move + the beets commands')
-    parser.add_argument('--export-csv', action='store_true',
-                        help='export library index to library.csv and exit')
-    parser.add_argument('--csv-path', type=str,
-                        help='custom path for --export-csv output')
+def run_import(input_dir, output_dir=None, dry_run=False, only_pass=None,
+               timid=False, no_preimport=False, no_merge_existing=False,
+               verbose=False):
+    """the two-pass import orchestration that used to live in main() - plain
+    function so cli.py (and anything else) can call it directly without
+    going through argparse. returns True/False on overall success.
 
-    args = parser.parse_args()
-
-    # resolve output dir from .env if not provided
-    output_dir = args.output or os.getenv('ARCHIVE_PATH') or os.getenv('archive_path')
-    if not output_dir:
-        print("error: --output or ARCHIVE_PATH in .env required")
-        sys.exit(1)
-
-    if args.export_csv:
-        success = export_library_csv(output_dir, args.csv_path)
-        sys.exit(0 if success else 1)
-
-    input_dir = args.input
-    if not input_dir:
-        print("error: --input required for import")
-        sys.exit(1)
+    output_dir defaults through lib.paths.archive_path() now, not the old
+    inline `os.getenv('ARCHIVE_PATH') or os.getenv('archive_path')` - note
+    this is a slight behavior change: archive_path() has a
+    ~/music/tapebuilding fallback, whereas the pre-refactor code required
+    --output/ARCHIVE_PATH explicitly and errored otherwise. flagging this
+    since organize.cleanup.resolve_crate deliberately keeps the stricter
+    no-fallback behavior for the same "this moves files" reasoning - worth
+    deciding whether run_import() should match resolve_crate() instead of
+    lib.paths.archive_path()'s default.
+    """
+    output_dir = output_dir or archive_path()
 
     if not os.path.exists(input_dir):
         print(f"error: input directory not found: {input_dir}")
-        sys.exit(1)
+        return False
 
-    if args.dry_run:
+    if dry_run:
         print("dry run - no files will be moved")
 
     # pre-import staging: regroup <input> into one folder per album and write a
@@ -239,8 +219,7 @@ def main():
     # otherwise be singleton-imported by the very sweep that follows).
     merged_folders = []
     staged_folders = []
-    preimport_ran = (not args.no_preimport and input_dir
-                     and args.only_pass != 'singles')
+    preimport_ran = (not no_preimport and input_dir and only_pass != 'singles')
     if preimport_ran:
         if os.path.abspath(input_dir) == os.path.abspath(output_dir):
             print("preimport: input is the crate root - stage a subfolder "
@@ -250,22 +229,22 @@ def main():
             from organize.preimport import stage as stage_drop
             print("\n=== pre-import staging ===")
             report = stage_drop(input_dir, output_dir,
-                                apply=not args.dry_run,
-                                merge_existing=not args.no_merge_existing,
-                                verbose=args.verbose)
+                                apply=not dry_run,
+                                merge_existing=not no_merge_existing,
+                                verbose=verbose)
             merged_folders = list(report.get('merged_folders', []))
             staged_folders = list(report.get('staged_folders', []))
 
     success = True
-    if args.only_pass == 'albums':
+    if only_pass == 'albums':
         target = _album_pass_target(input_dir, preimport_ran, staged_folders)
         if target is None:
             print("\n=== album pass skipped (nothing staged to import) ===")
         else:
-            success = run_album_pass(target, output_dir, args.dry_run, args.timid)
-    elif args.only_pass == 'singles':
+            success = run_album_pass(target, output_dir, dry_run, timid)
+    elif only_pass == 'singles':
         _warn_singles_after_albums(input_dir)
-        success = run_singles_pass(input_dir, output_dir, args.dry_run)
+        success = run_singles_pass(input_dir, output_dir, dry_run)
     else:
         # both passes. album pass imports only what preimport staged under
         # <input>/albums/ (one folder per new album); skip it entirely when
@@ -274,23 +253,19 @@ def main():
         target = _album_pass_target(input_dir, preimport_ran, staged_folders)
         ok1 = True
         if target is not None:
-            ok1 = run_album_pass(target, output_dir, args.dry_run, args.timid)
+            ok1 = run_album_pass(target, output_dir, dry_run, timid)
         else:
             print("\n=== album pass skipped (nothing staged to import) ===")
-        ok2 = run_singles_pass(input_dir, output_dir, args.dry_run)
+        ok2 = run_singles_pass(input_dir, output_dir, dry_run)
         success = ok1 and ok2
 
-    if not args.dry_run:
+    if not dry_run:
         print_library_stats(output_dir)
         export_library_csv(output_dir)
 
         if merged_folders:
             print("\nnote: tracks merged into existing album folders are on disk "
                   "but not in beets.db yet (beets skipped them as duplicates). "
-                  "index them with:\n  uv run python -m organize.cleanup --rebuild-db")
+                  "index them with:\n  uv run organize cleanup --rebuild-db")
 
-    sys.exit(0 if success else 1)
-
-
-if __name__ == '__main__':
-    main()
+    return success

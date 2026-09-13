@@ -26,9 +26,7 @@ packages = ["lib", "lib.catalog", "download", "organize", "playlists", "tapedeck
 
 [project.scripts]
 download = "download.cli:download"
-cleanup = "organize.cleanup:main"
-import = "organize.beets_import:main"
-preimport = "organize.preimport:main"
+organize = "organize.cli:organize"
 playlists = "playlists.build:main"
 tapedeck = "tapedeck.deck:main"
 core = "core.build:main"

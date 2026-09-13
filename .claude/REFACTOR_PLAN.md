@@ -87,6 +87,8 @@ Every domain package's `pyproject.toml` entry point points at `cli.py:main`
 (e.g. `spotify = "download.cli:spotify_main"` or similar), not at a specific
 submodule's `main()` the way it does today.
 
+all config stuff to the root  (src's parent) )so running stuff can kinda assume from there. the .env and config.yaml are there at the moment.
+
 ## `lib/` — design per module
 
 ### `lib/paths.py`

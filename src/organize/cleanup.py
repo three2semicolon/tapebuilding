@@ -1,6 +1,4 @@
-
-"""
-cleanup.py - reorganize the beets crate into proper albums and singles.
+"""organize.cleanup - reorganize the beets crate into proper albums and singles.
 
 repairs the two things the beets two-pass importer gets wrong on this library:
   1. albums split into multiple folders, one per track-artist, because beets
@@ -21,164 +19,52 @@ the regrouper works straight off file tags (mediafile), independent of beets:
     "Various Artists" (a true VA compilation like "'SLOWED' EDITS VOL. I").
   - writes the canonical albumartist tag into every album-group file so a
     future beets as-is re-import won't re-split them.
-  - skiptag non-audio files (beets.db, *.log, library.csv, cover art, .nomedia).
+  - skips non-audio files (beets.db, *.log, library.csv, cover art, .nomedia).
 
 idempotent: re-running on an already-clean crate is a no-op.
 
-usage:
-  uv run python -m organize.cleanup                       # dry-run: print plan, move nothing
-  uv run python -m organize.cleanup --apply               # move files + write albumartist tags
-  uv run python -m organize.cleanup --apply --rebuild-db   # ...then rebuild beets.db from the reorganized crate
-  uv run python -m organize.cleanup --verbose             # print every planned move
-  uv run python -m organize.cleanup --crate /path/to/crate
+this file is now just the regroup-in-place *policy* (grouping, planning,
+applying the plan, rebuilding beets.db) - the toolkit half (tag reading,
+sanitizing, canonical-albumartist/dominant-album picking, the audio-file
+walk, safe_move) moved to lib.tags/lib.text during the lib/ refactor, since
+lib.catalog.indexer needed the exact same primitives. organize.preimport
+imports those from lib now too, instead of via this file.
+
+cli.py owns argument parsing / exit codes; run_cleanup() below is the plain,
+import-safe entry point cli.py (and anything else) calls into.
+
+usage (via organize's cli):
+  uv run organize cleanup                        # dry-run: print plan, move nothing
+  uv run organize cleanup --apply                # move files + write albumartist tags
+  uv run organize cleanup --apply --rebuild-db   # ...then rebuild beets.db from the reorganized crate
+  uv run organize cleanup --verbose              # print every planned move
+  uv run organize cleanup --crate /path/to/crate
 """
 
-import argparse
 import collections
 import os
-import re
 import sys
-import shutil
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:  # pragma: no cover
-    pass
-
-try:
-    from mediafile import MediaFile
-except ImportError:  # pragma: no cover
-    sys.exit("mediafile not installed - run `uv sync` first (beets pulls it in).")
-
-EXTENSIONS = ('.mp3', '.flac', '.m4a', '.opus', '.ogg', '.wav', '.aac')
-ILLEGAL = re.compile(r'[\\/:*?"<>|]')
+from lib.paths import resolve as resolve_path
+from lib.tags import (
+    canonical_albumartist,
+    dominant_album,
+    safe_move,
+    sanitize,
+    scan_audio,
+    write_tag,
+)
+from lib.text import normalize_key
 
 
-
-def resolve_crate(cli_value):
-    """crate root from --crate, else ARCHIVE_PATH (or archive_path) in .env.
-    no expanduser fallback - silently pointing at ~/music/crate on windows
-    expands to a nonexistent C:\\... and misleads the operator."""
-    if cli_value:
-        return cli_value
-    return os.getenv('ARCHIVE_PATH') or os.getenv('archive_path')
-
-
-def norm_key(s):
-    """lowercase alphanumeric-only - collapses case/punctuation for grouping."""
-    return re.sub(r'[^a-z0-9]', '', (s or '').lower())
-
-
-def sanitize(s):
-    s = ILLEGAL.sub('', s or '')
-    s = s.strip().rstrip('.')
-    return s or '_'
-
-
-def primary_token(raw):
-    """first collaborator segment - "A & B" / "A & B & C" -> "A"."""
-    return re.split(r'\s*(?:&|/)\s*', raw, maxsplit=1)[0].strip()
-
-
-def read_tags(path):
-    """return (artist, albumartist, album, title, track) or None on read error."""
-    try:
-        m = MediaFile(path)
-    except Exception:
-        return None
-    return (
-        (m.artist or '').strip(),
-        (m.albumartist or '').strip(),
-        (m.album or '').strip(),
-        (m.title or '').strip(),
-        m.track or 0,
-    )
-
-
-def canonical_albumartist(files):
-    """pick the folder label for an album group: dominant (albumartist|artist)
-    string, else dominant primary collaborator, else "Various Artists".
-    returns the original-cased label (not normalized)."""
-    counts = collections.Counter()
-    orig = {}
-    for f in files:
-        raw = (f['albumartist'] or f['artist'] or '').strip()
-        if raw:
-            k = norm_key(raw)
-            counts[k] += 1
-            orig.setdefault(k, raw)
-    total = sum(counts.values())
-    if total:
-        top, top_n = counts.most_common(1)[0]
-        if top_n >= total * 0.5:
-            return orig[top]
-        # no majority on the full string - try primary collaborator token
-        pc = collections.Counter(); porig = {}
-        for f in files:
-            raw = (f['albumartist'] or f['artist'] or '').strip()
-            if not raw:
-                continue
-            p = primary_token(raw); k = norm_key(p)
-            pc[k] += 1; porig.setdefault(k, p)
-        if pc:
-            ptop, ptop_n = pc.most_common(1)[0]
-            if ptop_n >= total * 0.5:
-                return porig[ptop]
-    return 'Various Artists'
-
-
-def dominant_album(files):
-    """most common original-cased album string among the group's files."""
-    c = collections.Counter()
-    orig = {}
-    for f in files:
-        a = f['album']
-        if a:
-            c[norm_key(a)] += 1
-            orig.setdefault(norm_key(a), a)
-    if not c:
-        return ''
-    return orig[c.most_common(1)[0][0]]
-
-
-def label_from_stem(stem):
-    """fallback name for a file with no title/artist tags - use the filename stem."""
-    return stem
-
-
-
-def scan_audio(crate, subdirs=('albums', 'singles')):
-    """walk audio under <crate>. names each subdir to scan (default albums+singles),
-    or subdirs=None to walk <crate> recursively as a whole (used by preimport)."""
-    files = []
-    roots = [os.path.join(crate, s) for s in subdirs] if subdirs else [crate]
-    for root in roots:
-        if not os.path.isdir(root):
-            continue
-        for dp, dirs, fns in os.walk(root):
-            dirs[:] = [d for d in dirs if d != '__pycache__']
-            for fn in fns:
-                if not fn.lower().endswith(EXTENSIONS):
-                    continue
-                path = os.path.join(dp, fn)
-                tags = read_tags(path)
-                if tags is None:
-                    continue
-                artist, albumartist, album, title, track = tags
-                if not title:
-                    title = label_from_stem(os.path.splitext(fn)[0])
-                if not artist:
-                    artist = albumartist or 'Unknown Artist'
-                files.append({
-                    'path': path,
-                    'artist': artist,
-                    'albumartist': albumartist,
-                    'album': album,
-                    'title': title,
-                    'track': track,
-                })
-    return files
+def resolve_crate(cli_value=None):
+    """crate root from --crate, else ARCHIVE_PATH - required, no expanduser
+    fallback. deliberately stricter than lib.paths.archive_path()'s default
+    (~/music/tapebuilding): this command moves files and rewrites tags, so
+    silently landing on a guessed path instead of erroring is the wrong
+    failure mode here. same reasoning applies to organize.beets_import's
+    crate resolution."""
+    return resolve_path('ARCHIVE_PATH', cli_value, required=True)
 
 
 def group_files(files):
@@ -187,12 +73,11 @@ def group_files(files):
     groups = collections.OrderedDict()
     for i, f in enumerate(files):
         if f['album']:
-            key = ('album', norm_key(f['album']))
+            key = ('album', normalize_key(f['album']))
         else:
             key = ('single', i)  # unique per file - never merge missing-album files
         groups.setdefault(key, []).append(f)
     return groups
-
 
 
 def build_plan(groups, crate):
@@ -237,7 +122,7 @@ def build_plan(groups, crate):
 
         # tag writes: enforce the canonical albumartist so future beets runs don't split
         for m in members:
-            if norm_key(m['albumartist'] or '') != norm_key(aa):
+            if normalize_key(m['albumartist'] or '') != normalize_key(aa):
                 tag_writes.append((m['path'], aa))
 
         seen_names = set()
@@ -256,34 +141,6 @@ def build_plan(groups, crate):
                 noop += 1
 
     return album_moves, singleton_moves, noop, tag_writes, va_groups
-
-
-
-def safe_move(src, dst):
-    """move src->dst, creating parent dirs; rename on cross-file collisions."""
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
-    if os.path.normpath(src) == os.path.normpath(dst):
-        return
-    if os.path.exists(dst):
-        base, ext = os.path.splitext(dst); i = 2
-        while os.path.exists(f"{base} ({i}){ext}"):
-            i += 1
-        dst = f"{base} ({i}){ext}"
-    shutil.move(src, dst)
-
-
-def write_albumartist(path, value):
-    try:
-        m = MediaFile(path)
-        if norm(m.albumartist) != norm(value):
-            m.albumartist = value
-            m.save()
-    except Exception as e:
-        print(f"  tag-write failed: {path} ({e})", file=sys.stderr)
-
-
-def norm(s):
-    return re.sub(r'[^a-z0-9]', '', (s or '').lower())
 
 
 def prune_empty_dirs(crate):
@@ -320,24 +177,24 @@ def rebuild_db(crate, config_path):
     print("  done. library.csv will regenerate on the next export.")
 
 
+def config_path():
+    """config.yaml sits alongside this file in organize/."""
+    return os.path.join(os.path.dirname(__file__), 'config.yaml')
 
-def main():
+
+def run_cleanup(crate=None, apply=False, no_tag_write=False,
+                rebuild_db_flag=False, verbose=False):
+    """regroup <crate>/albums + <crate>/singles in place. plain, import-safe
+    entry point - does its own printing (dry-run plan, then the applied
+    summary), same convention as download's export/download functions.
+    cli.py resolves args and calls this; no argparse/sys.exit in here."""
     sys.stdout.reconfigure(encoding='utf-8')  # non-ASCII artist names won't crash the console
     sys.stderr.reconfigure(encoding='utf-8')
 
-    parser = argparse.ArgumentParser(description='reorganize the beets crate into albums and singles')
-    parser.add_argument('--crate', type=str, help='crate root (default: ARCHIVE_PATH env)')
-    parser.add_argument('--apply', action='store_true', help='actually move files + write tags (default: dry-run)')
-    parser.add_argument('--no-tag-write', action='store_true', help='with --apply: do not rewrite albumartist tags')
-    parser.add_argument('--rebuild-db', action='store_true', help='with --apply: rebuild beets.db from the reorganized crate')
-    parser.add_argument('--verbose', action='store_true', help='print every planned move')
-    args = parser.parse_args()
-
-    crate = resolve_crate(args.crate)
-    config_path = os.path.join(os.path.dirname(__file__), 'config.yaml')
+    crate = resolve_crate(crate)
 
     print(f"crate : {crate}")
-    print(f"mode  : {'apply (files move, tags written)' if args.apply else 'dry run (nothing moves)'}")
+    print(f"mode  : {'apply (files move, tags written)' if apply else 'dry run (nothing moves)'}")
     print()
 
     files = scan_audio(crate)
@@ -356,7 +213,7 @@ def main():
     print(f"  files moving to albums/   : {len(album_moves)}")
     print(f"  files moving to singles/  : {len(singleton_moves)}")
     print(f"  files already in place     : {noop}")
-    print(f"  albumartist tags to write : {0 if args.no_tag_write else len(tag_writes)}")
+    print(f"  albumartist tags to write : {0 if no_tag_write else len(tag_writes)}")
     print(f"  'Various Artists' albums  : {len(va_groups)}")
 
     if va_groups:
@@ -373,7 +230,7 @@ def main():
         for album, n, cur in big:
             print(f"    {n:>5} files  {album!r}  (now in: {cur})")
 
-    if args.verbose:
+    if verbose:
         if album_moves:
             print("\n  album moves:")
             for src, dst, aa in album_moves[:5000]:
@@ -383,11 +240,11 @@ def main():
             for src, dst in singleton_moves[:5000]:
                 print(f"    {os.path.relpath(src, crate)}  ->  {os.path.relpath(dst, crate)}")
 
-    if not args.apply:
+    if not apply:
         print("\ndry run - re-run with --apply to move files and write tags.")
         if tag_writes:
             print(f"(would write albumartist tags on {len(tag_writes)} files; pass --no-tag-write to skip)")
-        return
+        return True
 
     if album_moves:
         print(f"\nmoving {len(album_moves)} files into albums/...")
@@ -399,24 +256,22 @@ def main():
             safe_move(src, dst)
     prune_empty_dirs(crate)
 
-    if not args.no_tag_write and tag_writes:
+    if not no_tag_write and tag_writes:
         print(f"writing albumartist tags on {len(tag_writes)} files...")
         # after the move, re-resolve each path: file may have moved to its album folder
         moved = {os.path.normpath(s): d for s, d, _ in album_moves}
         for src, aa in tag_writes:
             path = moved.get(os.path.normpath(src), src)
-            write_albumartist(path, aa)
-    elif args.no_tag_write:
+            write_tag(path, albumartist=aa)
+    elif no_tag_write:
         print("(--no-tag-write: albumartist tags left as-is - albums may re-split on a future beets run)")
 
     print("\ndone.")
     print("note: beets.db now points at old file paths - it's stale until rebuilt.")
-    print("      rebuild with:  uv run python -m organize.cleanup --rebuild-db")
+    print("      rebuild with:  uv run organize cleanup --rebuild-db")
     print("      (or re-run --apply --rebuild-db next time)")
 
-    if args.rebuild_db:
-        rebuild_db(crate, config_path)
+    if rebuild_db_flag:
+        rebuild_db(crate, config_path())
 
-
-if __name__ == '__main__':
-    main()
+    return True

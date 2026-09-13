@@ -1,6 +1,5 @@
-
-"""
-preimport.py - stage unorganized/ so the beets importer does the right thing.
+"""organize.preimport - stage unorganized/ so the beets importer does the
+right thing.
 
 runs cleanup.py's regrouping logic BEFORE beets, not after. the two-pass
 importer (beets_import.py) splits albums into one folder per track-artist and
@@ -29,38 +28,42 @@ beets:
     normalized (albumartist, album); ambiguous collisions stage a new folder
     instead of risking a wrong merge. merges are filesystem-only; beets.db is
     left stale on the merged tracks until you rebuild it
-    (`uv run python -m organize.cleanup --rebuild-db`).
+    (`uv run organize cleanup --rebuild-db`).
 
 idempotent: re-running on an already-staged drop is a no-op (groups re-stage
 to the same folders; already-correct tags aren't rewritten).
 
 beets_import.py runs this automatically before its two passes, so the whole
-flow is one command. run preimport standalone to preview/stage without importing:
+flow is one command. run preimport standalone (via organize's cli) to
+preview/stage without importing:
 
-  uv run python -m organize.preimport                       # dry-run: print plan
-  uv run python -m organize.preimport --apply               # stage + write tags
-  uv run python -m organize.preimport --apply --verbose     # print every move
-  uv run python -m organize.preimport --no-merge-existing   # new folders only
-  uv run python -m organize.preimport -i /path -o /crate
+  uv run organize preimport                       # dry-run: print plan
+  uv run organize preimport --apply                # stage + write tags
+  uv run organize preimport --apply --verbose      # print every move
+  uv run organize preimport --no-merge-existing    # new folders only
+  uv run organize preimport -i /path -o /crate
+
+toolkit imports now come straight from lib.tags/lib.text instead of via
+organize.cleanup (lib/ refactor) - only resolve_crate and group_files stay
+organize-package imports, since those are organize-specific policy, not
+generic lib/ concerns.
 """
 
-import argparse
 import os
 import sys
 
-from organize.cleanup import (
+from lib.tags import (
     EXTENSIONS,
     canonical_albumartist,
     dominant_album,
-    group_files,
-    norm_key,
     read_tags,
-    resolve_crate,
     safe_move,
     sanitize,
-    write_albumartist,
+    scan_audio,
+    write_tag,
 )
-from organize.cleanup import scan_audio  # generalized to scan_audio(root, subdirs)
+from lib.text import normalize_key
+from organize.cleanup import group_files, resolve_crate
 
 
 def _first_audio(folder):
@@ -95,10 +98,10 @@ def index_existing_albums(crate):
         tags = read_tags(rep)
         if tags is None:
             continue
-        albumartist, album = tags[1], tags[2]
+        albumartist, album = tags['albumartist'], tags['album']
         if not album:
             continue
-        key = (norm_key(albumartist), norm_key(album))
+        key = (normalize_key(albumartist), normalize_key(album))
         if key in idx:
             idx[key] = None  # ambiguous: >=2 existing folders match -> never merge
         else:
@@ -125,8 +128,8 @@ def _existing_titles(folder):
             if not fn.lower().endswith(EXTENSIONS):
                 continue
             t = read_tags(os.path.join(dp, fn))
-            if t and t[3]:
-                titles.add(norm_key(t[3]))
+            if t and t['title']:
+                titles.add(normalize_key(t['title']))
     return titles
 
 
@@ -190,7 +193,7 @@ def build_plan(groups, unorganized, crate, idx):
 
         aa = canonical_albumartist(members)
         album = dominant_album(members)
-        key = (norm_key(aa), norm_key(album))
+        key = (normalize_key(aa), normalize_key(album))
         entry = idx.get(key) if idx else None
         # >=2 existing crate folders normalize to this (aa, album) -> idx flagged it
         # None -> can't safely merge; stage (if multi-track) or leave as singleton,
@@ -208,7 +211,7 @@ def build_plan(groups, unorganized, crate, idx):
                 # skip tracks the album already owns (e.g. an mp3 straggler of a
                 # track present as flac) - quarantine rather than create a
                 # cross-format dup beside the original.
-                if norm_key(m['title']) in have:
+                if normalize_key(m['title']) in have:
                     dup_moves.append((m['path'],))
                     report['duplicates'].append(
                         (m['path'], folder_path, m['title']))
@@ -216,7 +219,7 @@ def build_plan(groups, unorganized, crate, idx):
                 dst = os.path.join(folder_path, _member_name(i, m, folder_path, seen))
                 if os.path.normpath(dst) != os.path.normpath(m['path']):
                     merged_moves.append((m['path'], dst, aa_for_tag))
-                if norm_key(m['albumartist'] or '') != norm_key(aa_for_tag):
+                if normalize_key(m['albumartist'] or '') != normalize_key(aa_for_tag):
                     tag_writes.append((m['path'], aa_for_tag))
                 merged_here += 1
             if merged_here:
@@ -230,7 +233,7 @@ def build_plan(groups, unorganized, crate, idx):
                 dst = os.path.join(folder_path, _member_name(i, m, folder_path, seen))
                 if os.path.normpath(dst) != os.path.normpath(m['path']):
                     staged_moves.append((m['path'], dst, aa))
-                if norm_key(m['albumartist'] or '') != norm_key(aa):
+                if normalize_key(m['albumartist'] or '') != normalize_key(aa):
                     tag_writes.append((m['path'], aa))
             report['staged_folders'].append(folder_path)
             if ambiguous:
@@ -289,7 +292,7 @@ def _apply(staged_moves, merged_moves, dup_moves, tag_writes, no_tag_write,
     print(f"writing albumartist tags on {len(tag_writes)} files...")
     for src, aa in tag_writes:
         path = moved.get(os.path.normpath(src), src)
-        write_albumartist(path, aa)
+        write_tag(path, albumartist=aa)
 
 
 def stage(unorganized, crate, apply=False, merge_existing=True,
@@ -375,43 +378,6 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
 
     if report['merged_folders']:
         print("\nmerged tracks are on disk but NOT in beets.db yet. index them with:")
-        print("  uv run python -m organize.cleanup --rebuild-db")
+        print("  uv run organize cleanup --rebuild-db")
     print("\ndone.")
     return report
-
-
-def main():
-    sys.stdout.reconfigure(encoding='utf-8')
-    sys.stderr.reconfigure(encoding='utf-8')
-
-    parser = argparse.ArgumentParser(
-        description='stage unorganized/ for a clean beets import')
-    parser.add_argument('-i', '--input', type=str,
-                        help='unorganized root (default: <crate>/unorganized)')
-    parser.add_argument('-o', '--crate', '--output', dest='crate', type=str,
-                        help='crate root (default: ARCHIVE_PATH in .env)')
-    parser.add_argument('--apply', action='store_true',
-                        help='stage folders + write tags (default: dry-run)')
-    parser.add_argument('--no-merge-existing', action='store_true',
-                        help="don't merge incoming tracks into existing crate album folders")
-    parser.add_argument('--no-tag-write', action='store_true',
-                        help='with --apply: do not rewrite albumartist tags')
-    parser.add_argument('--verbose', action='store_true',
-                        help='print every planned move')
-    args = parser.parse_args()
-
-    crate = resolve_crate(args.crate)
-    if not crate:
-        sys.exit("error: --crate or ARCHIVE_PATH in .env required")
-
-    input_dir = args.input or os.path.join(crate, 'unorganized')
-    if not os.path.isdir(input_dir):
-        sys.exit(f"error: input directory not found: {input_dir}")
-
-    stage(input_dir, crate, apply=args.apply,
-          merge_existing=not args.no_merge_existing,
-          verbose=args.verbose, no_tag_write=args.no_tag_write)
-
-
-if __name__ == '__main__':
-    main()
