@@ -40,16 +40,42 @@ being treated as sufficient evidence going forward.
   identical helper once its own cli.py split lands" — stale future
   tense now that it's actually implemented; cosmetic cleanup.
 - [ ] `playlists/build.py`'s `_select_playlists()` default-scope bug
-  (flagged in `PACKAGE_OVERVIEW.md`'s `playlists/` section, not yet
-  actioned): filters `playlists.csv`'s `owner` column — a **display
-  name** — against `SPOTIFY_USER_ID` — a **user ID** — so the default
-  "just my playlists" scope likely never matches and silently falls
-  back to "build everything." Needs an actual fix, not just a flag; see
-  `TEST_PLANS.md` §4 for a regression test to write alongside it.
-- [ ] Build out `tests/` per `TEST_PLANS.md` — start with the import
+  (flagged in `PACKAGE_OVERVIEW.md`'s `playlists/` section): filters
+  `playlists.csv`'s `owner` column — a **display name** — against
+  `SPOTIFY_USER_ID` — a **user ID** — so the default "just my playlists"
+  scope compares `r.get('owner') == user_id` and never matches a
+  playlist you actually own. Still needs an actual fix, not just a flag
+  — but it now has a real `xfail` regression test pinning the exact
+  symptom (`tests/playlists/test_build.py::
+  TestSelectPlaylistsDefaultScope::test_default_scope_matches_by_id_not_display_name`),
+  written per `TEST_PLANS.md` §4. Flip that test off `xfail` the moment
+  this is fixed — don't just delete it.
+- [x] Build out `tests/` per `TEST_PLANS.md` — start with the import
   smoke tests (§0), since all three bugs fixed above were import-time
   failures that a two-line test per module would have caught before
-  any manual `uv run` was needed.
+  any manual `uv run` was needed. `lib/` (§1), `download/` (§2),
+  `organize/` (§3), and `playlists/` (§4) are now all fully real (or, for
+  `playlists/`, real-plus-one-known-`xfail`) — no skeletons left in any
+  of the four. `tapedeck/` (§5) is next per the priority order.
+- [ ] `tests/download/conftest.py` (the `sample_manifest_csv` /
+  `fixture_library` fixtures `test_retry.py` and `test_spotify_download.py`
+  depend on) didn't actually exist on disk despite those two files
+  already being written against it and marked real — same "documented/
+  assumed as done but not actually there" failure mode as the three
+  import bugs above, just one layer up (a test fixture instead of a
+  source module). It's been reconstructed from how both files use it,
+  but **not verified against what you actually intended** — check it
+  before trusting anything beyond the specific tests already passing
+  against it.
+- [ ] `download/spotify_export.py`'s `export_specific_playlist()` writes
+  a blank line to its per-playlist `_urls.txt` for any track with no
+  `spotify_url` (e.g. a local file), unlike `spotify_api.export_manifest_as_txt()`
+  which filters those out before writing. Found while writing
+  `test_spotify_export.py`; pinned as current behavior there, not fixed.
+  Worth deciding whether the per-playlist writer should filter too, or
+  whether the difference is intentional (its output isn't fed anywhere
+  as spotdl input directly, unlike the manifest files) and just needs a
+  one-line comment saying so.
 - [ ] New features/changes should go through `NEW_FEATURE_GUIDE.md`'s
   checklist before being considered done.
 

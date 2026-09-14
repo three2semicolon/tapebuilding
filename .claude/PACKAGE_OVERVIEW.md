@@ -151,6 +151,13 @@ five subcommands (`export`, `spotify`, `ytdl`, `retry`, `soundbyte`);
   `playlists_manifest_urls.txt`, distinct filenames from the full-library
   export so the two don't clobber each other.
 - `extract_playlist_id_from_url()` — also used by `playlists/build.py`.
+- **Flagged, not fixed**: `export_specific_playlist()`'s own per-playlist
+  `_urls.txt` writer doesn't filter out tracks with a blank
+  `spotify_url` the way `spotify_api.export_manifest_as_txt()` does —
+  a local file with no Spotify URL produces a blank line instead of
+  being skipped. Found writing `TEST_PLANS.md`'s test suite for this
+  file (`tests/download/test_spotify_export.py` pins it as current
+  behavior); see `TODO.md`.
 
 ### `spotify_api.py` (was `spotify_utils.py`)
 Everything left after auth (`lib.spotify_auth`) and normalization
