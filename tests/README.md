@@ -11,13 +11,15 @@ rationale behind what's tested and in what priority order.
 **Real tests, written against actual source:**
 - `test_imports.py` — import + `--help` smoke tests for every module and CLI command
 - `lib/test_paths.py`, `test_text.py`, `test_tags.py`, `test_m3u.py`, `catalog/test_indexer.py`, `catalog/test_matcher.py`
-- `download/test_manifest.py`, `test_existing.py`, `test_ytdl.py`, `test_spotify_download.py`, `test_retry.py`, `test_spotify_export.py`
+- `download/test_manifest.py`, `test_existing.py`, `test_ytdl.py`, `test_spotify_download.py`, `test_retry.py`, `test_spotify_export.py`, `test_spotify_api.py`
 - `organize/test_preimport.py`, `test_beets_import.py`, `test_cleanup.py`
-- `playlists/test_build.py` — includes one real `xfail`: `_select_playlists()`'s
-  default scope compares `playlists.csv`'s `owner` (a display name) directly
-  against `SPOTIFY_USER_ID` (a user id), so "my playlists only" never
-  matches its own playlists. Flips to a normal passing test the moment
-  that's fixed — see the test's docstring in the file itself.
+- `playlists/test_build.py` — was one real `xfail`
+  (`TestSelectPlaylistsDefaultScope::test_default_scope_matches_by_id_not_display_name`):
+  `_select_playlists()`'s default scope used to compare `playlists.csv`'s
+  `owner` (a display name) directly against `SPOTIFY_USER_ID` (a user
+  id), so "my playlists only" never matched its own playlists. Fixed by
+  adding a dedicated `owner_id` column and filtering on that instead —
+  the test is now a normal passing test, no longer `xfail`.
 - `tapedeck/test_resolve.py`, `test_copy.py`, `test_deck.py` — includes one
   pinned quirk, not a bug fix: `copy.py`'s `unstage()` prunes empty
   directories with a single bottom-up `os.walk`, so a parent that only
@@ -35,8 +37,9 @@ rationale behind what's tested and in what priority order.
 
 All seven packages (`lib/`, `download/`, `organize/`, `playlists/`,
 `tapedeck/`, `core/`) are now fully real — every skeleton has been replaced
-with actual test implementations. `playlists/` carries the one known `xfail`
-above (not a skeleton), and `core/` tests are fully implemented.
+with actual test implementations. `playlists/` no longer carries any
+`xfail` — the one known case above has been fixed and flipped to passing.
+`core/` tests are fully implemented.
 
 Some tests currently fail due to ongoing development work, but the test
 files themselves are real and document the intended behavior.
@@ -46,6 +49,9 @@ files themselves are real and document the intended behavior.
 - `tests/conftest.py` — root-level, cross-cutting.
 - `tests/lib/conftest.py` — `make_tagged_file`, a real-audio-file factory
   fixture (ffmpeg + mediafile), inherited by `tests/lib/catalog/` too.
+- `tests/organize/conftest.py` — its own `make_tagged_file`-shaped
+  factory fixture (ffmpeg + mediafile), independent from
+  `tests/lib/conftest.py`'s copy rather than importing/sharing it.
 - `tests/download/conftest.py` — `sample_manifest_csv` / `fixture_library`,
   the paired CSV + pre-seeded-library fixtures `test_retry.py` and
   `test_spotify_download.py` use for their `--pre-skip-existing` /
@@ -55,6 +61,13 @@ files themselves are real and document the intended behavior.
   marked real. Double-check its shape (the exact CSV columns and the
   pre-seeded filename) matches what you actually intended before relying
   on it for anything beyond what's already covered.
+
+**ffmpeg dependency**: both `tests/lib/conftest.py` and
+`tests/organize/conftest.py` invoke `ffmpeg` directly by name via
+`subprocess.run` — neither goes through `lib.paths.ffmpeg_path()`, so
+`FFMPEG_PATH` in `.env` is not consulted by either fixture yet. Every
+test that (directly or via another fixture) depends on `make_tagged_file`
+needs `ffmpeg` on `PATH` for now. See `TODO.md`.
 
 ## Running
 

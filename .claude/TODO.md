@@ -38,17 +38,19 @@ being treated as sufficient evidence going forward.
 - [ ] `existing.py`'s module docstring still says "ytdl.py will want the
   identical helper once its own cli.py split lands" — stale future
   tense now that it's actually implemented; cosmetic cleanup.
-- [ ] `playlists/build.py`'s `_select_playlists()` default-scope bug
-  (flagged in `PACKAGE_OVERVIEW.md`'s `playlists/` section): filters
-  `playlists.csv`'s `owner` column — a **display name** — against
-  `SPOTIFY_USER_ID` — a **user ID** — so the default "just my playlists"
-  scope compares `r.get('owner') == user_id` and never matches a
-  playlist you actually own. Still needs an actual fix, not just a flag
-  — but it now has a real `xfail` regression test pinning the exact
-  symptom (`tests/playlists/test_build.py::
-  TestSelectPlaylistsDefaultScope::test_default_scope_matches_by_id_not_display_name`),
-  written per `TEST_PLANS.md` §4. Flip that test off `xfail` the moment
-  this is fixed — don't just delete it.
+- [x] `playlists/build.py`'s `_select_playlists()` default-scope bug
+  (flagged in `PACKAGE_OVERVIEW.md`'s `playlists/` section): used to
+  filter `playlists.csv`'s `owner` column — a **display name** —
+  against `SPOTIFY_USER_ID` — a **user ID** — so the default "just my
+  playlists" scope never matched a playlist you actually own. Fixed by
+  adding a dedicated `owner_id` column (`PLAYLIST_META_FIELDS`,
+  populated by both `download.spotify_api.get_user_playlists()` and
+  `build.py`'s own `_scope_rescrape()`) and filtering on that instead.
+  The regression test is flipped off `xfail`:
+  `tests/playlists/test_build.py::
+  TestSelectPlaylistsDefaultScope::test_default_scope_matches_by_id_not_display_name`.
+  Note: playlists exported *before* this fix have no `owner_id` value
+  and won't match the default scope until re-exported.
 - [x] Build out `tests/` per `TEST_PLANS.md` — start with the import
   smoke tests (§0), since all three bugs fixed above were import-time
   failures that a two-line test per module would have caught before
@@ -80,6 +82,16 @@ being treated as sufficient evidence going forward.
   See test comment in `tests/download/test_spotify_export.py` for details.
 - [ ] New features/changes should go through `NEW_FEATURE_GUIDE.md`'s
   checklist before being considered done.
+- [ ] `tests/lib/conftest.py`'s `make_tagged_file` and
+  `tests/organize/conftest.py`'s own separate copy of the same fixture
+  both call `ffmpeg` directly by name via `subprocess.run`, never
+  consulting `lib.paths.ffmpeg_path()` / `FFMPEG_PATH` — so both only
+  work when ffmpeg happens to be on `PATH`. Neither fixture currently
+  fails loudly about this (just a bare `WinError 2` / `FileNotFoundError`
+  on Windows), and `tests/organize/conftest.py` isn't mentioned in
+  `tests/README.md`'s "conftest.py files" section at all. Worth either
+  routing both through `ffmpeg_path()` with a `PATH` fallback, or at
+  least documenting the `PATH` requirement clearly in both places.
 
 ---
 

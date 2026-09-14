@@ -159,8 +159,7 @@ typical flow: run `download spotify -u retry_list.txt`, then re-run
 succeeded on, so the next `retry_list.txt` is only what's still missing.
 
 `--report-csv` writes the remaining tracks to a manual-hunt sheet - one
-row per still-missing track with `artist, track, album, reason,
-spotify_url, search` (the `search` column is a clickable youtube results
+row per still-missing track with `artist, track, album, reason, spotify_url, search` (the `search` column is a clickable youtube results
 link), sorted by artist -> album -> track. needs the same export csvs as
 the existence check (names come from there).
 
@@ -190,8 +189,7 @@ options:
 - `--cookies-from-browser` - browser to read cookies from; needed for go+/restricted tracks on soundcloud and other sources
 - `--ffmpeg` - ffmpeg executable path, overriding `FFMPEG_PATH`
 
-filenames follow `Uploader - Title.ext` (singles) or `Set Name/NN -
-Uploader - Title.ext` (sets/albums), so they sit alongside spotdl
+filenames follow `Uploader - Title.ext` (singles) or `Set Name/NN - Uploader - Title.ext` (sets/albums), so they sit alongside spotdl
 downloads in the same library root. yt-dlp's metadata is sparser than
 spotdl's - you reliably get uploader, title, duration, cover, but usually
 not album/track number/release date (varies by source; soundcloud sets
@@ -284,8 +282,7 @@ downloading, no spotify involved; copies (or hardlinks, same-volume only)
 files that already exist in the crate. dry-run by default, matching the
 rest of the repo's `--apply` convention. unloading a playlist only
 removes a track if no other loaded playlist still references it
-(refcounted; doesn't know about tracks separately loaded via `load
-album`/`load song`).
+(refcounted; doesn't know about tracks separately loaded via `load album`/`load song`).
 
 ```bash
 tapedeck load ...
@@ -302,8 +299,7 @@ set in `.env` (see `.env.example`). uppercase only - the old dual-case
 fallback (`ARCHIVE_PATH`/`archive_path`) has been dropped.
 
 - `ARCHIVE_PATH` - crate root. has a `~/music/tapebuilding` convenience
-  default almost everywhere, **except** `organize import`/`organize
-  cleanup`, which require it explicitly (no fallback) since both move
+  default almost everywhere, **except** `organize import`/`organize cleanup`, which require it explicitly (no fallback) since both move
   files on disk.
 - `PLAYLISTS_PATH` - where `.m3u8`s + exports live. required, no
   fallback.
@@ -313,5 +309,4 @@ fallback (`ARCHIVE_PATH`/`archive_path`) has been dropped.
 - `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` - spotify api creds.
 - `SPOTIFY_REDIRECT_URI` - oauth redirect (default
   `http://127.0.0.1:8888/callback`).
-- `FIREBASE_PROJECT_ID`, `FIREBASE_CREDENTIALS_PATH` - for `download
-  soundbyte`.
+- `FIREBASE_PROJECT_ID`, `FIREBASE_CREDENTIALS_PATH` - for `download soundbyte`.

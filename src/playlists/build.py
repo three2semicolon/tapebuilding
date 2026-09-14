@@ -62,7 +62,7 @@ PLAYLIST_TRACKS_FIELDS = (
 )
 
 PLAYLIST_META_FIELDS = (
-    'id', 'name', 'description', 'owner', 'public', 'track_count', 'playlist_url',
+    'id', 'name', 'description', 'owner', 'owner_id', 'public', 'track_count', 'playlist_url',
 )
 
 
@@ -106,8 +106,17 @@ def _group_tracks_by_playlist(rows):
 
 def _select_playlists(playlists_csv, names, all_playlists):
     """apply scope (names over all_playlists over the 'mine' default) ->
-    [(meta_row), ...]. unchanged from the pre-lib/ version - just takes the
-    two scope values directly instead of an argparse Namespace."""
+    [(meta_row), ...]. mostly unchanged from the pre-lib/ version - takes
+    the two scope values directly instead of an argparse Namespace.
+
+    the default "mine" scope filters on 'owner_id' (a real Spotify user
+    id, same shape as SPOTIFY_USER_ID), not 'owner' (a display name) -
+    see PLAYLIST_META_FIELDS and _scope_rescrape()'s meta dict below for
+    where that column gets populated. Older exports written before
+    'owner_id' existed won't have it; those rows just won't match the
+    default scope until re-exported (same as any other never-null'd new
+    column - not attempting to backfill it here, since we'd need to
+    re-hit Spotify's API to learn each row's real owner id anyway)."""
     rows = _read_csv(playlists_csv)
     if not rows:
         raise ValueError(f"no playlists.csv found at {playlists_csv} - run `export` or --rescrape first")
@@ -135,7 +144,7 @@ def _select_playlists(playlists_csv, names, all_playlists):
     if not user_id:
         print("warning: SPOTIFY_USER_ID not set - can't filter to your playlists; building all.")
         return rows
-    return [r for r in rows if (r.get('owner') or '') == user_id]
+    return [r for r in rows if (r.get('owner_id') or '') == user_id]
 
 
 def _read_existing_index(archive_path, exports_dir, reindex, verbose):
@@ -212,6 +221,7 @@ def _scope_rescrape(sp, names, exports_dir):
             'name': name,
             'description': pl.get('description', '') or '',
             'owner': (pl.get('owner') or {}).get('display_name', '') or '',
+            'owner_id': (pl.get('owner') or {}).get('id', '') or '',
             'public': pl.get('public', False),
             'track_count': (pl.get('tracks') or {}).get('total', 0),
             'playlist_url': (pl.get('external_urls') or {}).get('spotify', ''),

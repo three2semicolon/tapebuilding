@@ -27,34 +27,46 @@ from playlists.build import (
 )
 
 
-PLAYLISTS_HEADER = "id,name,description,owner,public,track_count,playlist_url\n"
+PLAYLISTS_HEADER = "id,name,description,owner,owner_id,public,track_count,playlist_url\n"
 
 
 # --- _select_playlists -------------------------------------------------
 
 class TestSelectPlaylistsDefaultScope:
-    @pytest.mark.xfail(
-        reason=(
-            "known bug per TEST_PLANS.md §4 / PACKAGE_OVERVIEW.md: "
-            "playlists.csv's 'owner' column holds a Spotify *display name*, "
-            "but _select_playlists()'s default scope compares it directly "
-            "against SPOTIFY_USER_ID (a user id) via `r.get('owner') == "
-            "user_id`. A playlist actually owned by the authenticated user "
-            "(display name 'Jordan Smith', id '1137489201') therefore never "
-            "matches its own id, and the default 'my playlists only' scope "
-            "returns nothing for it. Flip to a real test once "
-            "_select_playlists() resolves the authenticated user's display "
-            "name (or the real user id) before comparing against 'owner', "
-            "instead of comparing SPOTIFY_USER_ID to it directly."
-        ),
-        strict=True,
-    )
     def test_default_scope_matches_by_id_not_display_name(self, tmp_path, monkeypatch):
+        """Regression test for a historical bug (TEST_PLANS.md §4 /
+        PACKAGE_OVERVIEW.md): the default "mine" scope used to compare
+        'owner' (a display name) directly against SPOTIFY_USER_ID (a real
+        user id), so a playlist genuinely owned by the authenticated user
+        (display name 'Jordan Smith', id '1137489201') never matched its
+        own id. Fixed by adding a dedicated 'owner_id' column
+        (see PLAYLIST_META_FIELDS / _scope_rescrape() in build.py) that
+        _select_playlists() filters on instead of 'owner' - no longer
+        xfail."""
         monkeypatch.setenv("SPOTIFY_USER_ID", "1137489201")
 
         playlists_csv = tmp_path / "playlists.csv"
         playlists_csv.write_text(
-            PLAYLISTS_HEADER + "PID1,My Playlist,,Jordan Smith,True,3,url1\n",
+            PLAYLISTS_HEADER + "PID1,My Playlist,,Jordan Smith,1137489201,True,3,url1\n",
+            encoding="utf-8",
+        )
+
+        selected = _select_playlists(str(playlists_csv), names=[], all_playlists=False)
+
+        assert {row["id"] for row in selected} == {"PID1"}
+
+    def test_default_scope_excludes_playlists_owned_by_someone_else(self, tmp_path, monkeypatch):
+        """Same fixture shape as above, but with a second playlist whose
+        display name happens to collide with nothing but whose owner_id
+        genuinely isn't the authenticated user - makes sure the fix
+        filters *by id*, not just "matches everything now"."""
+        monkeypatch.setenv("SPOTIFY_USER_ID", "1137489201")
+
+        playlists_csv = tmp_path / "playlists.csv"
+        playlists_csv.write_text(
+            PLAYLISTS_HEADER
+            + "PID1,Mine,,Jordan Smith,1137489201,True,3,url1\n"
+            + "PID2,Not Mine,,Someone Else,999999999,True,2,url2\n",
             encoding="utf-8",
         )
 
@@ -69,8 +81,8 @@ class TestSelectPlaylistsDefaultScope:
         playlists_csv = tmp_path / "playlists.csv"
         playlists_csv.write_text(
             PLAYLISTS_HEADER
-            + "PID1,A,,me,True,1,url1\n"
-            + "PID2,B,,someone_else,True,1,url2\n",
+            + "PID1,A,,me,,True,1,url1\n"
+            + "PID2,B,,someone_else,,True,1,url2\n",
             encoding="utf-8",
         )
 
@@ -92,8 +104,8 @@ class TestSelectPlaylistsOtherScopes:
         playlists_csv = tmp_path / "playlists.csv"
         playlists_csv.write_text(
             PLAYLISTS_HEADER
-            + "PID1,A,,me,True,1,url1\n"
-            + "PID2,B,,someone_else,True,1,url2\n",
+            + "PID1,A,,me,,True,1,url1\n"
+            + "PID2,B,,someone_else,,True,1,url2\n",
             encoding="utf-8",
         )
 
@@ -113,9 +125,9 @@ class TestSelectPlaylistsOtherScopes:
         playlists_csv = tmp_path / "playlists.csv"
         playlists_csv.write_text(
             PLAYLISTS_HEADER
-            + "37i9dQZF1DXcBWIGoYBM5Mabc,By Id,,me,True,1,url1\n"
-            + "PID2,By Name,,me,True,1,url2\n"
-            + "PID3,Not Selected,,me,True,1,url3\n",
+            + "37i9dQZF1DXcBWIGoYBM5Mabc,By Id,,me,,True,1,url1\n"
+            + "PID2,By Name,,me,,True,1,url2\n"
+            + "PID3,Not Selected,,me,,True,1,url3\n",
             encoding="utf-8",
         )
 
@@ -132,8 +144,8 @@ class TestSelectPlaylistsOtherScopes:
         playlists_csv = tmp_path / "playlists.csv"
         playlists_csv.write_text(
             PLAYLISTS_HEADER
-            + "PID1,Wanted,,me,True,1,url1\n"
-            + "PID2,Not Wanted,,me,True,1,url2\n",
+            + "PID1,Wanted,,me,,True,1,url1\n"
+            + "PID2,Not Wanted,,me,,True,1,url2\n",
             encoding="utf-8",
         )
 
@@ -244,7 +256,7 @@ class TestScopeRescrape:
     ):
         exports = tmp_path
         (exports / "playlists.csv").write_text(
-            PLAYLISTS_HEADER + "OLD1,Old One,,me,True,2,url1\nOLD2,Old Two,,me,True,1,url2\n",
+            PLAYLISTS_HEADER + "OLD1,Old One,,me,,True,2,url1\nOLD2,Old Two,,me,,True,1,url2\n",
             encoding="utf-8",
         )
         (exports / "playlist_tracks.csv").write_text(
@@ -258,7 +270,7 @@ class TestScopeRescrape:
                     "id": pid,
                     "name": "Old One Renamed",
                     "description": "",
-                    "owner": {"display_name": "me"},
+                    "owner": {"display_name": "me", "id": "1137489201"},
                     "public": True,
                     "tracks": {"total": 1},
                     "external_urls": {"spotify": "url1-new"},
@@ -273,6 +285,7 @@ class TestScopeRescrape:
 
         metas = {m["id"]: m for m in _read_csv(str(exports / "playlists.csv"))}
         assert metas["OLD1"]["name"] == "Old One Renamed"
+        assert metas["OLD1"]["owner_id"] == "1137489201"  # populated from the fetch
         assert metas["OLD2"]["name"] == "Old Two"  # untouched
 
         tracks_by_playlist = {}
@@ -302,7 +315,16 @@ class TestScopeRescrape:
 # --- build_playlists() orchestration ----------------------------------------
 
 class TestBuildPlaylistsOrchestration:
-    def _fixture_dirs(self, tmp_path):
+    def _fixture_dirs(self, tmp_path, monkeypatch):
+        # isolate from the real environment's SPOTIFY_USER_ID (loaded via
+        # .env by the root conftest) - these fixtures' playlists.csv always
+        # sets owner="me", which would never match a real numeric user id
+        # and would silently zero out the default "my playlists only" scope
+        # via the known _select_playlists() bug pinned in
+        # TestSelectPlaylistsDefaultScope above. Every test in this class
+        # wants the "no SPOTIFY_USER_ID -> build everything" fallback, not
+        # whatever happens to be in the developer's own .env.
+        monkeypatch.delenv("SPOTIFY_USER_ID", raising=False)
         exports = tmp_path / "exports"
         exports.mkdir()
         playlists_path = tmp_path / "playlists"
@@ -310,8 +332,8 @@ class TestBuildPlaylistsOrchestration:
         crate.mkdir()
         (exports / "playlists.csv").write_text(
             PLAYLISTS_HEADER
-            + "P1,Playlist One,,me,True,2,url1\n"
-            + "P2,Playlist Two,,me,True,1,url2\n",
+            + "P1,Playlist One,,me,,True,2,url1\n"
+            + "P2,Playlist Two,,me,,True,1,url2\n",
             encoding="utf-8",
         )
         (exports / "playlist_tracks.csv").write_text(
@@ -350,7 +372,7 @@ class TestBuildPlaylistsOrchestration:
         return {"row": row, "path": None, "length": 0, "tier": 6}
 
     def test_apply_writes_m3u8_only_for_playlists_with_matches(self, tmp_path, monkeypatch):
-        exports, playlists_path, crate = self._fixture_dirs(tmp_path)
+        exports, playlists_path, crate = self._fixture_dirs(tmp_path, monkeypatch)
         m3u8_calls = []
         match_map = {"t1": self._matched, "t2": self._unmatched, "t3": self._unmatched}
         self._wire_common_fakes(monkeypatch, match_map, m3u8_calls)
@@ -368,7 +390,7 @@ class TestBuildPlaylistsOrchestration:
         assert {r["track_id"] for r in unmatched_rows} == {"t2", "t3"}
 
     def test_preview_mode_writes_no_m3u8_files(self, tmp_path, monkeypatch):
-        exports, playlists_path, crate = self._fixture_dirs(tmp_path)
+        exports, playlists_path, crate = self._fixture_dirs(tmp_path, monkeypatch)
         m3u8_calls = []
         match_map = {"t1": self._matched, "t2": self._matched, "t3": self._matched}
         self._wire_common_fakes(monkeypatch, match_map, m3u8_calls)
@@ -381,7 +403,7 @@ class TestBuildPlaylistsOrchestration:
         assert list(playlists_path.iterdir()) == []  # ...but nothing is written into it
 
     def test_covers_flag_downloads_cover_only_for_written_playlists(self, tmp_path, monkeypatch):
-        exports, playlists_path, crate = self._fixture_dirs(tmp_path)
+        exports, playlists_path, crate = self._fixture_dirs(tmp_path, monkeypatch)
         m3u8_calls = []
         cover_calls = []
         match_map = {"t1": self._matched, "t2": self._unmatched, "t3": self._unmatched}
@@ -399,7 +421,7 @@ class TestBuildPlaylistsOrchestration:
         assert cover_calls == [("FAKE_SP", "P1", os.path.join(str(playlists_path), "Playlist One.jpg"))]
 
     def test_raises_when_archive_path_does_not_exist(self, tmp_path, monkeypatch):
-        exports, playlists_path, _crate = self._fixture_dirs(tmp_path)
+        exports, playlists_path, _crate = self._fixture_dirs(tmp_path, monkeypatch)
         m3u8_calls = []
         self._wire_common_fakes(monkeypatch, {}, m3u8_calls)
 

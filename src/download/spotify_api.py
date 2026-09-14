@@ -50,6 +50,7 @@ def get_user_playlists(sp, my_playlists_only=False):
                 'name': playlist.get('name', ''),
                 'description': playlist.get('description', ''),
                 'owner': playlist.get('owner', {}).get('display_name', ''),
+                'owner_id': owner_id or '',
                 'public': playlist.get('public', False),
                 'track_count': playlist.get('tracks', {}).get('total', 0),
                 'playlist_url': playlist_url

@@ -382,15 +382,15 @@ catalog matching → `.m3u8` writing → unmatched handoff.
 - `_write_unmatched()` — non-fatal, atomic write of `unmatched.csv` +
   `unmatched_urls.txt` (feeds back into `download spotify -u`).
 - `_select_playlists()`'s default scope (no `--all`, no `-p`) filters
-  `playlists.csv` rows to `owner == os.getenv('SPOTIFY_USER_ID')`, warning
-  and falling back to "build everything" if `SPOTIFY_USER_ID` is unset.
-  **Worth double-checking**: `playlists.csv`'s `owner` column is written by
-  `download.spotify_api.get_user_playlists()` as
-  `playlist['owner']['display_name']` — a display name, not a user ID —
-  so this comparison may never match even when `SPOTIFY_USER_ID` is set
-  correctly. Not touched during the refactor (carried forward from the
-  pre-refactor version as-is), but flagged here since it affects
-  `playlists`' actual default behavior.
+  `playlists.csv` rows to `owner_id == os.getenv('SPOTIFY_USER_ID')`,
+  warning and falling back to "build everything" if `SPOTIFY_USER_ID` is
+  unset. `owner_id` is a dedicated column in `PLAYLIST_META_FIELDS`,
+  populated by both `download.spotify_api.get_user_playlists()` and
+  `build.py`'s own `_scope_rescrape()`. Previously this compared against
+  the display-name `owner` column instead and could never match even
+  with `SPOTIFY_USER_ID` set correctly — fixed; see `TODO.md`. Playlists
+  exported before the fix won't have `owner_id` populated until
+  re-exported.
 - Imports `lib.spotify_auth.authenticate_user`, `lib.paths`,
   `lib.catalog.indexer.get_index`, `lib.catalog.matcher`, `lib.m3u` — plus
   the one deliberately-kept cross-package dependency,
