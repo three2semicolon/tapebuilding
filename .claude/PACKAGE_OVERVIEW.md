@@ -195,7 +195,21 @@ Consolidates the CSV-metadata-reading + filename-prediction helpers
 - `predict_output_filename(artist, track, fmt)`, `read_csv_metadata(path)`
   — delimiter-sniffing, requires `track_name`/`artist_names` columns,
   first-seen-wins across multiple files. `read_csv_metadata()` always
-  returns a dict (never `None`).
+  returns a dict (never `None`). Each value is a dict with `artist`,
+  `track`, and `album` keys (the old pre-refactor version returned
+  `(artist, track)` tuples with no album field — `album` was added so
+  `retry.py --report-csv` has something to put in its `album` column).
+- `sanitize_filename(filename)` — strips the same characters spotdl's
+  own writer strips, carried over verbatim from the old
+  `spotify_download.py`'s copy; `predict_output_filename()` is a thin
+  wrapper over it.
+- **Caveat, unverified**: this file did not actually exist post-refactor
+  despite being documented above as already consolidated — it was
+  reconstructed after the fact from the old pre-refactor logic and the
+  shapes its two call sites expect. The `album` field specifically is a
+  best-effort guess at the CSV column name (`album_name`, falling back
+  to `album`) that hasn't been checked against a real export header. See
+  `TODO.md`'s open follow-ups.
 
 ### `ytdl.py` (was `yt_dlp_downloader.py`)
 `download_ytdl()` — single track, set/playlist, or album from any
@@ -230,6 +244,14 @@ Rebuilt from the README description — the original source was lost.
 - `DEFAULT_FAILED`, `DEFAULT_SOFT`, `DEFAULT_OUT` — default log/output
   paths. `DEFAULT_REPORT` exists but is currently unused —
   `--report-csv` requires an explicit path.
+
+**Post-refactor correction**: the module as originally written was
+missing `import re` despite using `re.compile()` at module level for
+`_LOG_LINE_RE` — an import-time failure that wouldn't surface until the
+command was actually run. Fixed; flagged here since this file has no
+pre-refactor original to diff against, so it's the least-verified module
+in `download/` (see `TEST_PLANS.md` §2 for the regression tests this
+warrants).
 
 ### `soundbyte.py` (was `soundbyte_albums.py`)
 Pulls top-N albums from a Firebase Firestore collection, searches Spotify
@@ -500,3 +522,14 @@ translates `ok: False` / raised exceptions into exit codes.
   both require `ARCHIVE_PATH` with no fallback, unlike `lib.paths.archive_path()`'s
   convenience default used elsewhere (read-mostly contexts like
   `download/`'s existence checks).
+- **Documented-as-done is not the same as actually-done.** Post-refactor
+  smoke testing found three import-breaking gaps between this document
+  and the real source (`download.existing.resolve_output_dir()` missing,
+  `download/manifest.py` missing entirely, `retry.py` missing `import
+  re`) — all three sat undetected because nothing had actually run the
+  affected command paths, only reviewed/written the docstrings
+  describing them. See `TODO.md`'s "Fixed this session" log for the
+  specifics and `NEW_FEATURE_GUIDE.md` §5 for the "actually run it"
+  checklist this motivated. `TEST_PLANS.md` lays out the test suite
+  (starting with cheap import smoke tests) meant to catch this class of
+  bug going forward instead of relying on manual `uv run` testing.
