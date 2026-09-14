@@ -1,458 +1,502 @@
-# tapebuilding — package overview (pre-refactor snapshot)
+# tapebuilding — package overview
 
-This document describes what exists today: every package, every module, what
-each one is meant to do, and what it actually does. It's the reference point
-for the refactor plan (`REFACTOR_PLAN.md`) and the todo list (`TODO.md`).
+This document describes what exists today, post-refactor: every package,
+every module, what each one does and how it fits together. It replaces the
+pre-refactor snapshot (and `REFACTOR_PLAN.md`, now retired — its `app/`
+section lives on in `WEB_APP_PLAN.md`).
 
-The project builds and manages a personal music library: export Spotify data,
-download from Spotify/SoundCloud/YouTube, organize into a beets-managed crate,
-build local playlists, and mirror a rotation subset to a synced device. The
-eventual goal is a local browser app on top of all of this, streaming out to
-phone via Symfonium.
+The project builds and manages a personal music library: export Spotify
+data, download from Spotify/SoundCloud/YouTube, organize into a
+beets-managed crate, build local playlists, and mirror a rotation subset to
+a synced device.
+
+```
+src/
+  lib/                  shared foundation - no domain package imports this backwards
+    paths.py
+    text.py
+    tags.py
+    m3u.py
+    spotify_auth.py
+    catalog/
+      indexer.py
+      matcher.py
+  download/              acquisition: spotify export/download, ytdl, retry, soundbyte
+  organize/              raw downloads -> beets-managed crate
+  playlists/             spotify playlist -> local .m3u8, with crate matching
+  tapedeck/               mirror a rotation subset of the crate to a sync target
+  core/                   opinionated multi-step workflows over the four packages above
+```
+
+Every package directory has an `__init__.py`; `pyproject.toml`'s
+`[project.scripts]` points one console command per package at its
+`cli.py` (`download`, `organize`, `playlists`, `tapedeck`, `core`).
+
+---
+
+## lib/
+
+Shared primitives every domain package depends on. Nothing in `lib/`
+imports from `download`/`organize`/`playlists`/`tapedeck` — the dependency
+graph only goes one way.
+
+### `lib/paths.py`
+Single source of truth for every root path. Uppercase-only env vars — the
+old dual-case (`ARCHIVE_PATH`/`archive_path`) fallback is gone.
+- `resolve(env_name, cli=None, default=None, required=False)` — `cli`
+  override > `os.environ[env_name]` > `default`; raises `ValueError` if
+  `required` and nothing resolves. Every named resolver below is a thin
+  call into this.
+- `archive_path(cli=None)` — `ARCHIVE_PATH`, defaults to
+  `~/music/tapebuilding` if unset. This convenience default is
+  deliberately **not** used by anything that moves or renames files on
+  disk (`organize.cleanup.resolve_crate()`, `organize.beets_import.run_import()`)
+  — those call `resolve('ARCHIVE_PATH', required=True)` directly instead,
+  so a missing `ARCHIVE_PATH` is a hard error rather than a silently
+  guessed directory.
+- `tapedeck_path(cli=None)` — `TAPEDECK_PATH`, defaults to
+  `~/music/tapedeck`.
+- `playlists_path(cli=None)` — `PLAYLISTS_PATH`, required, no fallback.
+- `exports_dir(playlists_path_value=None, cli=None)` — `<playlists_path>/exports`, created if missing.
+- `ffmpeg_path(cli=None)` — `FFMPEG_PATH`, no default (`None` means "let
+  the tool find it on `PATH`").
+- Doesn't call `load_dotenv()` itself — each package's `cli.py` does that
+  once at startup.
+
+### `lib/text.py`
+Two tiers of string normalization, consolidated from four independent
+pre-refactor copies.
+- `normalize_key(s)` — lowercase, strip non-alphanumeric, collapse
+  whitespace. The bare normalize, used for grouping/matching keys
+  everywhere.
+- `normalize_title(s)` — `normalize_key()`, but strips a leading
+  `feat.`/`ft.`/`featuring` clause and parenthetical content first. Used
+  wherever a "core" title identity matters more than the literal string.
+- `primary_artist(s)` — first credited artist from an `"A, B & C"` /
+  `"A feat. B"` string.
+- `split_artists(s)` — all credited artists from the same kind of string,
+  as a list. Deliberately does **not** treat a bare `" and "` as a
+  separator (only comma/`&`/`/`/`x`/`vs`/feat-family) — that's different
+  from `organize/normalize_artists.py`'s beets plugin, which does handle
+  `and`, and that inconsistency is intentional (separate subsystem,
+  pinned down with an assertion so it doesn't get "fixed" later).
+
+### `lib/tags.py`
+- `EXTENSIONS` — supported audio extensions.
+- `sanitize(s)` — filesystem-safe path component.
+- `read_tags(path)` — dict return (`artist`, `albumartist`, `album`,
+  `title`, `track`, `length`, `path`) — merges the old tuple-returning
+  `organize.cleanup.read_tags` and dict-returning
+  `playlists.indexer._read_entry` into one function every caller uses.
+- `write_tag(path, **fields)` — generalized tag writer.
+- `canonical_albumartist(files)`, `dominant_album(files)`,
+  `scan_audio(root, subdirs=None)`, `safe_move(src, dst)`.
+- `primary_token(raw)` — narrower than `lib.text.primary_artist`, splits
+  only on `&`/`/`; used specifically by `canonical_albumartist()`.
+
+### `lib/m3u.py`
+- `write_m3u8(path, entries)` — atomic write (tmp + `os.replace`); each
+  entry gets a `#SPOTIFY:<track_id>` comment line plus a standard
+  `#EXTINF`; paths written relative to the `.m3u8`'s own folder.
+- `safe_name(name)` — filesystem-safe playlist filename.
+- `read_m3u8(path)` — merges the old `playlists.m3u.parse_spotify_ids()`
+  (track IDs) and `tapedeck.resolve._parse_m3u8()` (existing/missing path
+  lines) into one reader returning both — `{'track_ids': [...], 'existing': [...], 'missing': [...]}`
+  shape, consumed by both `playlists/` (for future reverse-sync) and
+  `tapedeck/` (resolving playlist contents to mirror).
+
+### `lib/spotify_auth.py`
+Doesn't call `load_dotenv()` itself — relies on the calling `cli.py`.
+- `authenticate_user()` — OAuth user-auth flow (playlists, liked songs,
+  follows scopes). Token cache path is anchored (not a bare relative
+  `token_cache` like the pre-refactor version).
+- `authenticate_client()` — client-credentials flow (public search, no
+  login), rewritten on spotipy instead of hand-rolled `requests` calls.
+
+### `lib/catalog/`
+The crate-catalog primitive — build/cache a searchable tag index of the
+crate, and match an external Spotify row against it. Promoted out of
+`playlists/` since `tapedeck/` needed both directly too.
+- `catalog/indexer.py` — `build_index()`, `get_index()` (cached, rebuilds
+  the `.playlist_index.jsonl` sidecar under the exports dir on miss or
+  `--reindex`), `save_index()`/`load_index()`. Behavior unchanged from
+  `playlists/indexer.py`; calls `lib.tags.read_tags()` and `lib.paths`
+  instead of its own copies.
+- `catalog/matcher.py` — `MatchIndex`, `match_rows()` (cached by Spotify
+  track ID). Six-tier matching, preserved exactly: (1) exact title +
+  primary-artist token, (2) exact title + any artist overlap, (3) exact
+  title + exact album + duration, (4) core title (feat. clause stripped
+  from the local tag) + artist overlap, (5) fuzzy title (≥0.92 ratio,
+  same 4-char prefix) + duration, (6) all-symbol titles — exact raw title
+  then `(album, track-number)` position. Calls `lib.text.normalize_key`/
+  `normalize_title`/`primary_artist`/`split_artists` instead of its own
+  regex.
 
 ---
 
 ## download/
 
-Acquisition layer. Exports Spotify metadata, downloads audio from Spotify
-(via spotdl) and any yt-dlp-supported source, retries failures, and pulls a
-curated album list from a Firebase-backed side project ("soundbyte").
+Acquisition layer. `cli.py` is a `click.group()` named `download` with
+five subcommands (`export`, `spotify`, `ytdl`, `retry`, `soundbyte`);
+`pyproject.toml` points `download = "download.cli:download"` at it. Calls
+`load_dotenv()` once at import.
 
-### `spotify_to_csv.py` (cli: `export`)
-Exports Spotify playlists + liked songs to CSV, and a deduplicated master
-manifest of track URLs for the downloader.
-- `export_all_data()` — full export: playlists.csv, playlist_tracks.csv,
-  liked_songs.csv, spotify_manifest.csv (deduped), spotify_manifest_urls.txt.
-- `export_specific_playlist()` — export one playlist by URL/ID.
-- `extract_playlist_id_from_url()` — parses a playlist URL or spotify: URI to
-  a bare ID. Also reused by `playlists/build.py`.
-- `--mine` restricts to playlists the authenticated user owns.
+### `spotify_export.py` (was `spotify_to_csv.py`)
+- `export_all_data()` — full export: `playlists.csv`,
+  `playlist_tracks.csv`, `liked_songs.csv`, `spotify_manifest.csv`
+  (deduped), `spotify_manifest_urls.txt`.
+- `export_specific_playlist()` — one playlist by URL/ID.
+- `export_playlists()` — **new**: export + merge two or more named
+  playlists into a scoped `playlists_manifest.csv` +
+  `playlists_manifest_urls.txt`, distinct filenames from the full-library
+  export so the two don't clobber each other.
+- `extract_playlist_id_from_url()` — also used by `playlists/build.py`.
 
-### `spotify_utils.py`
-Shared Spotify API helpers used by the export flow.
-- `authenticate_spotify()` — user-auth flow (SpotifyOAuth, scopes for
-  playlists/liked-songs/follows). Token cached to a bare relative path
-  (`token_cache`) — not anchored to any config location.
+### `spotify_api.py` (was `spotify_utils.py`)
+Everything left after auth (`lib.spotify_auth`) and normalization
+(`lib.text`) moved out — purely "talk to the Spotify web API + write
+CSVs."
 - `get_user_playlists()`, `get_playlist_tracks()`, `get_liked_songs()` —
-  paginated fetchers.
-- `merge_and_deduplicate()` — two-pass dedup: exact by Spotify track ID, then
-  fuzzy by normalized primary-artist + title (collapses remasters/regional
-  versions), keeping the most popular track as canonical and merging playlist
-  membership across collapsed duplicates.
-- `_normalize_title()` / `_fuzzy_key()` — the fuzzy-key normalization used
-  only by this dedup pass. Strips `feat.`/parenthetical content before the
-  generic strip — a different (better) normalization than the generic
-  lowercase-alphanumeric one used elsewhere.
-- `export_to_csv()`, `export_manifest_as_txt()`, `get_export_dir()`.
+  paginated fetchers, sharing an extracted `_extract_track()` helper.
+- `merge_and_deduplicate()` — exact dedup by Spotify track ID, then fuzzy
+  dedup by `_fuzzy_key()` (a thin composite-key caller of
+  `lib.text.normalize_title`/`primary_artist`, not a duplicate
+  normalizer), keeping the most popular track as canonical and merging
+  playlist membership.
+- `export_to_csv()`, `export_manifest_as_txt(filename=...)` — filename is
+  overridable so a scoped manifest doesn't clobber the full-library one.
+- `get_export_dir(base_dir=None)` — thin wrapper over
+  `lib.paths.exports_dir()`; CSVs now live under `PLAYLISTS_PATH/exports`.
 
-### `download_spotify.py` (cli: `spotify`)
-Downloads audio from Spotify URLs via spotdl, batched, with retry and
-existence-checking.
-- `download_spotify()` — main entry. Reads URLs from a `.txt`, `.csv` (needs
-  `spotify_url` column), or directory of `.csv`s. Dedupes preserving order.
-  Batches into spotdl subprocess calls. spotdl's exit code is unreliable (0
-  even on failure), so stdout is scanned for hard-failure markers (track
-  genuinely gone — `Track no longer exists`, `SongError`) and soft-failure
-  markers (`AudioProviderError`, `LookupError`, etc.), each with its own
-  retry/logging behavior. Failures logged to `failed_downloads.txt` /
-  `soft_failures.txt`.
-- `--pre-skip-existing` — predicts spotdl's output filename from CSV metadata
-  (`_predict_output_filename` / `sanitize_filename`, which must exactly mirror
-  spotdl's own sanitization) and checks it against a library index before
-  downloading, to skip tracks already on disk.
-- `--validate-only` — reports existing/new without downloading.
-- `_check_existing()` — orchestrates the above against `organize.library`'s
-  index-building functions (cross-package dependency).
-- `_resolve_output_dir()` — duplicated verbatim in `yt_dlp_downloader.py`.
-- FFmpeg path resolution (`FFMPEG_PATH` / `ffmpeg_path` dual-case env) is
-  copy-pasted here and elsewhere.
+### `spotify_download.py` (was `download_spotify.py`)
+`download_spotify()` — batched spotdl download with retry and
+existence-checking, dry-run/validate-only support. spotdl's exit code is
+unreliable (0 even on failure), so stdout is scanned for hard-failure
+markers (track genuinely gone) and soft-failure markers, each with its own
+retry/logging behavior; failures logged to `failed_downloads.txt` /
+`soft_failures.txt`. `--pre-skip-existing` predicts spotdl's output
+filename from CSV metadata and checks it against a library index before
+downloading. Uses `lib.paths.archive_path()`/`ffmpeg_path()`,
+`lib.text.normalize_key()`, and `download.existing`/`download.manifest`
+(below) instead of the old `organize.library` imports.
 
-### `yt_dlp_downloader.py` (cli: `ytdl`)
-Downloads a single track, set/playlist, or album from any yt-dlp-supported URL
-(SoundCloud, YouTube, etc.) via yt-dlp.
-- `download_ytdl()` — single vs. playlist output templates differ (Windows'
-  null-byte handling corrupts the conditional `%(playlist&...)s` template, so
-  two separate templates are used instead).
-- `is_playlist_url()` — regex-based playlist/set detection.
-- `-m/--metadata-only` — lists tracks without downloading.
-- Same `_resolve_output_dir()` duplication and FFmpeg-path duplication as
-  `download_spotify.py`.
+### `download/existing.py` (new)
+Fast, filename-only existence check — deliberately cheaper than
+`lib.catalog`'s full tag-based index, used only to skip already-downloaded
+tracks before a run.
+- `build_library_index()`, `scan_existing_fuzzy()` — glob-scan +
+  normalized-stem matching.
+- `resolve_output_dir()` — shared between `spotify_download.py` and
+  `ytdl.py` (was duplicated verbatim pre-refactor).
 
-### `retry_failures.py` (cli: `retry`)
-**Source lost — file only survives as a docstring + constants; the actual
-logic (union reasons across `failed_downloads.txt`/`soft_failures.txt`,
-hard/soft exclusion, `--report-csv` manual-hunt sheet generation) needs to be
-rebuilt from the README description, not ported.** Per the README, it should:
-- Compile both failure logs into `retry_list.txt`, deduping URLs and unioning
-  their failure reasons.
-- Exclude `track_unavailable` (hard failure) by default unless
-  `--include-unavailable`.
-- Re-check remaining URLs against the library (reusing
-  `download_spotify`'s exact predicted-filename matching path) so the retry
-  list only contains what's still actually missing.
-- `--report-csv` — write a manual-hunt sheet (`artist, track, album, reason,
-  spotify_url, search`) sorted by artist → album → track, with a clickable
-  YouTube search link per row.
+### `download/manifest.py` (new)
+Consolidates the CSV-metadata-reading + filename-prediction helpers
+`spotify_download.py` and `retry.py` had each independently written.
+- `predict_output_filename(artist, track, fmt)`, `read_csv_metadata(path)`
+  — delimiter-sniffing, requires `track_name`/`artist_names` columns,
+  first-seen-wins across multiple files. `read_csv_metadata()` always
+  returns a dict (never `None`).
 
-### `soundbyte_albums.py` (cli: `soundbyte`)
-Pulls top-N albums from a Firebase Firestore collection (a separate personal
-project, "soundbyte"), searches Spotify for each, and exports:
-- `soundbyte_albums.csv` / `soundbyte_album_urls.txt` — album-level.
-- With `--expand-albums`: expands each matched album into its tracks and
-  writes `soundbyte_tracks.csv` in the exact same column shape as
-  `spotify_manifest.csv`, so `spotify --pre-skip-existing` can use it (a plain
-  album-URL list has no track metadata to predict filenames from).
-- `_get_spotify_token()` — a **second, independently hand-rolled** Spotify
-  client-credentials auth flow using raw `requests` calls, not
-  `spotify_utils`/spotipy. Legitimate to be a separate auth flow
-  (client-credentials needs no user login) but shouldn't be a duplicate
-  implementation.
-- `search_spotify_album()` — progressively loosened search queries (exact →
-  loose artist → freeform) with exact-title preference, first-result fallback.
+### `ytdl.py` (was `yt_dlp_downloader.py`)
+`download_ytdl()` — single track, set/playlist, or album from any
+yt-dlp-supported URL. Single vs. playlist use separate output templates
+(Windows' null-byte handling corrupts the conditional template). Shares
+`download.existing.resolve_output_dir()` and
+`lib.paths.ffmpeg_path()` (imported as `resolve_ffmpeg_path` to avoid
+shadowing the CLI's own `--ffmpeg` parameter) with `spotify_download.py`.
+`is_playlist_url()` — regex-based playlist/set detection.
+`AUDIO_FORMATS` — the format choice list the CLI validates against.
+
+### `retry.py` (was `retry_failures.py`)
+Rebuilt from the README description — the original source was lost.
+`run_retry()`:
+- Unions `failed_downloads.txt` + `soft_failures.txt`, deduping URLs and
+  unioning reasons.
+- Excludes `track_unavailable` (hard failure) by default;
+  `include_unavailable=True` keeps them.
+- `no_check=True` skips the library re-check.
+- Default: re-checks remaining URLs against the library using the same
+  exact-match path `spotify_download.py --pre-skip-existing` uses
+  (predict filename from CSV metadata → normalize → check against
+  `download.existing`'s index), so the retry list is consistent with what
+  a real run would itself skip.
+- `report_csv_path` — writes the manual-hunt sheet (`artist, track,
+  album, reason, spotify_url, search`), sorted artist → album → track,
+  with a clickable YouTube search link per row.
+- Returns a full breakdown dict (`total_seen`, `hard_excluded`,
+  `already_on_disk`, `no_meta`, `retry_urls`, `output_path`,
+  `report_csv_path`) — `cli.py` always prints the summary from it, no
+  separate verbose mode.
+- `DEFAULT_FAILED`, `DEFAULT_SOFT`, `DEFAULT_OUT` — default log/output
+  paths. `DEFAULT_REPORT` exists but is currently unused —
+  `--report-csv` requires an explicit path.
+
+### `soundbyte.py` (was `soundbyte_albums.py`)
+Pulls top-N albums from a Firebase Firestore collection, searches Spotify
+for each, exports album- and (optionally expanded) track-level manifests.
+- `authenticate_client()` from `lib.spotify_auth` replaces the old
+  hand-rolled `requests`-based client-credentials flow — this also
+  changed `search_spotify_album()`/`fetch_album_tracks()` to use
+  `sp.search()`/`sp.album()`/`sp.next()` instead of raw HTTP calls;
+  behavior (progressively loosened search queries, exact-title
+  preference, paginated track fetch) is preserved.
+- `run_soundbyte(limit, output_dir, delay)` — single orchestrating entry
+  point (fetch → enrich → album export → track expand → track export),
+  matching `retry.run_retry()`'s shape. Returns album/track CSV paths and
+  match counts.
+- Requires `firebase-admin`, `FIREBASE_PROJECT_ID` +
+  `FIREBASE_CREDENTIALS_PATH` in `.env`.
+
+### `download/cli.py`
+Single `click.group('download')`. Commands and their notable options:
+`export` (`-p/--playlist` repeatable, `--playlists-file`, `-o/--output`,
+`--mine`), `spotify` (`-u/--url-file`, `-o/--output`, `-f/--format`,
+`-b/--bitrate`, `--overwrite-errors`, `--skip-existing`,
+`--validate-only`, `--batch-size`, `--retries`, `--retry-delay`,
+`--pre-skip-existing`, `--cookies-from-browser`, `--cookie-file`,
+`--debug`), `ytdl` (positional URL, `-o/--output`, `-f/--format`,
+`--quality`, `--no-thumbnail`, `--overwrite`, `-v/--verbose`,
+`--metadata-only`, `--cookies-from-browser`, `--ffmpeg`), `retry`
+(`--failed-log`, `--soft-log`, `-o/--output`, `--include-unavailable`,
+`--no-check`, `--metadata-source`, `--library-root`, `--report-csv`),
+`soundbyte` (`--limit`, `-o/--output`, `--delay`).
 
 ---
 
 ## organize/
 
-Takes raw downloads and turns them into a clean, beets-managed crate: proper
-album folders, singleton handling, and artist-string normalization.
-
-### `library.py`
-Shared library-index and root-resolution helpers — imported directly by
-`download/` (a cross-package dependency, since this technically lives under
-`organize/`).
-- `resolve_library_root()` — `ARCHIVE_PATH`/`archive_path` env, dual-cased,
-  with a `~/music/tapebuilding` fallback.
-- `resolve_tapedeck_root()` — same pattern for `TAPEDECK_PATH`.
-- `_normalize()` — lowercase, strip non-alphanumeric, collapse whitespace.
-  **Functionally identical** to `organize.cleanup.norm_key` — independently
-  defined.
-- `build_library_index()` — glob-scans the library root for audio files,
-  indexes normalized filename stems into a set.
-- `scan_existing()` / `scan_existing_fuzzy()` — check candidate filenames
-  against the index; fuzzy version normalizes both sides first.
+Takes raw downloads and turns them into a clean, beets-managed crate.
 
 ### `cleanup.py`
-Two jobs live in one file: (1) a **toolkit** of tag-reading/normalizing/moving
-primitives reused by `preimport.py`, `playlists/matcher.py`, and
-`tapedeck/resolve.py`; (2) the **regroup-in-place** policy that fixes an
-already-imported crate.
-- Toolkit: `EXTENSIONS`, `norm_key()`, `sanitize()`, `primary_token()`,
-  `read_tags()`, `canonical_albumartist()`, `dominant_album()`,
-  `scan_audio()`, `safe_move()`, `write_albumartist()`, `resolve_crate()`.
-- Also defines a **second, dead-duplicate** normalize function `norm()` at the
-  bottom of the file, used only by `write_albumartist()` — functionally
-  identical to `norm_key()`.
-- Policy: repairs two beets import failure modes — (a) albums split into
-  per-track-artist folders because incoming files had no `albumartist` tag,
-  so beets keyed the path template on the varying track artist; (b) whole
-  albums scattered as loose singletons because the singles pass has no album
-  grouping. Regroups by album tag straight off file tags (independent of
-  beets/beets.db), computes a canonical albumartist per group (dominant
-  artist string → dominant primary collaborator → `Various Artists`), moves
-  files into `albums/<AlbumArtist> - <Album>/` or `singles/<Artist> -
-  <Title>`, and writes the canonical albumartist tag so a future re-import
-  won't re-split the group. Idempotent.
-- `--rebuild-db` — deletes and rebuilds `beets.db` via an as-is (no
-  MusicBrainz) reimport matching the reorganized crate.
-- Flags plausible wrong-merges (unusually large album groups) and VA-filed
-  albums in its dry-run summary for manual review.
+The regroup-in-place **policy** only now (the toolkit half moved to
+`lib.tags`/`lib.text`). Repairs two beets import failure modes: albums
+split into per-track-artist folders (no `albumartist` tag on import), and
+whole albums scattered as loose singletons. Regroups straight off file
+tags, independent of beets/beets.db.
+- `resolve_crate(cli_value=None)` — `ARCHIVE_PATH`, **required, no
+  fallback** — deliberately stricter than `lib.paths.archive_path()`'s
+  `~/music/tapebuilding` default, since this command moves files and
+  rewrites tags.
+- `group_files()`, `build_plan()`, `prune_empty_dirs()`, `rebuild_db()`,
+  `run_cleanup()` (the plain entry point `cli.py` calls).
+- `--rebuild-db` deletes and rebuilds `beets.db` via an as-is (no
+  MusicBrainz) reimport. Flags plausible wrong-merges (unusually large
+  album groups) and VA-filed albums in the dry-run summary.
+- Idempotent.
 
 ### `preimport.py`
-Runs the same regrouping logic **before** beets ever sees the drop, so the
-importer doesn't need to be fixed up after the fact. Built almost entirely
-from `cleanup.py`'s toolkit functions.
-- `stage()` — main entry, called automatically by `beets_import.py` unless
-  `--no-preimport`.
-- Three outcomes per album-tag group: **merge** into an existing crate album
-  folder (matched by normalized albumartist+album against
-  `index_existing_albums()`), **stage** a new folder under
-  `<input>/albums/` (≥2 tracks, no existing match), or **pass** (lone track,
-  left for the beets singles pass).
-- `index_existing_albums()` — maps existing crate albums by
-  `(norm(albumartist), norm(album))`; a collision across ≥2 existing folders
-  marks the key ambiguous (`None`) so a merge is refused rather than risking
-  binding two different real albums that share a normalized name — staged as
-  a new folder instead.
-- Merge-target duplicate detection (`_existing_titles()`) — skips
-  incoming tracks the target album folder already owns (e.g. an mp3
-  straggler of a track present as flac), quarantining them to
-  `<crate>/duplicates/` instead of creating a same-album intra-folder
-  duplicate that beets' `duplicate_action: skip` wouldn't otherwise catch.
+Runs the same regrouping logic **before** beets ever sees the drop.
+- `stage()` — called automatically by `beets_import.run_import()` unless
+  `--no-preimport`. Three outcomes per album-tag group: merge into an
+  existing crate album folder, stage a new folder under
+  `<input>/albums/`, or pass through as a singleton.
+- `index_existing_albums()` — collision across ≥2 existing folders with
+  the same normalized key marks it ambiguous (refuses the merge rather
+  than risking binding two different real albums).
 - Returns a `report` dict (`staged_folders`, `merged_folders`,
   `merged_tracks`, `duplicates`, `ambiguous`, `singletons`, `tag_writes`)
-  that `beets_import.py` consumes to warn that merged tracks are on disk but
-  not yet in `beets.db`.
+  that `beets_import.py` consumes.
+- Only `group_files`/`resolve_crate` still come from `organize.cleanup`
+  (deliberately organize-specific policy); everything else imports
+  directly from `lib.tags`/`lib.text`.
 
-### `beets_import.py` (cli: `import`)
+### `beets_import.py`
 Two-pass beets importer: pass 1 groups multi-track albums and matches
 against MusicBrainz; pass 2 imports remaining loose tracks as singletons.
-- `run_album_pass()` / `run_singles_pass()` — shell out to `beet import`
-  with `--pretend` (dry-run), `--timid` (prompt on uncertain matches) or
-  `--quiet` (auto-accept strong matches, skip uncertain), `--singletons`.
-- `_album_pass_target()` — careful dispatch: when preimport ran, the album
-  pass targets *only* `<input>/albums/` (what preimport just staged), and is
-  skipped entirely if preimport staged nothing — never falls through to a
-  flat directory of loose singletons, which beets would otherwise group into
-  one bogus multi-track album.
-- `_warn_singles_after_albums()` — warns if `albums/` still holds audio when
-  running a singles-only pass (the singles pass is recursive and would import
-  those album tracks as individual singletons).
-- `export_library_csv()` / `print_library_stats()` — dump/summarize the
-  beets library via `beet ls -f`.
-- Runs `organize.preimport.stage()` automatically before both passes unless
-  `--no-preimport`.
+- `run_import(input_dir, output_dir=None, dry_run=False, only_pass=None, timid=False, no_preimport=False, no_merge_existing=False, verbose=False)`
+  — the plain entry point. `output_dir` resolution is **required, no
+  fallback**: calls `lib.paths.resolve('ARCHIVE_PATH', required=True)`
+  directly, matching `resolve_crate()`'s strictness exactly (both move
+  files on disk).
+- `_album_pass_target()` — when preimport ran, the album pass targets
+  only `<input>/albums/` (what preimport just staged), skipped entirely
+  if nothing was staged — never falls through to a flat directory of
+  loose singletons.
+- `_warn_singles_after_albums()`, `export_library_csv()`,
+  `print_library_stats()`.
+- Runs `organize.preimport.stage()` automatically before both passes
+  unless `--no-preimport`.
 
 ### `normalize_artists.py`
-A beets plugin (not a CLI tool) — normalizes artist/albumartist strings at
-import time into a consistent `"A, B & C"` form, handling `feat.`/`ft.`,
-collab `x`, and `and` separators. Registered via `config.yaml`'s `plugins`
-list + `pluginpath`. Self-contained, no notes.
-- `normalize_artist()` — the core string transform.
-- `NormalizeArtistsPlugin` — hooks `import_task_choice` (pre-path-template),
-  `album_imported`/`item_imported` (post-import correction).
+A beets plugin (not a CLI tool) — normalizes artist/albumartist strings
+at import time into `"A, B & C"` form, handling `feat.`/`ft.`, collab
+`x`, and `and`. Untouched by the refactor. Registered via `config.yaml`'s
+`plugins` list + `pluginpath`.
 
 ### `config.yaml` / `config.yaml.example`
-Beets configuration. The example is a properly path-templated version of the
-real (machine-specific, gitignored) config — correct pattern, not a bug.
-Real config hardcodes an absolute crate path and `pluginpath`.
+Beets configuration; the example is a path-templated version of the real
+(machine-specific, gitignored) config.
+
+### `organize/cli.py`
+`click.group('organize')` with `import` and `cleanup` subcommands, plus
+`--export-csv` under `import`. See `README.md` for exact usage.
 
 ---
 
 ## playlists/
 
 Builds and maintains local `.m3u8` files from Spotify playlists, resolving
-each track to a file in the crate. The most mature subsystem in the repo —
-tiered fuzzy matching, cached crate index, atomic file writes.
+each track to a file in the crate. Most mature subsystem — tiered fuzzy
+matching (now `lib.catalog.matcher`), cached crate index (now
+`lib.catalog.indexer`), atomic file writes (now `lib.m3u`).
 
-### `indexer.py`
-Builds a local catalog of the crate for track matching (has to cover
-`albums/`, `singles/`, **and** `soundtracks/`, which `beets.db` does not
-index — hence tag-reading the filesystem directly rather than querying
-beets).
-- `build_index()` — recursive `mediafile` walk, skipping the `playlists/`
-  subtree at the crate top level. Reuses `organize.cleanup`'s tag-reading
-  idiom, but **re-implements it independently** (`_read_entry()`) rather than
-  calling `cleanup.read_tags()` — duplicated field list.
-- `get_index()` — returns the cached catalog, rebuilding the jsonl sidecar
-  (`.playlist_index.jsonl` under the exports dir) on miss or `--reindex`.
-- `save_index()` / `load_index()` — atomic jsonl write, tolerant read.
-- `resolve_playlists_path()`, `resolve_archive_path()`, `resolve_exports_dir()`
-  — **another** independent copy of the CLI-arg-or-dual-case-env-or-fallback
-  resolution pattern seen in `organize.library`.
-
-### `matcher.py`
-Maps a Spotify track row to a local file via progressive relaxation — no
-ISRC available in the exports, and the library is mostly beat
-tapes/bootlegs that won't match MusicBrainz, so matching is by name.
-- Six tiers, first hit wins: (1) exact title + primary-artist token, (2)
-  exact title + any artist overlap, (3) exact title + exact album +
-  duration, (4) core title (feat. clause stripped from the **local** tag) +
-  artist overlap — rescues a local `"Title (feat. X)"` against a clean
-  Spotify `"Title"`, (5) fuzzy title (≥0.92 ratio, same 4-char prefix) +
-  duration, hesitant, (6) all-symbol titles (normalize to empty string,
-  e.g. `"$$$"`) — exact raw title then `(album, track-number)` position,
-  each guarded by artist/album/duration so a generic symbol title can't
-  cross-match an unrelated track.
-- `MatchIndex` — preprocesses the catalog into title/prefix/core-title/raw-
-  title/album-track lookup groups once per build run.
-- Imports `organize.cleanup.norm_key` directly for its base normalization,
-  but layers its own `_core_title()`/`_FEAT_PAREN` feat-stripping logic on
-  top rather than reusing `spotify_utils`'s equivalent — a third independent
-  feat-aware normalization.
-- `match_rows()` — caches results by Spotify track ID (a track in many
-  playlists resolves once per run).
-
-### `m3u.py`
-Writes/reads extended `.m3u8` playlists.
-- `render()` / `write_m3u8()` — atomic write (tmp + `os.replace`). Each entry
-  gets a `#SPOTIFY:<track_id>` comment line (ignored by players) for a future
-  reverse-sync, plus a standard `#EXTINF`. Paths are written relative to the
-  `.m3u8`'s own folder so the file stays portable under a synced crate tree.
-- `safe_name()` — filesystem-safe playlist filename; transliterates non-ASCII
-  rather than underscoring it.
-- `parse_spotify_ids()` — recovers the ordered Spotify track ID list from a
-  written `.m3u8` (for the planned reverse-sync).
-- **Note:** `tapedeck/resolve.py` independently parses the same file format
-  for its path lines (`_parse_m3u8`) rather than extending this module —
-  two readers of one file format living in two packages.
-
-### `build.py` (cli: `playlists`)
-Orchestrates export (optional rescrape) → track/playlist selection → catalog
-matching → `.m3u8` writing → unmatched handoff.
-- `build_playlists()` — main entry.
-- `_select_playlists()` — scope resolution: `-p/--playlist` (by name or ID,
-  repeatable) overrides `--all`/`--mine` (default: owned playlists only).
-- `_scope_rescrape()` — when `--rescrape` is combined with `-p`, fetches and
-  patches in *only* the named playlist(s)' rows rather than re-running a full
-  `export_all_data()` walk of every owned playlist — a real, nontrivial
-  feature (id resolution from an existing `playlists.csv`, in-place row
-  replacement preserving CSV order).
-  `--covers` downloads each playlist's cover art.
+### `build.py`
+Orchestrates export (optional rescrape) → track/playlist selection →
+catalog matching → `.m3u8` writing → unmatched handoff.
+- `build_playlists(apply=..., rescrape=..., names=..., covers=..., verbose=..., playlists_path=..., archive_path=..., exports_dir=..., reindex=...)`
+  — main entry, called directly by `core.sync.run_sync()` and by
+  `core.download_songs.run_download_songs()`'s playlists step.
+- `_select_playlists()` — `-p/--playlist` (name or ID, repeatable)
+  overrides `--all`/`--mine` (default: owned playlists only).
+- `_scope_rescrape()` — with `--rescrape` + `-p`, fetches and patches in
+  only the named playlist(s)' rows instead of a full re-export.
 - `_write_unmatched()` — non-fatal, atomic write of `unmatched.csv` +
-  `unmatched_urls.txt` (feeds directly back into `spotify -u`).
-- Imports `download.spotify_utils` (`authenticate_spotify`,
-  `get_playlist_tracks`) and `download.spotify_to_csv` (`export_all_data`,
-  `extract_playlist_id_from_url`) directly — confirms `playlists` depends on
-  `download`'s auth/export layer as much as it depends on `organize`'s
-  index/tag layer.
+  `unmatched_urls.txt` (feeds back into `download spotify -u`).
+- `_select_playlists()`'s default scope (no `--all`, no `-p`) filters
+  `playlists.csv` rows to `owner == os.getenv('SPOTIFY_USER_ID')`, warning
+  and falling back to "build everything" if `SPOTIFY_USER_ID` is unset.
+  **Worth double-checking**: `playlists.csv`'s `owner` column is written by
+  `download.spotify_api.get_user_playlists()` as
+  `playlist['owner']['display_name']` — a display name, not a user ID —
+  so this comparison may never match even when `SPOTIFY_USER_ID` is set
+  correctly. Not touched during the refactor (carried forward from the
+  pre-refactor version as-is), but flagged here since it affects
+  `playlists`' actual default behavior.
+- Imports `lib.spotify_auth.authenticate_user`, `lib.paths`,
+  `lib.catalog.indexer.get_index`, `lib.catalog.matcher`, `lib.m3u` — plus
+  the one deliberately-kept cross-package dependency,
+  `download.spotify_api`/`download.spotify_export` (auth + export
+  really do belong to `download`).
+
+### `playlists/cli.py`
+Single `click.command('playlists')` (not a group — one operation, several
+flags): `--apply`, `--all`, `--mine` (only present to error clearly if
+combined with `--all`), `-p/--playlist` (repeatable), `--rescrape`,
+`--covers`, `--reindex`, `--verbose`, `-o/--playlists-path`,
+`--archive-path`, `--exports-dir`. See `README.md` for full usage.
 
 ---
 
 ## tapedeck/
 
 Mirrors a rotation subset of the crate 1:1 by crate-relative path into a
-sync target (`TAPEDECK_PATH`), for offline/roaming playback on another
-device. No downloading, no Spotify — purely a copy/hardlink of a slice of
-the crate that already exists.
-
-### `paths.py`
-Thin per-package wrapper resolving the three roots tapedeck touches (crate,
-tapedeck, playlists+exports), delegating to `organize.library` and
-`playlists.indexer`'s resolvers rather than reimplementing them — the
-correct instinct, just currently pointed at two different sibling packages
-instead of one shared one.
+sync target (`TAPEDECK_PATH`). No downloading, no Spotify — a copy/hardlink
+of a slice of the crate that already exists.
 
 ### `resolve.py`
-Turns a `(kind, spec)` pair into crate paths to stage, where `kind` is one of
-`album`/`song`/`soundtrack`/`playlist` and `spec` is either a crate-relative
-path (fast, unambiguous, skips the index entirely) or a name (resolved
-against the crate).
-- Returns four buckets: `folders` (whole-subtree mirrors — albums,
-  soundtracks), `files` (individual audio files — songs, playlist tracks),
-  `m3u8` (playlist files copied verbatim), `warnings` (unresolved specs,
-  ambiguity notes — never fatal). This bucket split is what lets `copy.py`
-  stage/unstage generically without knowing what kind of thing it's moving.
-- `need_index_for()` — decides whether the invocation needs the cached crate
-  index at all; path-form specs and soundtrack/playlist kinds never do, an
-  album name matching a folder basename doesn't either — only album-by-tag
-  fallback and song-by-name actually need it, so the (potentially expensive)
-  index build is skipped whenever possible.
-- Per-kind resolvers (`_resolve_album`, `_resolve_song`, `_resolve_soundtrack`,
-  `_resolve_playlist`) each degrade gracefully: path match first, then
-  folder/dir basename match, then (for album/song) a tag-based fallback via
-  the catalog.
-- Imports `organize.cleanup.norm_key` and `playlists.matcher.MatchIndex`/
-  `_split_artists` directly — confirms tapedeck depends on both the
-  normalization toolkit and the playlists catalog/matcher subsystem as core
-  primitives, not incidentally.
-- `_parse_m3u8()` — a **second** reader of the `.m3u8` path-line format
-  (`playlists/m3u.py` is the first), extracting existing/missing referenced
-  files rather than track IDs.
+Turns a `(kind, spec)` pair into crate paths to stage — `kind` is one of
+`album`/`song`/`soundtrack`/`playlist`, `spec` is a crate-relative path or
+a name resolved against the crate.
+- Returns four buckets: `folders`, `files`, `m3u8`, `warnings`.
+- `need_index_for()` — skips building the (potentially expensive) crate
+  index whenever a spec doesn't actually need it (path-form specs,
+  soundtrack/playlist kinds, album-by-folder-basename).
+- Uses `lib.text.normalize_key`/`split_artists` and
+  `lib.m3u.read_m3u8()` directly (replaced its own private `_parse_m3u8()`
+  — one of the two duplicate m3u8 readers `lib.m3u` was written to
+  replace).
+- No `cli.py`-bound pieces — pure resolution logic.
 
 ### `copy.py`
-Generic stage/unstage over the four resolved buckets — doesn't know or care
-what `kind` it's handling except for one exception (playlist unload
-refcounting).
-- `stage()` — copies (default) or hardlinks (`--link`, same-volume only)
-  every resolved file to its crate-relative mirror path under the tapedeck
-  root; skips existing destinations unless `--overwrite`. Folders expand to
-  their full subtree (audio + cover/`.pdf` siblings) for a complete mirror.
-- `unstage()` — the inverse; removes the mirrored file for every resolved
-  path, then prunes now-empty parent directories back up to (not including)
-  the tapedeck root.
-- **Playlist unload is refcounted**: an audio file is removed only if no
-  *other* `.m3u8` still staged under `tapedeck/playlists/` references it, so
-  two playlists sharing a track don't lose it when one is unloaded. This
-  refcount is playlist-scope only — it doesn't know about files staged via
-  `load album`/`load song`, so unloading a playlist can punch a hole in an
-  independently-loaded album copy if the same track is shared. Documented as
-  a known sharp edge, not silently wrong.
-- Imports `tapedeck.resolve._parse_m3u8` — a private, underscore-prefixed
-  cross-file import.
+Generic stage/unstage over the four resolved buckets.
+- `stage()` — copies (default) or hardlinks (`--link`, same-volume only);
+  skips existing destinations unless `--overwrite`.
+- `unstage()` — inverse, prunes now-empty parent directories.
+- Playlist unload is **refcounted**: a file is removed only if no other
+  staged `.m3u8` under `tapedeck/playlists/` still references it — scoped
+  to playlists only, so unloading a playlist can still punch a hole in an
+  independently-loaded album copy sharing the same track (documented
+  sharp edge).
+- Uses `lib.m3u.read_m3u8()` (`['existing']`) instead of a private
+  cross-file import of `resolve.py`'s old parser.
 
-### `deck.py` (cli: `tapedeck`)
-Subcommands: `load`, `unload`, `list`.
+### `deck.py`
 - `_maybe_index()` — fetches the cached crate index + matcher only when
-  `need_index_for()` says the invocation actually needs it.
-- `_load()` / `_unload()` — resolve → summarize → stage/unstage, all
-  dry-run-by-default (matching the rest of the repo's `--apply` convention).
-- `_list()` — walks the tapedeck root, summarizing file/folder counts and
-  sizes per subtree (`albums`, `singles`, `soundtracks`, `playlists`), with
-  `--verbose` per-folder/per-file detail.
+  `need_index_for()` says the invocation needs it.
+- `load_tapedeck()` / `unload_tapedeck()` / `list_tapedeck()` — resolve →
+  summarize → stage/unstage, dry-run-by-default. `unload_tapedeck()`
+  doesn't pass a `reindex` kwarg (matches the old CLI's lack of an
+  `--reindex` flag on unload — a latent `AttributeError` here in the
+  pre-refactor argparse version was fixed during the split:
+  `_maybe_index()` now takes `reindex` as an explicit kwarg with a
+  default instead of unconditionally reading a possibly-undefined arg).
+- `_fmt_size()` — human-readable size formatting for `list`.
+- Uses `lib.paths` directly (`archive_path`/`tapedeck_path`/
+  `playlists_path`/`exports_dir`); `playlists_root()` inlines the old
+  `tapedeck/paths.py`'s graceful-degradation behavior (swallows the
+  "`PLAYLISTS_PATH` unset" error and returns `None`, since playlists
+  aren't required for album/song/soundtrack loads).
+- Imports `lib.catalog.indexer.get_index`/`lib.catalog.matcher.MatchIndex`
+  directly — no remaining dependency on `playlists/`.
+
+### `tapedeck/cli.py`
+`click.group('tapedeck')` with three subcommands. `load KIND SPEC...` —
+`--apply`, `--link`, `--overwrite`, `--reindex`, `--verbose`,
+`--archive-path`, `--tapedeck-path`, `--playlists-path`, `--exports-dir`.
+`unload KIND SPEC...` — same shape minus `--link`/`--overwrite`/
+`--reindex` (not meaningful for a removal). `list` — `--kind`,
+`--tapedeck-path`, `--verbose`. `KIND` is one of `album`/`song`/
+`soundtrack`/`playlist` for `load`/`unload`. Deviation from the old
+argparse version: `unload` no longer accepts the old suppressed, unused
+`--overwrite`/`--exports-dir` (kept only "for parity" with `load`'s
+parser pre-refactor, never actually read by `_unload`) — dropped instead
+of carried forward as dead options. See `README.md` for full usage.
 
 ---
 
-## pipelines/ (being renamed to core/)
+## core/
 
-Opinionated multi-step workflows stitching the single-purpose CLIs together.
-Currently implemented as **subprocess orchestration** (`python -m
-download.download_spotify`, etc.) rather than in-process function calls —
-this is the one architectural choice being deliberately changed in the
-refactor (see `REFACTOR_PLAN.md`).
+Opinionated multi-step workflows over the four domain packages above, now
+in-process (no subprocess/CLI shelling).
 
 ### `download_songs.py`
-Runs download → beets-import → playlists-reindex end to end.
-- `_resolve_source()` — accepts an existing file/dir, or a bare Spotify URL
-  (written to a temp one-line `.txt` for the child CLI to consume).
-- `_run()` — prints + runs a child CLI; dry-run by default (prints the exact
-  child command, runs nothing — even skips the playlists index sidecar
-  rebuild a real `--reindex` run would otherwise touch). `--apply` runs for
-  real; `--only` (repeatable) restricts to a subset of the three steps,
-  always executed in fixed order regardless of `--only`'s given order.
-- Each step keeps its own argparse/`.env`/encoding handling by virtue of
-  being a genuinely separate subprocess — the tradeoff being no structured
-  return value, only a shell exit code.
+`run_download_songs(source=None, apply=False, archive_path_opt=None, drop=None, only=None, format='mp3', bitrate='320k', verbose=False)`
+— download → beets-import → playlists-refresh in one pass.
+- `_resolve_source()` — accepts an existing file/dir, or a bare Spotify
+  URL (written to a temp one-line `.txt`).
+- Dry-run: each step runs for real in its own no-op mode instead of being
+  skipped — `download_spotify(..., validate_only=not apply)`,
+  `run_import(..., dry_run=not apply)`, `build_playlists(apply=apply, ...)`.
+  Deliberate behavior change from the old subprocess version, which ran
+  nothing at all in dry-run.
+- Returns `{'steps': [{'step', 'ok', 'error', 'skipped'}, ...], 'ok': bool}`
+  — this module's own step-summary shape, not real per-step counts (the
+  three domain functions don't expose those yet).
+- `--verbose` forwards to `download_spotify(..., debug=verbose)` —
+  confirmed correct: `download.cli`'s own `spotify` subcommand has no
+  separate `--verbose`, only `--debug`, mapped the same way.
 
-The README also documents a second, un-wrappered "pipeline" — `playlists
---apply --rescrape` — as the full export+build+handoff sync flow, needing no
-dedicated wrapper because `playlists.build` already does all three steps
-itself.
+### `sync.py`
+`run_sync(names=None, covers=False, verbose=False, playlists_path=None, archive_path=None, exports_dir=None)`
+— thin promotion of the `playlists --apply --rescrape` flow into a real
+function, calling `build_playlists()` directly. No dry-run of its own —
+for a preview, call `build_playlists(apply=False, ...)` directly.
+
+### `core/cli.py`
+`click.group('core')` with `download-songs` and `sync` subcommands.
+Neither subcommand function calls `sys.exit()` itself — `cli.py`
+translates `ok: False` / raised exceptions into exit codes.
 
 ---
 
-## tapebuilding/ (legacy, being deleted)
+## Cross-cutting notes (resolved during the refactor)
 
-An earlier, parallel implementation (`downloader.py`, `exporter.py`,
-`importer.py`, `pipeline.py`, `retry.py`, plus a `core/` subpackage with
-`config.py`/`logger.py`/`utils.py`) of functionality that now lives properly
-in `download/`, `organize/`, and `pipelines/`. Not inventoried in detail —
-confirmed dead weight, scheduled for deletion rather than migration.
-
----
-
-## Cross-cutting issues found across every package
-
-These are the concrete findings that motivate `REFACTOR_PLAN.md`'s `lib/`
-design — repeated here in one place for reference.
-
-1. **Four independent normalization functions** doing near-identical work:
-   `organize.library._normalize`, `organize.cleanup.norm_key` (plus its own
-   dead-duplicate `norm()`), `download.spotify_utils._normalize_title`, and
-   `playlists.matcher`'s `_core_title`/`_FEAT_PAREN` logic. Two real tiers
-   hide inside these four: a bare normalize (lowercase, strip non-
-   alphanumeric, collapse whitespace) and a title-aware normalize (also
-   strips `feat.`/parenthetical clauses).
-2. **Four independent copies of root-resolution logic**, all doing
-   `cli_arg or os.getenv('X_PATH') or os.getenv('x_path') or fallback`:
-   `organize.library` (crate, tapedeck), `playlists.indexer` (playlists,
-   exports), `tapedeck.paths` (wraps the above two), plus inline
-   `os.getenv('ARCHIVE_PATH') or os.getenv('archive_path')` in
-   `beets_import.py` and `download_songs.py`.
-3. **Duplicated tag-reading**: `organize.cleanup.read_tags()` and
-   `playlists.indexer._read_entry()` both open files with `MediaFile()` and
-   extract overlapping field sets, independently.
-4. **Duplicated m3u8-format readers**: `playlists.m3u.parse_spotify_ids()`
-   and `tapedeck.resolve._parse_m3u8()` both parse the same file format for
-   different fields (track IDs vs. path lines), in two different packages.
-5. **Two independent Spotify auth flows** that should be one module with two
-   sanctioned functions: `spotify_utils.authenticate_spotify()` (user OAuth)
-   and `soundbyte_albums._get_spotify_token()` (hand-rolled client-
-   credentials via raw `requests`).
-6. **Cross-package imports that reveal the real dependency graph**:
-   `download → organize.library`, `playlists → download.spotify_utils` +
-   `download.spotify_to_csv`, `playlists → organize.cleanup`,
-   `tapedeck → organize.library` + `organize.cleanup` + `playlists.indexer`
-   + `playlists.matcher`. Every domain package already depends on at least
-   one sibling for a "shared" concern — none of them are actually
-   independent today, despite that being the original design intent.
-7. **Copy-pasted helpers within a single package**: `_resolve_output_dir()`
-   duplicated verbatim between `download_spotify.py` and
-   `yt_dlp_downloader.py`; FFmpeg-path env resolution duplicated in both.
-8. **`retry_failures.py`'s real logic is lost** — only the docstring and
-   constants survive; must be rebuilt from the README description.
-9. **`.env` dual-casing** (`ARCHIVE_PATH` vs. `archive_path`, etc.) is a
-   documented "convention," not an accident — but it means every root
-   resolver has to remember to check both cases, which is exactly the kind
-   of repeated boilerplate a single shared resolver should absorb once,
-   rather than every call site re-implementing the fallback chain.
+- **One normalization tier system** (`lib.text`) replaces four
+  independent copies; **one root-resolution function** (`lib.paths.resolve`)
+  replaces four independent copies; **one tag reader** (`lib.tags.read_tags`)
+  replaces two; **one m3u8 reader** (`lib.m3u.read_m3u8`) replaces two;
+  **one pair of Spotify auth flows** (`lib.spotify_auth`) replaces two
+  independent implementations.
+- **Dependency graph**, now: every domain package may depend on `lib/`;
+  `core/` may depend on any domain package; the one remaining
+  domain-to-domain dependency is `playlists → download` (auth + export),
+  confirmed as the only one left after a full-repo grep.
+- **Dual-case env vars are gone.** Every root is one canonical uppercase
+  name, resolved in `lib/paths.py` alone. `ARCHIVE_PATH`/`PLAYLISTS_PATH`/
+  `TAPEDECK_PATH`/`FFMPEG_PATH` — see `README.md`'s environment variables
+  section for the full list including Spotify/Firebase creds.
+- **Strictness on file-moving operations is deliberate and consistent**:
+  `organize.cleanup.resolve_crate()` and `organize.beets_import.run_import()`
+  both require `ARCHIVE_PATH` with no fallback, unlike `lib.paths.archive_path()`'s
+  convenience default used elsewhere (read-mostly contexts like
+  `download/`'s existence checks).
