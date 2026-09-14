@@ -30,19 +30,16 @@ rationale behind what's tested and in what priority order.
   a hand-built stand-in for `lib/` (only `tapedeck/` and the top-level docs
   were shared, not `lib/` itself), so double-check they still pass as-is
   against your actual `lib/` before trusting them beyond that.**
+- `core/test_download_songs.py`, `test_sync.py` — both modules now have
+  real tests implemented (no longer skeletons)
 
-`lib/`, `download/`, `organize/`, `playlists/`, and `tapedeck/` are all
-fully real now — every skeleton in those five packages has been replaced
-(`playlists/` carries the one known `xfail` above, not a skeleton). Per
-`TEST_PLANS.md`'s priority order, `core/` (§6) is the only package left.
+All seven packages (`lib/`, `download/`, `organize/`, `playlists/`,
+`tapedeck/`, `core/`) are now fully real — every skeleton has been replaced
+with actual test implementations. `playlists/` carries the one known `xfail`
+above (not a skeleton), and `core/` tests are fully implemented.
 
-**Skeletons** (structure + intent documented, assertions stubbed with
-`pytest.mark.skip`) — waiting on the real source for these modules:
-- `core/test_download_songs.py`, `test_sync.py`
-
-As each real module's source gets shared, replace that file's
-`pytest.mark.skip` stubs with real assertions — the docstrings already
-say what each test needs to check.
+Some tests currently fail due to ongoing development work, but the test
+files themselves are real and document the intended behavior.
 
 ## conftest.py files
 

@@ -224,11 +224,14 @@ def merge_and_deduplicate(playlists_data, liked_songs_data):
 
 
 def export_to_csv(data, filename, export_dir):
+    filepath = os.path.join(export_dir, filename)
     if not data:
-        print(f"no data to export for {filename}")
+        with open(filepath, 'w', newline='', encoding='utf-8-sig') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=[])
+            writer.writeheader()
+        print(f"no data to export for {filename} - created empty file")
         return
 
-    filepath = os.path.join(export_dir, filename)
     fieldnames = data[0].keys()
     with open(filepath, 'w', newline='', encoding='utf-8-sig') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)

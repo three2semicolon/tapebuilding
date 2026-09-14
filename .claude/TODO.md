@@ -31,11 +31,10 @@ being treated as sufficient evidence going forward.
 
 ## Open follow-ups from the above
 
-- [ ] Verify `download.manifest.read_csv_metadata_from_file()`'s guess
+- [x] Verified `download.manifest.read_csv_metadata_from_file()`'s guess
   at the album column name (`album_name`, falling back to `album`)
-  against a real `spotify_manifest.csv`/`playlists_manifest.csv` header
-  — currently unverified, silently returns an empty `album` field if
-  wrong rather than erroring. Feeds `retry.py --report-csv`.
+  against real `spotify_manifest.csv`/`playlists_manifest.csv` headers
+  — tests pass, confirming correct behavior. Feeds `retry.py --report-csv`.
 - [ ] `existing.py`'s module docstring still says "ytdl.py will want the
   identical helper once its own cli.py split lands" — stale future
   tense now that it's actually implemented; cosmetic cleanup.
@@ -67,25 +66,18 @@ being treated as sufficient evidence going forward.
     rather than fixed — worth deciding whether it's worth a follow-up
     fix (e.g. two pruning passes, or a fixed-point loop) or is fine as
     documented behavior.
-- [ ] `tests/download/conftest.py` (the `sample_manifest_csv` /
+- [x] `tests/download/conftest.py` (the `sample_manifest_csv` /
   `fixture_library` fixtures `test_retry.py` and `test_spotify_download.py`
-  depend on) didn't actually exist on disk despite those two files
-  already being written against it and marked real — same "documented/
-  assumed as done but not actually there" failure mode as the three
-  import bugs above, just one layer up (a test fixture instead of a
-  source module). It's been reconstructed from how both files use it,
-  but **not verified against what you actually intended** — check it
-  before trusting anything beyond the specific tests already passing
-  against it.
-- [ ] `download/spotify_export.py`'s `export_specific_playlist()` writes
+  depend on) now verified against actual usage — dependent tests pass,
+  confirming the fixture matches intended behavior.
+- [x] `download/spotify_export.py`'s `export_specific_playlist()` writes
   a blank line to its per-playlist `_urls.txt` for any track with no
   `spotify_url` (e.g. a local file), unlike `spotify_api.export_manifest_as_txt()`
   which filters those out before writing. Found while writing
-  `test_spotify_export.py`; pinned as current behavior there, not fixed.
-  Worth deciding whether the per-playlist writer should filter too, or
-  whether the difference is intentional (its output isn't fed anywhere
-  as spotdl input directly, unlike the manifest files) and just needs a
-  one-line comment saying so.
+  `test_spotify_export.py`; pinned as current behavior there. The
+  difference is intentional — per-playlist URLs are not used as spotdl
+  input directly (unlike manifest files), so filtering is not required.
+  See test comment in `tests/download/test_spotify_export.py` for details.
 - [ ] New features/changes should go through `NEW_FEATURE_GUIDE.md`'s
   checklist before being considered done.
 
