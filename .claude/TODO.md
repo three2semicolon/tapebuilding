@@ -9,37 +9,36 @@ unscheduled work, not a checklist to execute in order.
 
 ## Fixed this session (post-refactor smoke test)
 
-Smoke-testing `download ytdl` / `download spotify` / `playlists
---rescrape` by hand surfaced three import-breaking gaps between what
+Smoke-testing `download ytdl` / `download spotify` / `playlists --rescrape` by hand surfaced three import-breaking gaps between what
 `PACKAGE_OVERVIEW.md` described as done and what actually existed on
 disk — see `NEW_FEATURE_GUIDE.md` for why "documented as done" isn't
 being treated as sufficient evidence going forward.
 
-- [x] `download/existing.py` was missing `resolve_output_dir()` entirely
+- [X] `download/existing.py` was missing `resolve_output_dir()` entirely
   — documented in `PACKAGE_OVERVIEW.md` as already shared between
   `spotify_download.py` and `ytdl.py`, but never actually written.
   Added; both commands import cleanly now.
-- [x] `download/manifest.py` didn't exist as a file at all, despite
+- [X] `download/manifest.py` didn't exist as a file at all, despite
   being documented as the already-consolidated home for
   `predict_output_filename()`/`read_csv_metadata()`. Reconstructed from
   the old pre-refactor `spotify_download.py` logic plus the shapes
   `spotify_download.py` and `retry.py` actually call — **not yet
   verified against a real export CSV** (see open item below).
-- [x] `retry.py` used `re.compile(...)` at module level without
+- [X] `retry.py` used `re.compile(...)` at module level without
   `import re` — would have failed on first invocation the same way the
   other two did. Fixed.
 
 ## Open follow-ups from the above
 
-- [x] Verified `download.manifest.read_csv_metadata_from_file()`'s guess
+- [X] Verified `download.manifest.read_csv_metadata_from_file()`'s guess
   at the album column name (`album_name`, falling back to `album`)
   against real `spotify_manifest.csv`/`playlists_manifest.csv` headers
   — tests pass, confirming correct behavior. Feeds `retry.py --report-csv`.
-- [x] `existing.py`'s module docstring used to say "ytdl.py will want the
+- [X] `existing.py`'s module docstring used to say "ytdl.py will want the
   identical helper once its own cli.py split lands" — stale future
   tense, since `ytdl.py` already imports `resolve_output_dir()` from
   here directly. Docstring updated to present tense.
-- [x] `playlists/build.py`'s `_select_playlists()` default-scope bug
+- [X] `playlists/build.py`'s `_select_playlists()` default-scope bug
   (flagged in `PACKAGE_OVERVIEW.md`'s `playlists/` section): used to
   filter `playlists.csv`'s `owner` column — a **display name** —
   against `SPOTIFY_USER_ID` — a **user ID** — so the default "just my
@@ -48,11 +47,10 @@ being treated as sufficient evidence going forward.
   populated by both `download.spotify_api.get_user_playlists()` and
   `build.py`'s own `_scope_rescrape()`) and filtering on that instead.
   The regression test is flipped off `xfail`:
-  `tests/playlists/test_build.py::
-  TestSelectPlaylistsDefaultScope::test_default_scope_matches_by_id_not_display_name`.
+  `tests/playlists/test_build.py:: TestSelectPlaylistsDefaultScope::test_default_scope_matches_by_id_not_display_name`.
   Note: playlists exported *before* this fix have no `owner_id` value
   and won't match the default scope until re-exported.
-- [x] Build out `tests/` per `TEST_PLANS.md` — start with the import
+- [X] Build out `tests/` per `TEST_PLANS.md` — start with the import
   smoke tests (§0), since all three bugs fixed above were import-time
   failures that a two-line test per module would have caught before
   any manual `uv run` was needed. `lib/` (§1), `download/` (§2),
@@ -69,11 +67,11 @@ being treated as sufficient evidence going forward.
     rather than fixed — worth deciding whether it's worth a follow-up
     fix (e.g. two pruning passes, or a fixed-point loop) or is fine as
     documented behavior.
-- [x] `tests/download/conftest.py` (the `sample_manifest_csv` /
+- [X] `tests/download/conftest.py` (the `sample_manifest_csv` /
   `fixture_library` fixtures `test_retry.py` and `test_spotify_download.py`
   depend on) now verified against actual usage — dependent tests pass,
   confirming the fixture matches intended behavior.
-- [x] `download/spotify_export.py`'s `export_specific_playlist()` writes
+- [X] `download/spotify_export.py`'s `export_specific_playlist()` writes
   a blank line to its per-playlist `_urls.txt` for any track with no
   `spotify_url` (e.g. a local file), unlike `spotify_api.export_manifest_as_txt()`
   which filters those out before writing. Found while writing
@@ -83,7 +81,7 @@ being treated as sufficient evidence going forward.
   See test comment in `tests/download/test_spotify_export.py` for details.
 - [ ] New features/changes should go through `NEW_FEATURE_GUIDE.md`'s
   checklist before being considered done.
-- [x] `tests/lib/conftest.py`'s `make_tagged_file` and
+- [X] `tests/lib/conftest.py`'s `make_tagged_file` and
   `tests/organize/conftest.py`'s own separate copy of the same fixture
   both called `ffmpeg` directly by name via `subprocess.run`, never
   consulting `lib.paths.ffmpeg_path()` / `FFMPEG_PATH` — so both only
@@ -123,43 +121,67 @@ Not started. See `WEB_APP_PLAN.md` for the constraints and shape already
 agreed on (no subprocess/CLI dependency from below; progress-reporting
 mechanism still an open question).
 
-## Streaming (Subsonic API, for Symfonium et al.)
+## Streaming (Subsonic API, for Symfonium)
 
-Not started — planning only. Goal: stream the crate remotely from a
-phone (Symfonium is the driving client) without a network connection
-being a hard requirement for *every* listening scenario — see note
-below on scope relative to `tapedeck/`.
+Planned, phase 1 in progress. Goal: stream the crate remotely on
+Symfonium without a network connection being a hard requirement for
+*every* listening scenario.
 
 - Symfonium speaks Subsonic/OpenSubsonic, not a custom protocol — the
-  plan is to stand up an existing Subsonic-API-compatible server
-  pointed at `ARCHIVE_PATH`, not to build streaming into this repo.
-  Navidrome is the leading candidate: actively maintained, implements
-  full Subsonic + OpenSubsonic, explicitly Symfonium-compatible, and
-  scans a plain directory tree off file tags directly — no export or
-  integration work needed on this repo's side to get a first version
-  working.
+  plan is to run an existing Subsonic-API server pointed at
+  `ARCHIVE_PATH`, not to build streaming into this repo. **Navidrome**
+  is the server: actively maintained, full Subsonic + OpenSubsonic,
+  explicitly Symfonium-compatible, scans a plain directory tree off
+  file tags directly — no export/integration work needed on this
+  repo's side.
 - **Not a `tapedeck/` replacement.** Streaming covers "I have network
   and want the whole library"; `tapedeck/` covers "no network, a
   dedicated device, only needs a rotation subset" (car head unit, a
-  dumb DAP, roaming without data). Both stay relevant — don't let this
-  quietly deprioritize `tapedeck/` work.
-- Open questions to resolve before starting:
-  - **Hosting**: same machine `tapebuilding` runs on (would need to
-    stay on/awake), a NAS, or a small always-on box? Affects whether
-    this is "install a service" or "stand up new hardware."
-  - **Remote exposure**: Navidrome itself doesn't handle TLS/public
-    exposure — reaching it from outside the LAN needs a reverse proxy
-    or VPN (e.g. Tailscale) layered on top. Decide before assuming
-    "works from my phone anywhere" is in scope for v1.
-  - **Playlists**: `lib.m3u.write_m3u8()`'s output may or may not be
-    directly importable by Navidrome as-is (relative paths, the
-    `#SPOTIFY:<id>` comment lines) — worth a quick spike rather than
-    assuming compatibility.
-  - **Rescan trigger**: Navidrome file-watches by default, so a normal
-    `download`/`organize` run should be picked up on its own — but
-    worth checking whether `core/`'s workflows should also hit
-    Navidrome's own scan-trigger API directly rather than relying on
-    the watcher's latency.
-  - Does beets' existing tag output (via `organize/`) already have
-    everything Navidrome wants for browsing (album art, sort
-    fields, etc.), or does it need any additional tag passes?
+  dumb DAP, roaming without data). Both stay relevant.
+
+### Phase 1 (now) — laptop, for testing / near-term remote use
+
+- [X] Install Navidrome (Windows MSI) on this laptop, pointed at the
+  crate root; runs as a Windows service, so it survives reboots.
+- [X] Create the admin user, let the first scan run, spot-check the
+  library.
+- [X] Last.fm scrobbling enabled (`LastFM.ApiKey`/`LastFM.Secret` in
+  `navidrome.ini`, toggled on per-user in Personal Settings). Local
+  play counts/last-played track regardless of this; scrobbling just
+  forwards live plays to Last.fm going forward (no history backfill).
+- [X] Disable sleep-on-AC (at minimum) — a laptop that naps mid-test
+  just looks like the server disappeared.
+- [X] Set up Tailscale (or similar) on the laptop + phone for remote
+  access instead of forwarding router ports.
+- [X] Connect Symfonium via the Tailscale address; test both on-LAN
+  and off-LAN (mobile data) before relying on it.
+- [X] Desktop: install `foo_navidrome` (santiagorod92/foo_navidrome —
+  listed on Navidrome's own client-apps page) on foobar2000 for any
+  *other* laptop that wants to reach the library remotely — same
+  Tailscale address/port, same account. Streams via a
+  `navidrome://track/<id>` scheme rather than raw URLs, so playlists
+  survive credential/server changes. (The hosting laptop's own
+  foobar2000 doesn't need this — it's just playing local files
+  directly.) `foo_opensubsonic` is the fallback if `foo_navidrome`
+  ever stalls — more general OpenSubsonic client, works against
+  non-Navidrome servers too, but rougher/more actively-changing.
+- [ ] Spike: check whether `lib.m3u.write_m3u8()`'s existing `.m3u8`
+  output (relative paths, `#SPOTIFY:<id>` comment lines) imports into
+  Navidrome cleanly as-is, or needs adjustment.
+- [ ] Decide whether `core/`'s workflows should hit Navidrome's own
+  scan-trigger API after a download/organize run, or whether its
+  built-in file-watcher's latency is fine as-is.
+
+### Phase 2 (later) — dedicated hardware (the Raspberry Pi)
+
+- [ ] Blocked on the Pi's memory/storage upgrade.
+- [ ] Once upgraded: identify the correct ARM build (`cat /proc/cpuinfo`
+  on the Pi), install ffmpeg there too (Navidrome requires it locally),
+  migrate config/DB from the laptop instance (or just start fresh —
+  Navidrome's DB is a cache of tag scans, not a second source of truth).
+- [ ] Decide how the Pi reaches the crate: crate physically lives on
+  the memory-card volume today (see `README.md`'s environment
+  variables section) — confirm whether that means relocating the card,
+  or serving the crate over the network (SMB/NFS) to the Pi instead.
+- [ ] Re-point Tailscale to the Pi once it's the permanent host; retire
+  the laptop instance (or keep it as a fallback — undecided).
