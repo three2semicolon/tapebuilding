@@ -1,43 +1,57 @@
 
-"""pipelines/download_songs - download, import, and refresh in one pass.
+"""core.download_songs - download, import, and refresh in one pass, in-process.
 
-stitches the three existing clis together, so the real work (and the real
-argparse) stays where it always did - this script just runs them in order:
+renamed from pipelines/download_songs.py during the lib/ refactor. same
+three-step workflow, same fixed step order, same --apply/dry-run/--only
+semantics as the subprocess version - the only thing that changed is the
+*mechanism*: each step now calls straight into the already-refactored domain
+functions instead of shelling out to `python -m package.module`.
 
-  1. 'spotify'      (download.download_spotify) - spotdl the urls into a drop.
-  2. 'beets-import' (organize.beets_import)    - two-pass import of the drop
-     into the crate (albums/ + singles/), with preimport staging.
-  3. 'playlists'    (playlists.build)          - rebuild the .m3u8s so the new
-     tracks resolve; --reindex picks up the just-imported files.
+  1. download   - download.spotify_download.download_spotify()
+  2. import     - organize.beets_import.run_import()
+  3. playlists  - playlists.build.build_playlists()
 
-each step shells out via 'python -m', so every child keeps its own argparse,
-.env loading, and encoding handling. the default is a dry run: it prints the
-exact child commands and runs none of them - zero side effects (so it won't
-touch the playlists index sidecar the way '--reindex' would on a real run).
-'--apply' runs the chain for real; '--only' restricts it to the named step(s).
-for a step's own detailed preview - beets' file-by-file plan or the playlist
-matcher's counts - run that child directly ('beets-import --dry-run', or
-'playlists' without '--apply').
+what "dry run" means for each step, now that there's no child command to just
+print instead of running (this was an explicit open question in TODO.md's
+Phase 6 - resolved here, not deferred):
+  - download:  download_spotify(..., validate_only=not apply) - a real
+    no-op that still does the existence check and prints what *would*
+    download, rather than the step being skipped outright.
+  - import:    run_import(..., dry_run=not apply) - already a genuine
+    pretend mode (beets `--pretend`), used as-is.
+  - playlists: build_playlists(apply=apply, ...) - already a genuine
+    preview mode (writes nothing), used as-is.
+None of the three steps are skipped in dry-run mode anymore; each is called
+for real, just in its own no-op mode. This is a deliberate behavior change
+from the old subprocess version, which printed the would-be command and ran
+nothing at all for every step - worth knowing if anything relied on a dry
+run being a true no-op (e.g. the import step's --pretend still talks to
+musicbrainz; the download step's validate_only still hits disk for the
+existence scan).
 
-usage:
-  uv run pipelines/download_songs.py urls.txt --apply                       # full pass
-  uv run pipelines/download_songs.py urls.txt --apply --archive-path Y:/music/crate
-  uv run pipelines/download_songs.py "https://open.spotify.com/track/..." --apply  # one url
-  uv run pipelines/download_songs.py urls.txt --apply --only download        # download only
-  uv run pipelines/download_songs.py --apply --only playlists               # just refresh, no source
+verbose -> debug mapping for the download step, confirmed: download.cli's
+`spotify` subcommand has no --verbose of its own - its only relevant flag
+is --debug, passed straight through as download_spotify(..., debug=debug).
+There's no separate old --verbose behavior this could have diverged from;
+`debug` is simply the parameter's real name (spotdl/yt-dlp log level), so
+forwarding core's --verbose onto it here is the correct analog, not a
+guess.
+
+structured returns: download_spotify()/run_import() return a bare bool, and
+build_playlists() always returns True regardless of match outcome - none of
+the three give real per-step counts today. "Structured results" here means
+this module's own per-step {step, ok, error, skipped} summary, not counts
+from inside each step. Getting real counts would mean changing the three
+domain functions themselves - out of scope for this pass.
 """
 
-import argparse
 import os
-import subprocess
-import sys
 import tempfile
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:  # pragma: no cover
-    pass
+from lib.paths import archive_path
+from download.spotify_download import download_spotify
+from organize.beets_import import run_import
+from playlists.build import build_playlists
 
 STEPS = ('download', 'import', 'playlists')
 
@@ -47,7 +61,7 @@ def _looks_like_url(s):
 
 
 def _resolve_source(source):
-    """return a url-file path the 'spotify' cli accepts. accepts an existing
+    """return a url-file path download_spotify() accepts. accepts an existing
     file/dir, or a bare spotify url (written to a temp one-line .txt). returns
     (path, tmp_to_unlink) so the caller can clean up; (None, None) on bad input."""
     if source and os.path.exists(source):
@@ -60,105 +74,92 @@ def _resolve_source(source):
     return None, None
 
 
-def _run(cmd, apply, verbose):
-    """print + run a child cli. dry run prints the command and returns ok; the
-    children own their own dry handling, so apply/dry flags are already baked
-    into 'cmd' by the caller."""
-    rendered = ' '.join(cmd)
-    if verbose or not apply:
-        print(f"  $ {rendered}")
-    if not apply:
-        print("  (skipped: dry run - re-run with --apply)")
-        return True
-    sys.stdout.flush()
-    return subprocess.run(cmd).returncode == 0
+def run_download_songs(source=None, apply=False, archive_path_opt=None, drop=None,
+                       only=None, format='mp3', bitrate='320k', verbose=False):
+    """download -> beets-import -> playlists-refresh, in-process. plain,
+    import-safe entry point - cli.py resolves click options into these
+    kwargs and turns a failed result into an exit code; nothing in here
+    calls sys.exit() itself.
 
+    returns {'steps': [{'step', 'ok', 'error', 'skipped'}, ...], 'ok': bool}
+    - overall 'ok' is False if any non-skipped step failed or raised.
+    """
+    crate = archive_path_opt or archive_path()
+    resolved_drop = drop or os.path.join(crate, 'unorganized')
 
-def main():
-    sys.stdout.reconfigure(encoding='utf-8')  # non-ascii artist names on windows
-    sys.stderr.reconfigure(encoding='utf-8')
-
-    p = argparse.ArgumentParser(description='download, import, and refresh in one pass')
-    p.add_argument('source', nargs='?',
-                   help='path to a .txt/.csv of urls (or a dir of .csv), or a single spotify url')
-    p.add_argument('--apply', action='store_true',
-                   help='do it for real (default: dry run)')
-    p.add_argument('--archive-path', help='crate root (default: $ARCHIVE_PATH)')
-    p.add_argument('--input', '-i', dest='drop',
-                   help='staging drop for downloads (default: <crate>/unorganized)')
-    p.add_argument('--only', action='append', choices=STEPS,
-                   help='run only this step (repeatable); default: all three in order')
-    p.add_argument('--format', default='mp3', help='audio format for the download step (default: mp3)')
-    p.add_argument('--bitrate', default='320k', help='audio bitrate (default: 320k)')
-    p.add_argument('--verbose', action='store_true',
-                   help='echo each sub-command and forward --verbose to the children')
-    args = p.parse_args()
-
-    crate = args.archive_path or os.getenv('ARCHIVE_PATH') or os.getenv('archive_path')
-    if not crate:
-        print("error: --archive-path or ARCHIVE_PATH in .env required", file=sys.stderr)
-        sys.exit(1)
-    drop = args.drop or os.path.join(crate, 'unorganized')
-
-    selected = args.only or list(STEPS)
+    selected = only or list(STEPS)
     ordered = [s for s in STEPS if s in selected]   # fixed workflow order regardless of --only order
 
     print(f"crate  : {crate}")
-    print(f"drop   : {drop}")
+    print(f"drop   : {resolved_drop}")
     print(f"steps  : {' -> '.join(ordered)}")
-    print(f"mode   : {'apply' if args.apply else 'dry run (prints commands, runs nothing)'}")
+    print(f"mode   : {'apply' if apply else 'dry run (each step runs in its own preview mode)'}")
     print()
 
     tmp_path = None
-    error = False
+    results = []
 
-    # step 1: download - the 'spotify' cli drops loose files into <drop>.
+    def record(step, ok, error=None, skipped=False):
+        results.append({'step': step, 'ok': ok, 'error': error, 'skipped': skipped})
+
+    # step 1: download - spotdl the source urls into <drop>.
     if 'download' in ordered:
         print("=== step 1: download (spotify) ===")
-        if not args.source:
-            print("  error: the download step needs a source (url file/dir, or a single spotify url)")
-            error = True
+        if not source:
+            msg = "the download step needs a source (url file/dir, or a single spotify url)"
+            print(f"  error: {msg}")
+            record('download', False, error=msg)
         else:
-            url_file, tmp_path = _resolve_source(args.source)
+            url_file, tmp_path = _resolve_source(source)
             if url_file is None:
-                print(f"  error: source not found and not a spotify url: {args.source}")
-                error = True
+                msg = f"source not found and not a spotify url: {source}"
+                print(f"  error: {msg}")
+                record('download', False, error=msg)
             else:
-                cmd = [sys.executable, '-m', 'download.download_spotify',
-                       '--url-file', url_file, '--output', drop,
-                       '--format', args.format, '--bitrate', args.bitrate]
-                if args.verbose:
-                    cmd.append('--verbose')
-                if not _run(cmd, args.apply, args.verbose):
-                    error = True
+                try:
+                    ok = download_spotify(
+                        url_file=url_file, output_dir=resolved_drop,
+                        format=format, bitrate=bitrate,
+                        validate_only=not apply, debug=verbose,
+                    )
+                    record('download', ok)
+                except Exception as e:
+                    print(f"  error: {e}")
+                    record('download', False, error=str(e))
         print()
 
     # step 2: import - beets_import moves <drop> into albums/ + singles/ and
     # registers it in beets.db.
     if 'import' in ordered:
         print("=== step 2: import (beets-import) ===")
-        if not os.path.isdir(drop):
-            print(f"  ({drop} does not exist - nothing to import"
-                  + (" after a skipped download step)" if 'download' in ordered and not args.apply else ")"))
+        if not os.path.isdir(resolved_drop):
+            if 'download' in ordered and not apply:
+                print(f"  ({resolved_drop} does not exist - nothing to import "
+                      f"(dry run: the download step above doesn't create files))")
+            else:
+                print(f"  ({resolved_drop} does not exist - nothing to import)")
+            record('import', True, skipped=True)
         else:
-            cmd = [sys.executable, '-m', 'organize.beets_import',
-                   '--input', drop, '--output', crate]
-            if args.verbose:
-                cmd.append('--verbose')
-            if not _run(cmd, args.apply, args.verbose):
-                error = True
+            try:
+                ok = run_import(input_dir=resolved_drop, output_dir=crate,
+                               dry_run=not apply, verbose=verbose)
+                record('import', ok)
+            except Exception as e:
+                print(f"  error: {e}")
+                record('import', False, error=str(e))
         print()
 
-    # step 3: refresh playlists - rebuild the .m3u8s; --reindex so the
+    # step 3: refresh playlists - rebuild the .m3u8s; reindex so the
     # just-imported files are picked up.
     if 'playlists' in ordered:
         print("=== step 3: refresh playlists ===")
-        cmd = [sys.executable, '-m', 'playlists.build',
-               '--apply', '--archive-path', crate, '--reindex']
-        if args.verbose:
-            cmd.append('--verbose')
-        if not _run(cmd, args.apply, args.verbose):
-            error = True
+        try:
+            ok = build_playlists(apply=apply, archive_path=crate, reindex=True,
+                                verbose=verbose)
+            record('playlists', ok)
+        except Exception as e:
+            print(f"  error: {e}")
+            record('playlists', False, error=str(e))
         print()
 
     if tmp_path and os.path.exists(tmp_path):
@@ -167,10 +168,6 @@ def main():
         except OSError:
             pass
 
-    if error:
-        sys.exit(1)
-    print("done.")
-
-
-if __name__ == '__main__':
-    main()
+    overall_ok = all(r['ok'] for r in results if not r['skipped'])
+    print("done." if overall_ok else "completed with errors - see steps above.")
+    return {'steps': results, 'ok': overall_ok}

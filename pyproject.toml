@@ -28,8 +28,8 @@ packages = ["lib", "lib.catalog", "download", "organize", "playlists", "tapedeck
 download = "download.cli:download"
 organize = "organize.cli:organize"
 playlists = "playlists.cli:playlists"
-tapedeck = "tapedeck.deck:main"
-core = "core.build:main"
+tapedeck = "tapedeck.cli:tapedeck"
+core = "core.cli:core"
 
 [project.optional-dependencies]
 test = ["pytest"]

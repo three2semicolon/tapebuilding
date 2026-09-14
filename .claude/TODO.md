@@ -371,28 +371,55 @@ this list assumes `lib/` already exists and is correct.
 
 ## Phase 6 — `core/` (renamed from `pipelines/`)
 
-- [ ] `download_songs.py`: replace every `subprocess.run([sys.executable, '-m', ...])` call with a direct import + function call into the
-  now-refactored `download.spotify_download`, `organize.beets_import`,
-  `playlists.build` functions. Preserve the existing `--only`/`--apply`/
-  dry-run behavior and step ordering exactly — this is a mechanism
-  change, not a behavior change.
-  - [ ] Decide what a "dry run" means now that there's no child command to
-    just print — likely: call each function with its own dry-run
-    parameter (most already have one, e.g. `beets_import`'s `--dry-run`
-    maps to a function argument) rather than skipping the call
-    entirely.
-  - [ ] Capture and return structured results per step (counts, success/fail)
-    instead of relying on a subprocess exit code, per the refactor plan.
-- [ ] `sync.py` (new): promote the README-documented `playlists --apply --rescrape` "sync" flow into an actual function here, calling
-  `playlists.build`'s function directly, for symmetry with
-  `download_songs.py` and so it's available to `app/` later without
-  shelling out to the `playlists` CLI.
-- [ ] `cli.py` (new): thin subcommand wrapper exposing `download_songs` and
-  `sync` (and future presets) as CLI entry points, replacing the old
-  single-script `pipelines/download_songs.py` invocation.
-- [ ] Update `pyproject.toml`'s `[project.scripts]` entries to point at the
-  new `core.cli` / each domain package's `cli.py`, replacing every
-  scattered `module:main` reference with the new consistent pattern.
+- [X] `download_songs.py`: replaced every `subprocess.run([sys.executable, '-m', ...])` call with a direct import + function call into
+  `download.spotify_download.download_spotify()`, `organize.beets_import`
+  (via `preimport`/`run_import` per Phase 2), `playlists.build.build_playlists()`.
+  `--only`/`--apply` semantics and fixed step ordering preserved exactly.
+  - [X] Dry-run meaning decided and documented in the module's own
+    docstring: each step now runs for real in its own no-op mode instead
+    of being skipped — `download_spotify(..., validate_only=not apply)`
+    (real no-op, still does the existence scan), `run_import(...,
+    dry_run=not apply)` (beets `--pretend`, already genuine), `build_playlists(apply=apply, ...)` (already genuine preview). Explicitly
+    flagged as a deliberate behavior change from the old subprocess
+    version, which printed the would-be command and ran nothing at all.
+  - [X] Structured per-step results: returns
+    `{'steps': [{'step','ok','error','skipped'}, ...], 'ok': bool}`
+    instead of a bare subprocess exit code.
+    - Note: this is this module's own step-summary shape, not real counts
+      from inside each step — `download_spotify()`/`run_import()` return a
+      bare bool and `build_playlists()` always returns `True` regardless
+      of match outcome. Getting real per-step counts would mean changing
+      the three domain functions themselves; flagged as out of scope for
+      this pass in the module docstring.
+  - `--verbose` → `debug=verbose` mapping for the download step: confirmed
+    correct against `download/cli.py`. That subcommand has no `--verbose`
+    of its own — only `--debug`, forwarded straight through as
+    `download_spotify(..., debug=debug)`. There was no separate old
+    `--verbose` behavior to diverge from; `debug` is simply the
+    parameter's real name, so `core` forwarding its own `--verbose` onto
+    it is the correct analog. Docstring's hedge removed.
+- [X] `sync.py` (new): promoted the README-documented
+  `playlists --apply --rescrape` flow into `run_sync()`, calling
+  `build_playlists()` directly — thin promotion, no logic changed, for
+  symmetry with `download_songs.py`. No dry-run of its own (matches the
+  plan); docstring points to calling `build_playlists(apply=False, ...)`
+  directly for a preview instead.
+- [X] `cli.py` (new): `click.group('core')` wrapping `download-songs` and
+  `sync` as subcommands, replacing the old single-script
+  `pipelines/download_songs.py` invocation. Neither subcommand's function
+  calls `sys.exit()` itself — `cli.py` translates `ok: False` /
+  raised exceptions into exit codes, matching the mechanical pattern from
+  every other package's `cli.py` split.
+- [X] Update `pyproject.toml`'s `[project.scripts]` entries to point at the
+  new `core.cli` / each domain package's `cli.py`.
+  - `download`/`organize`/`playlists`/`tapedeck` entries already matched
+    each package's Phase 2–5 `cli.py` split — no changes needed there.
+  - Found and fixed a stale `core` entry: it pointed at
+    `core.build:main`, which doesn't exist anywhere in the repo (likely a
+    leftover placeholder from before `core/cli.py` was written). Changed
+    to `core = "core.cli:core"`, matching the entry point documented in
+    `cli.py`'s own docstring and the actual `click.group('core')` defined
+    there. `packages` list already included `"core"` — no change needed.
 
 ## Phase 7 — cleanup pass
 
