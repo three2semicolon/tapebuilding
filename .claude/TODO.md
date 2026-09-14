@@ -54,9 +54,19 @@ being treated as sufficient evidence going forward.
   smoke tests (§0), since all three bugs fixed above were import-time
   failures that a two-line test per module would have caught before
   any manual `uv run` was needed. `lib/` (§1), `download/` (§2),
-  `organize/` (§3), and `playlists/` (§4) are now all fully real (or, for
-  `playlists/`, real-plus-one-known-`xfail`) — no skeletons left in any
-  of the four. `tapedeck/` (§5) is next per the priority order.
+  `organize/` (§3), `playlists/` (§4), and now `tapedeck/` (§5) are all
+  fully real (or, for `playlists/`, real-plus-one-known-`xfail`) — no
+  skeletons left in any of the five. `core/` (§6) is the only package
+  left per the priority order.
+  - `tapedeck/`'s tests turned up one genuine quirk in `copy.py`'s
+    `unstage()`, not a bug: its empty-directory pruning is a single
+    bottom-up `os.walk`, so a parent directory that only becomes empty
+    *because* its own child was just removed in the same pass isn't
+    re-checked and survives until a later unload's prune pass. Pinned as
+    current behavior in `test_unstage_prunes_empty_parent_directories`
+    rather than fixed — worth deciding whether it's worth a follow-up
+    fix (e.g. two pruning passes, or a fixed-point loop) or is fine as
+    documented behavior.
 - [ ] `tests/download/conftest.py` (the `sample_manifest_csv` /
   `fixture_library` fixtures `test_retry.py` and `test_spotify_download.py`
   depend on) didn't actually exist on disk despite those two files

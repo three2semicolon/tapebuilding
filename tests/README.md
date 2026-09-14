@@ -18,15 +18,26 @@ rationale behind what's tested and in what priority order.
   against `SPOTIFY_USER_ID` (a user id), so "my playlists only" never
   matches its own playlists. Flips to a normal passing test the moment
   that's fixed — see the test's docstring in the file itself.
+- `tapedeck/test_resolve.py`, `test_copy.py`, `test_deck.py` — includes one
+  pinned quirk, not a bug fix: `copy.py`'s `unstage()` prunes empty
+  directories with a single bottom-up `os.walk`, so a parent that only
+  becomes empty *because* its own child was just removed in the same pass
+  isn't re-checked and survives until a later unload's prune pass finishes
+  it off. `test_unstage_prunes_empty_parent_directories` asserts that
+  exact two-call behavior rather than the (wrong) assumption that one
+  `unstage()` call fully collapses an empty subtree. **These three were
+  validated against the real `resolve.py`/`copy.py`/`deck.py` source using
+  a hand-built stand-in for `lib/` (only `tapedeck/` and the top-level docs
+  were shared, not `lib/` itself), so double-check they still pass as-is
+  against your actual `lib/` before trusting them beyond that.**
 
-`lib/`, `download/`, `organize/`, and `playlists/` are all fully real now
-— every skeleton in those four packages has been replaced (`playlists/`
-carries the one known `xfail` above, not a skeleton). Per `TEST_PLANS.md`'s
-priority order, `tapedeck/` (§5) is next.
+`lib/`, `download/`, `organize/`, `playlists/`, and `tapedeck/` are all
+fully real now — every skeleton in those five packages has been replaced
+(`playlists/` carries the one known `xfail` above, not a skeleton). Per
+`TEST_PLANS.md`'s priority order, `core/` (§6) is the only package left.
 
 **Skeletons** (structure + intent documented, assertions stubbed with
 `pytest.mark.skip`) — waiting on the real source for these modules:
-- `tapedeck/test_resolve.py`, `test_copy.py`, `test_deck.py`
 - `core/test_download_songs.py`, `test_sync.py`
 
 As each real module's source gets shared, replace that file's
