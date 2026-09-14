@@ -423,26 +423,78 @@ this list assumes `lib/` already exists and is correct.
 
 ## Phase 7 — cleanup pass
 
-- [ ] Full-repo grep for `os.getenv('ARCHIVE_PATH')`,
+- [X] Full-repo grep for `os.getenv('ARCHIVE_PATH')`,
   `os.getenv('archive_path')`, `os.getenv('PLAYLISTS_PATH')`, etc.
-  outside of `lib/paths.py` — anything left is a missed migration.
-- [ ] Full-repo grep for any remaining `norm_key`/`_normalize`/
+  outside of `lib/paths.py` — clean. Every remaining `getenv()` call
+  outside `lib/paths.py` is out of that function's scope, not a missed
+  migration: `soundbyte.py`'s `FIREBASE_CREDENTIALS_PATH`/
+  `FIREBASE_PROJECT_ID` (Firebase creds, never a `lib.paths` root),
+  `lib/spotify_auth.py`'s `SPOTIFY_CLIENT_ID`/`SECRET`/`REDIRECT_URI`
+  (Spotify app creds, same reasoning), and hits in `spotify_download.py`/
+  `ytdl.py`/`beets_import.py` docstrings that just narrate the *old*
+  dual-case pattern — the live code in all three already calls
+  `lib.paths.archive_path()`/`ffmpeg_path()`.
+  - New item found while checking this, not a grep miss but a real
+    inconsistency: `beets_import.py`'s own docstring flags that
+    `run_import()` defaults `output_dir` through
+    `lib.paths.archive_path()` (which has a `~/music/tapebuilding`
+    fallback), while `organize.cleanup.resolve_crate()` deliberately
+    keeps a stricter no-fallback/raise-if-unset behavior for the same
+    "this moves files" reasoning. Two file-moving entry points with
+    different strictness on the same root. Needs a decision — added
+    below.
+- [X] Full-repo grep for any remaining `norm_key`/`_normalize`/
   `_normalize_title`/`_core_title`/`_FEAT_PAREN` definitions outside
-  `lib/text.py` — same check for normalization.
-- [ ] Full-repo grep for direct imports across domain packages
-  (`from organize import`, `from playlists import`, `from download import`, `from tapedeck import`) — confirm the only remaining
-  cross-package import is `playlists → download` (spotify auth/export),
-  which is expected and fine; everything else should now route through
-  `lib/`.
-- [ ] Update `pyproject.toml` `dependencies`/`packages` list for the new
-  `lib/` and `core/` package names.
+  `lib/text.py` — clean, one hit: `spotify_api.py`'s `_fuzzy_key()`.
+  Confirmed legitimate, not a duplicate normalizer — Phase 3 already
+  called this out: it's a thin composite-key builder
+  (`normalize_title(primary_artist(...))`) used only for
+  `merge_and_deduplicate()`'s fuzzy-dedup pass, not a second
+  normalization implementation.
+- [X] Full-repo grep for direct imports across domain packages
+  (`from organize import`, `from playlists import`, `from download import`, `from tapedeck import`) — clean. Every hit is either intra-package
+  (e.g. `download/cli.py` importing `download.spotify_api`), `core/`
+  importing into the domain packages (sanctioned per
+  `REFACTOR_PLAN.md` — `core` sits above the four and may call into any
+  of them directly), or the one deliberately-kept
+  `playlists/build.py → download.spotify_api`/`download.spotify_export`
+  dependency. No stray `organize↔playlists↔download↔tapedeck` imports.
+- [X] Update `pyproject.toml` `dependencies`/`packages` list for the new
+  `lib/` and `core/` package names — already correct:
+  `packages = ["lib", "lib.catalog", "download", "organize", "playlists", "tapedeck", "core"]` matches the target tree exactly, and
+  `dependencies` only lists third-party packages (nothing internal to
+  update there). Also fixed a stale `[project.scripts]` entry found
+  along the way: `core = "core.build:main"` pointed at a module that
+  doesn't exist; corrected to `core = "core.cli:core"` (see Phase 6).
+- [X] Decide `run_import()`'s `archive_path()` fallback vs.
+  `resolve_crate()`'s stricter no-fallback behavior — decided: strictness
+  wins, since both move/rename files on disk and a guessed path is the
+  wrong failure mode for either. `run_import()` now calls
+  `lib.paths.resolve('ARCHIVE_PATH', required=True)` directly (bypassing
+  `archive_path()`'s `~/music/tapebuilding` default entirely), matching
+  `resolve_crate()`'s own implementation exactly rather than just its
+  spirit.
+  - Knock-on effect, already handled correctly: `core.download_songs`'s
+    `import` step now gets a real `ValueError` instead of a silent
+    wrong-directory write when `ARCHIVE_PATH` is unset - already caught by
+    that step's own `try/except Exception` and recorded as a failed step,
+    so no change needed there.
 - [ ] Rewrite one top-level `README.md` (and optionally per-package ones)
   reflecting the new structure — deferred deliberately until the
   structure stops moving.
-- [ ] Re-add `__init__.py` files where actually needed (likely: every
-  package directory, for the `pyproject.toml` package discovery to
-  work) — now that contents are stable instead of guessing ahead of
-  time.
+- [X] Re-add `__init__.py` files where actually needed — confirmed via
+  `tree src /f`: every declared package (`lib`, `lib/catalog`, `core`,
+  `download`, `organize`, `playlists`, `tapedeck`) has one, matching
+  `pyproject.toml`'s `packages` list exactly.
+  - Also dropped a stray top-level `src/__init__.py` that predated the
+    refactor — nothing in `packages` names `"src"` itself
+    (`package-dir = {"" = "src"}` only means the listed packages live
+    under it), so it wasn't doing anything and risked being picked up as
+    an implicit extra package. Confirmed gone in the clean tree.
+  - Also cleared stale `__pycache__` dirs repo-wide (leftover `.pyc`s for
+    modules that no longer exist post-rename — `spotify_utils`,
+    `download_spotify`, `library`, old `playlists/indexer.py` etc.) — not
+    a correctness issue, just cache noise; regenerates on next run.
 
 ## Ideas / not yet scheduled
 

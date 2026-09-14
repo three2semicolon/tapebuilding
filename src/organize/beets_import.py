@@ -27,7 +27,7 @@ import subprocess
 import sys
 import csv
 
-from lib.paths import archive_path
+from lib.paths import resolve as resolve_path
 from lib.tags import EXTENSIONS
 
 
@@ -193,17 +193,16 @@ def run_import(input_dir, output_dir=None, dry_run=False, only_pass=None,
     function so cli.py (and anything else) can call it directly without
     going through argparse. returns True/False on overall success.
 
-    output_dir defaults through lib.paths.archive_path() now, not the old
-    inline `os.getenv('ARCHIVE_PATH') or os.getenv('archive_path')` - note
-    this is a slight behavior change: archive_path() has a
-    ~/music/tapebuilding fallback, whereas the pre-refactor code required
-    --output/ARCHIVE_PATH explicitly and errored otherwise. flagging this
-    since organize.cleanup.resolve_crate deliberately keeps the stricter
-    no-fallback behavior for the same "this moves files" reasoning - worth
-    deciding whether run_import() should match resolve_crate() instead of
-    lib.paths.archive_path()'s default.
+    output_dir resolution is required, no fallback - deliberately calls
+    lib.paths.resolve('ARCHIVE_PATH', required=True) directly instead of
+    going through lib.paths.archive_path()'s convenience default
+    (~/music/tapebuilding). run_import() moves and renames files just like
+    organize.cleanup's regroup policy, so it now matches
+    organize.cleanup.resolve_crate()'s reasoning exactly: silently landing
+    on a guessed path instead of erroring is the wrong failure mode for
+    anything that moves files on disk.
     """
-    output_dir = output_dir or archive_path()
+    output_dir = output_dir or resolve_path('ARCHIVE_PATH', required=True)
 
     if not os.path.exists(input_dir):
         print(f"error: input directory not found: {input_dir}")
