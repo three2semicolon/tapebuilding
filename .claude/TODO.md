@@ -35,9 +35,10 @@ being treated as sufficient evidence going forward.
   at the album column name (`album_name`, falling back to `album`)
   against real `spotify_manifest.csv`/`playlists_manifest.csv` headers
   — tests pass, confirming correct behavior. Feeds `retry.py --report-csv`.
-- [ ] `existing.py`'s module docstring still says "ytdl.py will want the
+- [x] `existing.py`'s module docstring used to say "ytdl.py will want the
   identical helper once its own cli.py split lands" — stale future
-  tense now that it's actually implemented; cosmetic cleanup.
+  tense, since `ytdl.py` already imports `resolve_output_dir()` from
+  here directly. Docstring updated to present tense.
 - [x] `playlists/build.py`'s `_select_playlists()` default-scope bug
   (flagged in `PACKAGE_OVERVIEW.md`'s `playlists/` section): used to
   filter `playlists.csv`'s `owner` column — a **display name** —
@@ -82,16 +83,14 @@ being treated as sufficient evidence going forward.
   See test comment in `tests/download/test_spotify_export.py` for details.
 - [ ] New features/changes should go through `NEW_FEATURE_GUIDE.md`'s
   checklist before being considered done.
-- [ ] `tests/lib/conftest.py`'s `make_tagged_file` and
+- [x] `tests/lib/conftest.py`'s `make_tagged_file` and
   `tests/organize/conftest.py`'s own separate copy of the same fixture
-  both call `ffmpeg` directly by name via `subprocess.run`, never
+  both called `ffmpeg` directly by name via `subprocess.run`, never
   consulting `lib.paths.ffmpeg_path()` / `FFMPEG_PATH` — so both only
-  work when ffmpeg happens to be on `PATH`. Neither fixture currently
-  fails loudly about this (just a bare `WinError 2` / `FileNotFoundError`
-  on Windows), and `tests/organize/conftest.py` isn't mentioned in
-  `tests/README.md`'s "conftest.py files" section at all. Worth either
-  routing both through `ffmpeg_path()` with a `PATH` fallback, or at
-  least documenting the `PATH` requirement clearly in both places.
+  worked when ffmpeg happened to be on `PATH`. Both now call
+  `ffmpeg_path() or "ffmpeg"`, so `FFMPEG_PATH` is honored with a
+  `PATH` fallback. `tests/organize/conftest.py` is now documented in
+  `tests/README.md`'s "conftest.py files" section too.
 
 ---
 
@@ -123,3 +122,44 @@ being treated as sufficient evidence going forward.
 Not started. See `WEB_APP_PLAN.md` for the constraints and shape already
 agreed on (no subprocess/CLI dependency from below; progress-reporting
 mechanism still an open question).
+
+## Streaming (Subsonic API, for Symfonium et al.)
+
+Not started — planning only. Goal: stream the crate remotely from a
+phone (Symfonium is the driving client) without a network connection
+being a hard requirement for *every* listening scenario — see note
+below on scope relative to `tapedeck/`.
+
+- Symfonium speaks Subsonic/OpenSubsonic, not a custom protocol — the
+  plan is to stand up an existing Subsonic-API-compatible server
+  pointed at `ARCHIVE_PATH`, not to build streaming into this repo.
+  Navidrome is the leading candidate: actively maintained, implements
+  full Subsonic + OpenSubsonic, explicitly Symfonium-compatible, and
+  scans a plain directory tree off file tags directly — no export or
+  integration work needed on this repo's side to get a first version
+  working.
+- **Not a `tapedeck/` replacement.** Streaming covers "I have network
+  and want the whole library"; `tapedeck/` covers "no network, a
+  dedicated device, only needs a rotation subset" (car head unit, a
+  dumb DAP, roaming without data). Both stay relevant — don't let this
+  quietly deprioritize `tapedeck/` work.
+- Open questions to resolve before starting:
+  - **Hosting**: same machine `tapebuilding` runs on (would need to
+    stay on/awake), a NAS, or a small always-on box? Affects whether
+    this is "install a service" or "stand up new hardware."
+  - **Remote exposure**: Navidrome itself doesn't handle TLS/public
+    exposure — reaching it from outside the LAN needs a reverse proxy
+    or VPN (e.g. Tailscale) layered on top. Decide before assuming
+    "works from my phone anywhere" is in scope for v1.
+  - **Playlists**: `lib.m3u.write_m3u8()`'s output may or may not be
+    directly importable by Navidrome as-is (relative paths, the
+    `#SPOTIFY:<id>` comment lines) — worth a quick spike rather than
+    assuming compatibility.
+  - **Rescan trigger**: Navidrome file-watches by default, so a normal
+    `download`/`organize` run should be picked up on its own — but
+    worth checking whether `core/`'s workflows should also hit
+    Navidrome's own scan-trigger API directly rather than relying on
+    the watcher's latency.
+  - Does beets' existing tag output (via `organize/`) already have
+    everything Navidrome wants for browsing (album art, sort
+    fields, etc.), or does it need any additional tag passes?

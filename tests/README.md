@@ -63,11 +63,11 @@ files themselves are real and document the intended behavior.
   on it for anything beyond what's already covered.
 
 **ffmpeg dependency**: both `tests/lib/conftest.py` and
-`tests/organize/conftest.py` invoke `ffmpeg` directly by name via
-`subprocess.run` — neither goes through `lib.paths.ffmpeg_path()`, so
-`FFMPEG_PATH` in `.env` is not consulted by either fixture yet. Every
-test that (directly or via another fixture) depends on `make_tagged_file`
-needs `ffmpeg` on `PATH` for now. See `TODO.md`.
+`tests/organize/conftest.py` resolve the executable via
+`lib.paths.ffmpeg_path()`, falling back to the bare `ffmpeg` name (i.e.
+`PATH`) if `FFMPEG_PATH` isn't set. Either one needs to resolve to a
+real ffmpeg for any test that (directly or via another fixture) depends
+on `make_tagged_file`.
 
 ## Running
 

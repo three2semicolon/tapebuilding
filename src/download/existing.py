@@ -14,8 +14,8 @@ glob is enough, and it's cheap enough to redo every run instead of needing a
 cache sidecar.
 
 used by spotify_download.py's --pre-skip-existing / --validate-only path;
-ytdl.py will want the identical helper once its own cli.py split lands (per
-TODO.md Phase 3) - import from here rather than re-copying it there.
+also imported directly by ytdl.py for the same output-dir resolution, so
+both commands resolve output the same way from this one place.
 """
 
 import os
