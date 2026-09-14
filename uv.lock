@@ -1560,6 +1560,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "beets", extra = ["embedart", "fetchart", "lyrics"] },
+    { name = "click" },
     { name = "deno" },
     { name = "firebase-admin" },
     { name = "pytest" },
@@ -1577,6 +1578,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "beets", extras = ["embedart", "fetchart", "lyrics"], specifier = ">=2.12.0" },
+    { name = "click", specifier = ">=8.1.0" },
     { name = "deno", specifier = ">=2.9.1" },
     { name = "firebase-admin", specifier = ">=7.5.0" },
     { name = "pytest", specifier = ">=9.1.1" },

@@ -35,6 +35,7 @@ retry list (and any --report-csv) reflects only what's still missing.
 """
 
 import csv
+import re
 import os
 import urllib.parse
 from collections import OrderedDict

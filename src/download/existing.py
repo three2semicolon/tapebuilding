@@ -20,8 +20,24 @@ TODO.md Phase 3) - import from here rather than re-copying it there.
 
 import os
 
+from lib.paths import archive_path
 from lib.tags import EXTENSIONS
 from lib.text import normalize_key
+
+
+def resolve_output_dir(output_dir=None):
+    """resolve the download output directory: explicit -o/--output override,
+    else ARCHIVE_PATH (lib.paths.archive_path()'s own ~/music/tapebuilding
+    convenience default). creates the directory if it doesn't exist yet -
+    spotdl/yt-dlp don't reliably create intermediate directories themselves
+    on Windows.
+
+    shared by spotify_download.py and ytdl.py so both resolve output the
+    same way (see this module's docstring).
+    """
+    resolved = archive_path(cli=output_dir)
+    os.makedirs(resolved, exist_ok=True)
+    return resolved
 
 
 def build_library_index(library_root):
