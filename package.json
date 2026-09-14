@@ -1,0 +1,14 @@
+{
+  "name": "tapebuilding",
+  "version": "0.1.0",
+  "description": "building and managing my personal music library",
+  "main": "src/tapebuilding/__init__.py",
+  "exports": {
+    ".": "./src/tapebuilding/__init__.py",
+    "./download": "./src/download/__init__.py",
+    "./organize": "./src/organize/__init__.py",
+    "./playlists": "./src/playlists/__init__.py",
+    "./tapedeck": "./src/tapebuilding/__init__.py",
+    "./tapebuilding": "./src/tapebuilding/__init__.py"
+  }
+}

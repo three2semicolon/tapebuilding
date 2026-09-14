@@ -43,3 +43,5 @@ retry_list.txt
 
 # downloading
 *firebase-adminsdk*
+*cookies.txt
+.spotify_token_cache
