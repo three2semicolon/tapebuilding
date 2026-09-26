@@ -7,119 +7,129 @@ unscheduled work, not a checklist to execute in order.
 
 ---
 
-## Fixed this session (post-refactor smoke test)
+## Fixes — planned (found this planning session, not yet implemented)
 
-Smoke-testing `download ytdl` / `download spotify` / `playlists --rescrape` by hand surfaced three import-breaking gaps between what
-`PACKAGE_OVERVIEW.md` described as done and what actually existed on
-disk — see `NEW_FEATURE_GUIDE.md` for why "documented as done" isn't
-being treated as sufficient evidence going forward.
+Two matching/organization bugs surfaced from real playlist syncs, plus
+one enhancement they motivate. Full root-cause analysis and fix plan in
+`BUGFIX_PLAN.md` (new) — the summary below isn't enough to implement
+from directly; that file lists the exact source files and a verification
+script needed to confirm each hypothesis before touching code.
 
-- [X] `download/existing.py` was missing `resolve_output_dir()` entirely
-  — documented in `PACKAGE_OVERVIEW.md` as already shared between
-  `spotify_download.py` and `ytdl.py`, but never actually written.
-  Added; both commands import cleanly now.
-- [X] `download/manifest.py` didn't exist as a file at all, despite
-  being documented as the already-consolidated home for
-  `predict_output_filename()`/`read_csv_metadata()`. Reconstructed from
-  the old pre-refactor `spotify_download.py` logic plus the shapes
-  `spotify_download.py` and `retry.py` actually call — **not yet
-  verified against a real export CSV** (see open item below).
-- [X] `retry.py` used `re.compile(...)` at module level without
-  `import re` — would have failed on first invocation the same way the
-  other two did. Fixed.
+- [X] **Multi-artist tracks land in `unmatched.csv` despite already
+  being in the crate**, then get reimported into beets' duplicates
+  folder. **Root cause confirmed, fix implemented and tested.**
+  `lib.text.split_artists()` was never the problem (third revision, not
+  the original separator hypothesis). The real bug was
+  `lib.catalog.indexer.get_index()` trusting `.playlist_index.jsonl`
+  unconditionally — confirmed by running `playlists --apply --rescrape
+  --reindex`, which recovered "I Admit with Isaiah Kaleo" plus ~300
+  other tracks that had silently accumulated across un-reindexed
+  `download spotify` sessions. `get_index()` now does a cheap stat-only
+  mtime check (`_is_stale()`) before trusting the cache, and rebuilds
+  automatically when the crate has changed — tested against add/
+  no-change/delete cases with stub modules, all three behave correctly.
+  `--reindex` still works as a manual override. Full detail in
+  `BUGFIX_PLAN.md` §Bug 1.
+  - [X] Regression test added:
+    `tests/lib/catalog/test_indexer.py` now covers the add/delete/
+    unchanged-crate cases against the real fixed `get_index()`, plus a
+    direct assertion that `build_index()` is/isn't actually called
+    (not just that the output happens to look right). One pre-existing
+    test in that file had been asserting the old buggy behavior as
+    correct (`len(index) == 1` after adding a file) — fixed to assert
+    the corrected behavior, with a docstring note on why.
+  - [X] `PACKAGE_OVERVIEW.md`'s `lib/catalog/indexer.py` description
+    updated to describe `_is_stale()`/`_newest_mtime()` auto-invalidation,
+    the fail-safe direction in each case, and the Bug 1 fix it closes,
+    per `NEW_FEATURE_GUIDE.md` §5.4.
+- [ ] **Unrelated same-titled singles by different artists merged into
+  one album folder** (e.g. two different artists' singles both titled
+  "Automatic" ending up in one `Automatic/` folder) — **confirmed
+  against the real source**, not just a hypothesis anymore.
+  `organize.cleanup.group_files()` (shared by `organize.preimport.stage()`)
+  keys purely on `normalize_key(album)`, no artist component at all, so
+  two singles sharing a title collide; `lib.tags.canonical_albumartist()`
+  then resolves the tie via a `>= 50%` threshold that a straight 1-vs-1
+  split satisfies, silently picking whichever artist happened to be
+  first. See `BUGFIX_PLAN.md` §Bug 2 for the exact fix.
+- [ ] **`organize cleanup` needs a resplit mode** to repair
+  already-wrongly-merged folders once the grouping-key fix above lands
+  — `--resplit` (or a new flag under `--apply`, TBD), dry-run by
+  default, `--apply` to actually move files + rebuild the db. Explicitly
+  scoped to regrouping + tag-driven renames, not a general "fix all
+  formatting" pass — see `BUGFIX_PLAN.md`'s cleanup/rebuild section for
+  why that scope line matters.
 
-## Open follow-ups from the above
+---
 
-- [X] Verified `download.manifest.read_csv_metadata_from_file()`'s guess
-  at the album column name (`album_name`, falling back to `album`)
-  against real `spotify_manifest.csv`/`playlists_manifest.csv` headers
-  — tests pass, confirming correct behavior. Feeds `retry.py --report-csv`.
-- [X] `existing.py`'s module docstring used to say "ytdl.py will want the
-  identical helper once its own cli.py split lands" — stale future
-  tense, since `ytdl.py` already imports `resolve_output_dir()` from
-  here directly. Docstring updated to present tense.
-- [X] `playlists/build.py`'s `_select_playlists()` default-scope bug
-  (flagged in `PACKAGE_OVERVIEW.md`'s `playlists/` section): used to
-  filter `playlists.csv`'s `owner` column — a **display name** —
-  against `SPOTIFY_USER_ID` — a **user ID** — so the default "just my
-  playlists" scope never matched a playlist you actually own. Fixed by
-  adding a dedicated `owner_id` column (`PLAYLIST_META_FIELDS`,
-  populated by both `download.spotify_api.get_user_playlists()` and
-  `build.py`'s own `_scope_rescrape()`) and filtering on that instead.
-  The regression test is flipped off `xfail`:
-  `tests/playlists/test_build.py:: TestSelectPlaylistsDefaultScope::test_default_scope_matches_by_id_not_display_name`.
-  Note: playlists exported *before* this fix have no `owner_id` value
-  and won't match the default scope until re-exported.
-- [X] Build out `tests/` per `TEST_PLANS.md` — start with the import
-  smoke tests (§0), since all three bugs fixed above were import-time
-  failures that a two-line test per module would have caught before
-  any manual `uv run` was needed. `lib/` (§1), `download/` (§2),
-  `organize/` (§3), `playlists/` (§4), and now `tapedeck/` (§5) are all
-  fully real (or, for `playlists/`, real-plus-one-known-`xfail`) — no
-  skeletons left in any of the five. `core/` (§6) is the only package
-  left per the priority order.
-  - `tapedeck/`'s tests turned up one genuine quirk in `copy.py`'s
-    `unstage()`, not a bug: its empty-directory pruning is a single
-    bottom-up `os.walk`, so a parent directory that only becomes empty
-    *because* its own child was just removed in the same pass isn't
-    re-checked and survives until a later unload's prune pass. Pinned as
-    current behavior in `test_unstage_prunes_empty_parent_directories`
-    rather than fixed — worth deciding whether it's worth a follow-up
-    fix (e.g. two pruning passes, or a fixed-point loop) or is fine as
-    documented behavior.
-- [X] `tests/download/conftest.py` (the `sample_manifest_csv` /
-  `fixture_library` fixtures `test_retry.py` and `test_spotify_download.py`
-  depend on) now verified against actual usage — dependent tests pass,
-  confirming the fixture matches intended behavior.
-- [X] `download/spotify_export.py`'s `export_specific_playlist()` writes
-  a blank line to its per-playlist `_urls.txt` for any track with no
-  `spotify_url` (e.g. a local file), unlike `spotify_api.export_manifest_as_txt()`
-  which filters those out before writing. Found while writing
-  `test_spotify_export.py`; pinned as current behavior there. The
-  difference is intentional — per-playlist URLs are not used as spotdl
-  input directly (unlike manifest files), so filtering is not required.
-  See test comment in `tests/download/test_spotify_export.py` for details.
-- [ ] New features/changes should go through `NEW_FEATURE_GUIDE.md`'s
-  checklist before being considered done.
-- [X] `tests/lib/conftest.py`'s `make_tagged_file` and
-  `tests/organize/conftest.py`'s own separate copy of the same fixture
-  both called `ffmpeg` directly by name via `subprocess.run`, never
-  consulting `lib.paths.ffmpeg_path()` / `FFMPEG_PATH` — so both only
-  worked when ffmpeg happened to be on `PATH`. Both now call
-  `ffmpeg_path() or "ffmpeg"`, so `FFMPEG_PATH` is honored with a
-  `PATH` fallback. `tests/organize/conftest.py` is now documented in
-  `tests/README.md`'s "conftest.py files" section too.
+## Resolved (historical)
+
+Compressed from an earlier session's full log — the detail (which files,
+which tests, which exact lines) isn't load-bearing anymore now that
+`PACKAGE_OVERVIEW.md` describes the current state directly; kept here
+only so the "documented as done ≠ actually done" lesson stays visible.
+
+- [X] Post-refactor smoke testing found and fixed three import-breaking
+  gaps `PACKAGE_OVERVIEW.md` had described as already done:
+  `download.existing.resolve_output_dir()` missing entirely,
+  `download/manifest.py` missing as a file, and `retry.py` missing
+  `import re`. Motivated `NEW_FEATURE_GUIDE.md`'s "actually run it"
+  checklist.
+- [X] Verified `download.manifest`'s album-column guess, the
+  `existing.py` docstring, `spotify_export.py`'s blank-line-on-no-url
+  behavior (pinned intentional), and the `conftest.py` fixtures against
+  real usage/exports.
+- [X] Fixed `playlists/build.py`'s default-scope bug — was filtering
+  `playlists.csv`'s `owner` (display name) against `SPOTIFY_USER_ID`
+  (user ID), so the default "just my playlists" scope never matched.
+  Now uses a dedicated `owner_id` column. Playlists exported *before*
+  this fix need re-exporting to pick up `owner_id`.
+- [X] Built out `tests/` through `lib/`, `download/`, `organize/`,
+  `playlists/`, `tapedeck/` (§0–§5 of `TEST_PLANS.md`). `core/` (§6) is
+  the only package still pending.
+- [X] Fixed a stray lowercase-`ffmpeg_path` env-var fallback in two test
+  fixtures that bypassed `lib.paths.ffmpeg_path()`.
 
 ---
 
 ## Enhancements
 
-- [ ] SoundCloud export/download, likely `download/soundcloud_export.py` +
-  a `soundcloud` subcommand, mirroring the spotify export/download split.
-  Moderate effort, different shape than Spotify's:
-  - No separate auth/export step needed the way Spotify has a real web
-    API — `yt-dlp`'s `extract_flat` (already used by `ytdl.py`'s
-    `--metadata-only` path) can list a SoundCloud set/playlist's tracks
-    (title, uploader, url) without downloading.
-  - `download.ytdl.is_playlist_url()`/`download_ytdl()` already handle
-    SoundCloud playlist download mechanics (the `/sets/` regex, playlist
-    output template) — the missing piece is manifest/tracking
-    infrastructure equivalent to `spotify_manifest.csv`, not download
-    capability itself.
-  - `download.existing`'s filename-stem index is already extension/source
-    agnostic, so `--pre-skip-existing`-style "only fetch what's new"
-    behavior should carry over with little change once there's a
-    SoundCloud-side manifest to predict filenames from.
-  - Open question: whether this warrants its own top-level package
-    (`soundcloud/`) or stays inside `download/` alongside the Spotify
-    modules — leaning `download/` for now, revisit if it grows its own
-    matching/dedup logic the way Spotify's did.
+- [ ] SoundCloud export/download + a `--exclude` flag for Spotify
+  playlist sync + the cross-service playlist design both feed into —
+  full plan in `PLAYLIST_SYNC_PLAN.md` (new), superseding the shorter
+  note this bullet used to be. Short version:
+  - `download soundcloud` (new subcommand, mirroring `download
+    export`/`download spotify`'s split) lands in `download/`, not a new
+    top-level package, via `yt-dlp extract_flat` — same reasoning as
+    before, still just leaning that way rather than deciding it forever.
+  - `--exclude NAME_OR_ID` (repeatable) on `playlists/build.py`'s
+    `_select_playlists()`, so specific playlists (soundtrack/personal
+    ones you don't want synced) can be skipped from `--apply
+    --rescrape`/`core sync` without needing `-p` to enumerate everything
+    else by hand.
+  - Longer-term: a `core`-level workflow that chains rescrape → match →
+    autodownload-unmatched → rematch for either service, which is what
+    the eventual web app's downloader/sync pages actually want
+    underneath them. See `PLAYLIST_SYNC_PLAN.md` §3 for why this should
+    wait until the exclude flag and the SoundCloud manifest both exist.
+- [ ] `core/` (§6 of `TEST_PLANS.md`) is the only package without a real
+  test suite yet — the other five are done.
+- [ ] `tapedeck/copy.py`'s `unstage()` prunes empty directories with a
+  single bottom-up `os.walk`, so a parent directory that only becomes
+  empty *because* its own child was just removed in the same pass isn't
+  re-checked, and survives until a later unload's prune pass. Pinned as
+  current behavior in a test, not fixed — decide whether it's worth a
+  follow-up (two pruning passes, or a fixed-point loop) or is fine as
+  documented behavior.
 
 ## `app/`
 
 Not started. See `WEB_APP_PLAN.md` for the constraints and shape already
-agreed on (no subprocess/CLI dependency from below; progress-reporting
-mechanism still an open question).
+agreed on (no subprocess/CLI dependency from below), plus its new
+"Feature-set decision" and "Progress reporting" sections — the feature
+list is now scoped down against what Navidrome's own web app already
+covers, and progress-reporting has a concrete recommendation instead of
+being fully open.
 
 ## Streaming (Subsonic API, for Symfonium)
 
@@ -165,12 +175,21 @@ Symfonium without a network connection being a hard requirement for
   directly.) `foo_opensubsonic` is the fallback if `foo_navidrome`
   ever stalls — more general OpenSubsonic client, works against
   non-Navidrome servers too, but rougher/more actively-changing.
-- [ ] Spike: check whether `lib.m3u.write_m3u8()`'s existing `.m3u8`
+- [X] Spike: check whether `lib.m3u.write_m3u8()`'s existing `.m3u8`
   output (relative paths, `#SPOTIFY:<id>` comment lines) imports into
   Navidrome cleanly as-is, or needs adjustment.
+- [X] Investigated Symfonium's mobile playlist management (the "doesn't
+  seem I can add or manage Navidrome playlists from there" gap) — it
+  does support creating/editing/pushing playlists to Navidrome, but each
+  server-side playlist needs an explicit one-time **Import** before
+  Symfonium will edit + sync it, and sync itself is one-directional per
+  action (full upload or full download, not a merge). See
+  `WEB_APP_PLAN.md`'s new Symfonium section. Try the import step before
+  defaulting to `tapedeck` for heavily-edited playlists.
 - [ ] Decide whether `core/`'s workflows should hit Navidrome's own
   scan-trigger API after a download/organize run, or whether its
   built-in file-watcher's latency is fine as-is.
+  - [ ] built in is enough
 
 ### Phase 2 (later) — dedicated hardware (the Raspberry Pi)
 

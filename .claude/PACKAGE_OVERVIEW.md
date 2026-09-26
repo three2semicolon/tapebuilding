@@ -117,11 +117,40 @@ Doesn't call `load_dotenv()` itself — relies on the calling `cli.py`.
 The crate-catalog primitive — build/cache a searchable tag index of the
 crate, and match an external Spotify row against it. Promoted out of
 `playlists/` since `tapedeck/` needed both directly too.
-- `catalog/indexer.py` — `build_index()`, `get_index()` (cached, rebuilds
-  the `.playlist_index.jsonl` sidecar under the exports dir on miss or
-  `--reindex`), `save_index()`/`load_index()`. Behavior unchanged from
-  `playlists/indexer.py`; calls `lib.tags.read_tags()` and `lib.paths`
-  instead of its own copies.
+- `catalog/indexer.py` — `build_index()`, `get_index()`, `save_index()`/
+  `load_index()`. Calls `lib.tags.read_tags()` and `lib.paths` instead of
+  its own copies.
+  - `get_index()` **auto-invalidates the cache** — no longer the old
+    unconditional "trust the sidecar if it exists" behavior. Before
+    serving `.playlist_index.jsonl`, it runs `_is_stale()`, a cheap
+    stat-only walk (`_newest_mtime()` — mtimes only, no tag reads) over
+    the same tree `build_index()` covers, and rebuilds automatically if
+    anything under the crate is newer than the sidecar. `--reindex`
+    still works as an explicit manual override on top of this.
+  - `_is_stale()` fails safe in both directions: a sidecar that's
+    missing or unreadable counts as stale (forces a rebuild rather than
+    serving a cache it can't actually confirm is current), while a
+    `library_root` that can't be stat'd at all (permissions, a removable
+    drive that dropped) counts as **not** stale — a transient
+    filesystem hiccup just serves the existing cache for that run
+    instead of forcing an unwanted multi-minute reindex.
+  - `_newest_mtime()` stats directories as well as files, so a
+    *deletion* still invalidates the cache even though a removed file
+    leaves no mtime of its own to compare — removing a file bumps its
+    parent directory's mtime, which the walk catches.
+  - **Fixes Bug 1** (`BUGFIX_PLAN.md`): the previous version trusted the
+    sidecar unconditionally once it existed, so tracks added to the
+    crate after the last index build were invisible to every matcher
+    tier until someone remembered to pass `--reindex` by hand — this is
+    what silently produced "I Admit with Isaiah Kaleo" (and ~300 other
+    tracks) landing in `unmatched.csv` despite already being in the
+    crate. Confirmed fixed by re-running `playlists --apply --rescrape`
+    without `--reindex` after the crate had changed.
+  - Regression-tested: `tests/lib/catalog/test_indexer.py` covers add/
+    delete/unchanged-crate cases against the real `get_index()`, plus a
+    direct assertion (via monkeypatching `build_index`) that a rebuild
+    is/isn't actually triggered, not just that the returned index looks
+    right.
 - `catalog/matcher.py` — `MatchIndex`, `match_rows()` (cached by Spotify
   track ID). Six-tier matching, preserved exactly: (1) exact title +
   primary-artist token, (2) exact title + any artist overlap, (3) exact

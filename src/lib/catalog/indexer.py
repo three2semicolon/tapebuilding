@@ -10,6 +10,15 @@ directly here instead of querying beets.
 promoted out of playlists/ during the lib/ refactor: tapedeck depended on
 this just as much as playlists did, so it belongs to the shared catalog
 layer rather than one package.
+
+the cached sidecar auto-invalidates: get_index() does a cheap stat-only walk
+(mtimes only, no tag reads - see _newest_mtime()) before trusting the cache,
+and rebuilds if anything under the crate is newer than the sidecar itself.
+this was previously all-or-nothing on the caller passing --reindex, which
+meant tracks added to the crate after the last index build were silently
+invisible to every matcher tier until someone remembered to force a rebuild
+by hand (found via a real unmatched.csv miss - see BUGFIX_PLAN.md's Bug 1).
+--reindex still works as an explicit override.
 """
 
 import json
@@ -55,6 +64,57 @@ def build_index(library_root, skip_dirs=_SKIP_TOPLEVEL, verbose=False):
     return index
 
 
+def _newest_mtime(library_root, skip_dirs=_SKIP_TOPLEVEL):
+    """cheap stat-only walk over the same tree build_index() covers -> the
+    newest mtime seen (directories and files both), or None if
+    library_root doesn't exist. no tag reads - just os.stat(), so this is
+    orders of magnitude cheaper than build_index()'s per-file read_tags()
+    pass and safe to run before every get_index() call, cached or not.
+
+    directories are stat'd too (not just files): removing a file leaves no
+    mtime of its own to compare, but it does bump its parent directory's
+    mtime, so a deletion still invalidates the cache instead of leaving a
+    dangling entry that points at a file that's no longer there."""
+    if not os.path.isdir(library_root):
+        return None
+    newest = None
+    root_basename = os.path.basename(os.path.normpath(library_root))
+    for dirpath, dirnames, filenames in os.walk(library_root):
+        if os.path.basename(os.path.normpath(dirpath)) == root_basename:
+            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        try:
+            m = os.stat(dirpath).st_mtime
+            newest = m if newest is None else max(newest, m)
+        except OSError:
+            pass
+        for fn in filenames:
+            try:
+                m = os.stat(os.path.join(dirpath, fn)).st_mtime
+            except OSError:
+                continue
+            newest = m if newest is None else max(newest, m)
+    return newest
+
+
+def _is_stale(sidecar, library_root):
+    """True if the crate has changed since sidecar was last written, per
+    _newest_mtime()'s cheap stat pass. Fails safe in both directions: a
+    sidecar that vanishes mid-check counts as stale (forces a rebuild
+    rather than serving a cache that's no longer even readable), while a
+    library_root that can't be stat'd at all (permissions, a removable
+    drive that dropped) counts as NOT stale, so a transient filesystem
+    hiccup doesn't force an unwanted multi-minute reindex - it just serves
+    the existing cache for that run."""
+    try:
+        sidecar_mtime = os.path.getmtime(sidecar)
+    except OSError:
+        return True
+    newest = _newest_mtime(library_root)
+    if newest is None:
+        return False
+    return newest > sidecar_mtime
+
+
 def save_index(index, path):
     path = Path(path)
     tmp = path.with_name(path.name + '.tmp')
@@ -81,17 +141,24 @@ def load_index(path):
 
 
 def get_index(library_root=None, exports_dir_value=None, reindex=False, verbose=False):
-    """return the cached catalog, building the sidecar when missing or on
-    reindex. library_root/exports_dir_value default to the resolved crate
-    and exports roots via lib.paths."""
+    """return the cached catalog, building the sidecar when missing, on
+    reindex, or when a cheap stat pass (_is_stale(), no tag reads) shows
+    the crate has changed since the sidecar was last written.
+    library_root/exports_dir_value default to the resolved crate and
+    exports roots via lib.paths."""
     library_root = library_root or archive_path()
     exports_dir_value = exports_dir_value or exports_dir()
     sidecar = index_path(exports_dir_value)
+
     if not reindex and os.path.exists(sidecar):
-        cached = load_index(sidecar)
-        if cached is not None:
-            print(f"using cached index ({len(cached)} tracks) at {sidecar}")
-            return cached
+        if _is_stale(sidecar, library_root):
+            print(f"cached index at {sidecar} is older than the crate - rebuilding...")
+        else:
+            cached = load_index(sidecar)
+            if cached is not None:
+                print(f"using cached index ({len(cached)} tracks) at {sidecar}")
+                return cached
+
     print(f"building index from {library_root} ...")
     index = build_index(library_root, verbose=verbose)
     save_index(index, sidecar)
