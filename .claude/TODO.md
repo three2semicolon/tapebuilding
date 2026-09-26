@@ -5,6 +5,12 @@ The `pipelines/` → `core/` refactor (`lib/` foundation + per-package
 for current state and `README.md` for usage. What's left is genuinely
 unscheduled work, not a checklist to execute in order.
 
+**Current status note:** Bug 1's implementation and regression coverage are
+complete. Bug 2's forward fix and resplit implementation are present and
+smoke-tested, but the real organize regression tests are still outstanding,
+and the current resplit source has a missing `sanitize` import that must be
+fixed before the resplit command is considered complete.
+
 ---
 
 ## Fixes — planned (found this planning session, not yet implemented)
@@ -21,8 +27,7 @@ script needed to confirm each hypothesis before touching code.
   `lib.text.split_artists()` was never the problem (third revision, not
   the original separator hypothesis). The real bug was
   `lib.catalog.indexer.get_index()` trusting `.playlist_index.jsonl`
-  unconditionally — confirmed by running `playlists --apply --rescrape
-  --reindex`, which recovered "I Admit with Isaiah Kaleo" plus ~300
+  unconditionally — confirmed by running `playlists --apply --rescrape --reindex`, which recovered "I Admit with Isaiah Kaleo" plus ~300
   other tracks that had silently accumulated across un-reindexed
   `download spotify` sessions. `get_index()` now does a cheap stat-only
   mtime check (`_is_stale()`) before trusting the cache, and rebuilds
@@ -30,6 +35,7 @@ script needed to confirm each hypothesis before touching code.
   no-change/delete cases with stub modules, all three behave correctly.
   `--reindex` still works as a manual override. Full detail in
   `BUGFIX_PLAN.md` §Bug 1.
+
   - [X] Regression test added:
     `tests/lib/catalog/test_indexer.py` now covers the add/delete/
     unchanged-crate cases against the real fixed `get_index()`, plus a
@@ -58,6 +64,7 @@ script needed to confirm each hypothesis before touching code.
   genuine shared-artist-token album (still merges), and an explicitly
   VA-tagged compilation (still merges) — all three pass. See
   `BUGFIX_PLAN.md` §Bug 2.
+
   - [ ] Regression test still owed: the standalone script above needs
     turning into a real `tests/organize/test_cleanup.py` /
     `test_preimport.py` case per `NEW_FEATURE_GUIDE.md` §5.2/5.3 — same
@@ -88,19 +95,37 @@ script needed to confirm each hypothesis before touching code.
   old folder is removed; a genuine multi-track album with chained
   artist overlap (varying featured collaborators per track, like the
   real Ash Levi album) is correctly left untouched.
+
   - [ ] Regression test still owed (same gap as Bug 2's grouping-key
     fix above) — the filesystem smoke test used to verify this should
     become a real `tests/organize/test_cleanup.py` case.
+  - [ ] **Current resplit runtime bug:** `resplit.py` calls `sanitize()`
+    when constructing destination names but does not import it from
+    `lib.tags`. Add `sanitize` to that import before treating resplit
+    as production-ready.
+  - [ ] **Resplit destination collision:** `_name_album_component()`
+    currently turns an already-existing canonical destination into
+    `Name (2)`, `Name (3)`, etc. This can create duplicate album folders
+    when a split component actually belongs with an existing album folder.
+    Change resplit planning/apply behavior to recognize an existing
+    compatible canonical album destination and merge into it rather than
+    inventing `(2)`; retain numeric suffixes only for genuinely distinct
+    collisions that cannot safely be merged.
   - [ ] `PACKAGE_OVERVIEW.md`'s `organize/` section still needs updating
     to describe the new `organize/cleanup/` and `organize/preimport/`
     subpackage layout (see the split note below) and the `--resplit`
     flag, per `NEW_FEATURE_GUIDE.md` §5.4 — not done yet.
-
+  - [ ] note from a session:
+    * **Fix resplit destination artist determination.** Each artist-separated component must derive its folder artist from the component itself, not from the old merged folder's `albumartist`.
+    * For `ABC - ABC` + `BCA - ABC`, produce `ABC - ABC` and `BCA - ABC`.
+    * If the component represents a single track/release that belongs under `singles`, use the existing single-placement logic rather than creating an album folder.
+    * Numeric `(2)` suffixes should **not** be used to resolve this particular situation; they should only be a last-resort safeguard for genuinely ambiguous same-artist/same-album collisions.
 - [X] **Split `cleanup.py` and `preimport.py`** — both had grown past a
   comfortable single-file size (~610 and ~400 lines) and were becoming
   two different concerns stacked in one file each. Split into
   subpackages, each new module landing in the ~150-270 line range,
   along the seams the code already had rather than arbitrary cuts:
+
   - `organize/cleanup/` — `common.py` (`resolve_crate()`, shared by the
     other three), `grouping.py` (the forward-looking regroup pass:
     `group_files()`/`build_plan()`/the VA-collision helpers),
@@ -169,20 +194,43 @@ only so the "documented as done ≠ actually done" lesson stays visible.
 
 ---
 
+## Album-name normalization / edition collapsing
+
+- [ ] Add a shared album-name normalization layer for matching, grouping,
+  folder naming, and (optionally/apply-time) metadata cleanup. The goal is
+  for edition suffixes such as `(Deluxe)`, `(Deluxe Edition)`,
+  `(25th Anniversary Edition)`, `(Remastered)`, and similar release-label
+  suffixes to resolve to the same canonical album identity.
+- [ ] Use the normalized album identity in playlist/crate matching so a
+  playlist album `ABC` matches local `ABC (Remastered)`, and vice versa,
+  without requiring the literal album strings to be identical.
+- [ ] Use the same normalized album identity for organize grouping and
+  resplit destination naming, so edition-only differences do not create
+  separate album groups/folders.
+- [ ] Add an explicit metadata/folder-cleanup path that can write the
+  canonical album name back to tags and rename folders, rather than
+  changing metadata implicitly during ordinary matching. Preserve the
+  original album string where appropriate unless this cleanup is applied.
+- [ ] Define the suffix allowlist conservatively and test repeated/common
+  forms (e.g. `Deluxe`, `Deluxe Edition`, `Remastered`, `Remaster`,
+  anniversary editions, and year-based remasters) without stripping
+  meaningful album titles that merely contain parentheses.
+- [ ] Add regression tests covering matching, grouping, folder naming,
+  metadata normalization, and interaction with resplit/existing-folder
+  collisions.
+
 ## Enhancements
 
 - [ ] SoundCloud export/download + a `--exclude` flag for Spotify
   playlist sync + the cross-service playlist design both feed into —
   full plan in `PLAYLIST_SYNC_PLAN.md` (new), superseding the shorter
   note this bullet used to be. Short version:
-  - `download soundcloud` (new subcommand, mirroring `download
-    export`/`download spotify`'s split) lands in `download/`, not a new
+  - `download soundcloud` (new subcommand, mirroring `download export`/`download spotify`'s split) lands in `download/`, not a new
     top-level package, via `yt-dlp extract_flat` — same reasoning as
     before, still just leaning that way rather than deciding it forever.
   - `--exclude NAME_OR_ID` (repeatable) on `playlists/build.py`'s
     `_select_playlists()`, so specific playlists (soundtrack/personal
-    ones you don't want synced) can be skipped from `--apply
-    --rescrape`/`core sync` without needing `-p` to enumerate everything
+    ones you don't want synced) can be skipped from `--apply --rescrape`/`core sync` without needing `-p` to enumerate everything
     else by hand.
   - Longer-term: a `core`-level workflow that chains rescrape → match →
     autodownload-unmatched → rematch for either service, which is what
@@ -207,77 +255,3 @@ agreed on (no subprocess/CLI dependency from below), plus its new
 list is now scoped down against what Navidrome's own web app already
 covers, and progress-reporting has a concrete recommendation instead of
 being fully open.
-
-## Streaming (Subsonic API, for Symfonium)
-
-Planned, phase 1 in progress. Goal: stream the crate remotely on
-Symfonium without a network connection being a hard requirement for
-*every* listening scenario.
-
-- Symfonium speaks Subsonic/OpenSubsonic, not a custom protocol — the
-  plan is to run an existing Subsonic-API server pointed at
-  `ARCHIVE_PATH`, not to build streaming into this repo. **Navidrome**
-  is the server: actively maintained, full Subsonic + OpenSubsonic,
-  explicitly Symfonium-compatible, scans a plain directory tree off
-  file tags directly — no export/integration work needed on this
-  repo's side.
-- **Not a `tapedeck/` replacement.** Streaming covers "I have network
-  and want the whole library"; `tapedeck/` covers "no network, a
-  dedicated device, only needs a rotation subset" (car head unit, a
-  dumb DAP, roaming without data). Both stay relevant.
-
-### Phase 1 (now) — laptop, for testing / near-term remote use
-
-- [X] Install Navidrome (Windows MSI) on this laptop, pointed at the
-  crate root; runs as a Windows service, so it survives reboots.
-- [X] Create the admin user, let the first scan run, spot-check the
-  library.
-- [X] Last.fm scrobbling enabled (`LastFM.ApiKey`/`LastFM.Secret` in
-  `navidrome.ini`, toggled on per-user in Personal Settings). Local
-  play counts/last-played track regardless of this; scrobbling just
-  forwards live plays to Last.fm going forward (no history backfill).
-- [X] Disable sleep-on-AC (at minimum) — a laptop that naps mid-test
-  just looks like the server disappeared.
-- [X] Set up Tailscale (or similar) on the laptop + phone for remote
-  access instead of forwarding router ports.
-- [X] Connect Symfonium via the Tailscale address; test both on-LAN
-  and off-LAN (mobile data) before relying on it.
-- [X] Desktop: install `foo_navidrome` (santiagorod92/foo_navidrome —
-  listed on Navidrome's own client-apps page) on foobar2000 for any
-  *other* laptop that wants to reach the library remotely — same
-  Tailscale address/port, same account. Streams via a
-  `navidrome://track/<id>` scheme rather than raw URLs, so playlists
-  survive credential/server changes. (The hosting laptop's own
-  foobar2000 doesn't need this — it's just playing local files
-  directly.) `foo_opensubsonic` is the fallback if `foo_navidrome`
-  ever stalls — more general OpenSubsonic client, works against
-  non-Navidrome servers too, but rougher/more actively-changing.
-- [X] Spike: check whether `lib.m3u.write_m3u8()`'s existing `.m3u8`
-  output (relative paths, `#SPOTIFY:<id>` comment lines) imports into
-  Navidrome cleanly as-is, or needs adjustment.
-- [X] Investigated Symfonium's mobile playlist management (the "doesn't
-  seem I can add or manage Navidrome playlists from there" gap) — it
-  does support creating/editing/pushing playlists to Navidrome, but each
-  server-side playlist needs an explicit one-time **Import** before
-  Symfonium will edit + sync it, and sync itself is one-directional per
-  action (full upload or full download, not a merge). See
-  `WEB_APP_PLAN.md`'s new Symfonium section. Try the import step before
-  defaulting to `tapedeck` for heavily-edited playlists.
-- [ ] Decide whether `core/`'s workflows should hit Navidrome's own
-  scan-trigger API after a download/organize run, or whether its
-  built-in file-watcher's latency is fine as-is.
-  - [ ] built in is enough
-
-### Phase 2 (later) — dedicated hardware (the Raspberry Pi)
-
-- [ ] Blocked on the Pi's memory/storage upgrade.
-- [ ] Once upgraded: identify the correct ARM build (`cat /proc/cpuinfo`
-  on the Pi), install ffmpeg there too (Navidrome requires it locally),
-  migrate config/DB from the laptop instance (or just start fresh —
-  Navidrome's DB is a cache of tag scans, not a second source of truth).
-- [ ] Decide how the Pi reaches the crate: crate physically lives on
-  the memory-card volume today (see `README.md`'s environment
-  variables section) — confirm whether that means relocating the card,
-  or serving the crate over the network (SMB/NFS) to the Pi instead.
-- [ ] Re-point Tailscale to the Pi once it's the permanent host; retire
-  the laptop instance (or keep it as a fallback — undecided).
