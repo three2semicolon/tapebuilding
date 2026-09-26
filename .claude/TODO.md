@@ -66,33 +66,76 @@ script needed to confirm each hypothesis before touching code.
   - [ ] `organize cleanup`'s resplit mode (see the item below) is still
     needed to fix folders that were already wrongly merged *before*
     this fix landed — this only stops *new* bad merges.
-- [ ] **`organize cleanup` needs a resplit mode** to repair
+- [X] **`organize cleanup` needs a resplit mode** to repair
   already-wrongly-merged folders once the grouping-key fix above lands
-  — **implemented and smoke-tested as `plan_resplit()`/`run_resplit()`
-  in `cleanup.py`**, opt-in and separate from the regular `--apply`
-  pass (a normal `cleanup --apply` run can't undo the historical damage
-  on its own: an already-wrongly-merged folder now carries a
-  self-inflicted `'Various Artists'` albumartist tag that looks like a
-  genuine compilation signal to the forward-looking check, so resplit
-  recomputes each folder's grouping from the untouched raw `artist` tag
-  instead). Dry-run by default, `--apply` to actually move files,
-  matching every other command's convention; doesn't rebuild `beets.db`
-  or the crate catalog itself, prints a reminder to run
+  — **implemented, smoke-tested, and now wired up end-to-end.**
+  `plan_resplit()`/`run_resplit()` (opt-in and separate from the
+  regular `--apply` pass — a normal `cleanup --apply` run can't undo
+  the historical damage on its own: an already-wrongly-merged folder
+  now carries a self-inflicted `'Various Artists'` albumartist tag that
+  looks like a genuine compilation signal to the forward-looking check,
+  so resplit recomputes each folder's grouping from the untouched raw
+  `artist` tag instead) are wired to `organize cleanup --resplit` /
+  `--resplit --apply` on the CLI (`--resplit` + `--rebuild-db` errors
+  loudly rather than silently ignoring one, same convention as
+  `--all`+`--mine`). Dry-run by default, `--apply` to actually move
+  files, matching every other command's convention; doesn't rebuild
+  `beets.db` or the crate catalog itself, prints a reminder to run
   `cleanup --rebuild-db` + a playlists/tapedeck reindex afterward.
+  `README.md`'s `organize cleanup` section documents both usage lines.
   Verified against a real (temp-dir) filesystem: a poisoned
   `Various Artists - Automatic` folder splits into two singles and the
   old folder is removed; a genuine multi-track album with chained
   artist overlap (varying featured collaborators per track, like the
   real Ash Levi album) is correctly left untouched.
-  - [ ] **Blocked on `organize/cli.py`**: `run_resplit()` isn't wired to
-    a `--resplit` flag yet — that file hasn't been shared in this
-    thread, so the CLI-argument-parsing side of this is still open.
-    Upload it to close this out, then update `README.md`'s `organize`
-    usage section per `NEW_FEATURE_GUIDE.md` §5.5 (new user-facing
-    flag needs both docs updated, not just `PACKAGE_OVERVIEW.md`).
   - [ ] Regression test still owed (same gap as Bug 2's grouping-key
     fix above) — the filesystem smoke test used to verify this should
     become a real `tests/organize/test_cleanup.py` case.
+  - [ ] `PACKAGE_OVERVIEW.md`'s `organize/` section still needs updating
+    to describe the new `organize/cleanup/` and `organize/preimport/`
+    subpackage layout (see the split note below) and the `--resplit`
+    flag, per `NEW_FEATURE_GUIDE.md` §5.4 — not done yet.
+
+- [X] **Split `cleanup.py` and `preimport.py`** — both had grown past a
+  comfortable single-file size (~610 and ~400 lines) and were becoming
+  two different concerns stacked in one file each. Split into
+  subpackages, each new module landing in the ~150-270 line range,
+  along the seams the code already had rather than arbitrary cuts:
+  - `organize/cleanup/` — `common.py` (`resolve_crate()`, shared by the
+    other three), `grouping.py` (the forward-looking regroup pass:
+    `group_files()`/`build_plan()`/the VA-collision helpers),
+    `resplit_plan.py` (resplit's read-only planning half:
+    `plan_resplit()`), `resplit.py` (resplit's apply half:
+    `run_resplit()`), `apply.py` (the regular pass's apply half:
+    `run_cleanup()` + `prune_empty_dirs()`/`rebuild_db()`/
+    `config_path()`).
+  - `organize/preimport/` — `plan.py` (`index_existing_albums()`/
+    `build_plan()` + the naming/scanning helpers), `apply.py`
+    (`stage()`, `duplicates_dir()`, `prune_unorganized()`, the actual
+    moves/tag-writes).
+  - every previously-public name (`organize.cleanup.run_cleanup`,
+    `.run_resplit`, `.group_files`, etc.; `organize.preimport.stage`,
+    etc.) is re-exported from each package's `__init__.py` unchanged,
+    so `cli.py` and cross-imports between the two packages didn't need
+    any changes.
+  - verified by actually importing both packages (against stubbed
+    `lib.paths`/`lib.tags`/`lib.text`) and running `run_cleanup()`,
+    `run_resplit()`, and `stage()` end-to-end against fixture data,
+    including a real temp-dir filesystem pass for `run_resplit()` and
+    `index_existing_albums()` — not just an import smoke test, per
+    `NEW_FEATURE_GUIDE.md` §5's "actually run it" rule. One bug caught
+    this way and fixed: `config_path()` needed a second `dirname()`
+    call after moving one directory deeper (`config.yaml` sits in
+    `organize/`, `apply.py` now sits in `organize/cleanup/`).
+  - **repo change needed**: delete the old `organize/cleanup.py` and
+    `organize/preimport.py` files when dropping in the new
+    `organize/cleanup/` and `organize/preimport/` directories — a
+    stray flat file alongside the package directory would shadow it.
+  - regression tests for both packages still need writing/updating
+    against the new module paths (`tests/organize/test_cleanup.py`,
+    `tests/organize/test_preimport.py`), and `PACKAGE_OVERVIEW.md`
+    still needs its `organize/` section rewritten for the new layout
+    (see above).
 
 ---
 

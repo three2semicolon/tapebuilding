@@ -212,7 +212,7 @@ class TestStageReportShape:
 
         assert set(report.keys()) == {
             'scanned', 'staged_folders', 'merged_folders', 'merged_tracks',
-            'duplicates', 'tag_writes', 'singletons', 'ambiguous',
+            'split_groups', 'duplicates', 'tag_writes', 'singletons', 'ambiguous',
         }
 
     def test_missing_input_dir_returns_a_report_without_erroring(self, tmp_path):
@@ -220,6 +220,7 @@ class TestStageReportShape:
         assert report == {
             'staged_folders': [], 'merged_folders': [], 'merged_tracks': 0,
             'singletons': 0, 'tag_writes': 0, 'ambiguous': [], 'scanned': 0,
+            'split_groups': [],
         }
 
     def test_missing_input_dir_report_omits_duplicates_key_unlike_the_normal_path(self, tmp_path):

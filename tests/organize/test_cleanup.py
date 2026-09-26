@@ -65,7 +65,7 @@ class TestBuildPlanVariousArtists:
 
         files = scan_audio(str(crate))
         groups = group_files(files)
-        _, _, _, _, va_groups = build_plan(groups, str(crate))
+        _, _, _, _, va_groups, _ = build_plan(groups, str(crate))
 
         assert len(va_groups) == 1
         album, count, _src_folders = va_groups[0]
@@ -81,7 +81,7 @@ class TestBuildPlanVariousArtists:
 
         files = scan_audio(str(crate))
         groups = group_files(files)
-        _, _, _, _, va_groups = build_plan(groups, str(crate))
+        _, _, _, _, va_groups, _ = build_plan(groups, str(crate))
 
         assert va_groups == []
 
@@ -100,7 +100,7 @@ class TestBuildPlanTagWrites:
 
         files = scan_audio(str(crate))
         groups = group_files(files)
-        _, _, _, tag_writes, _ = build_plan(groups, str(crate))
+        _, _, _, tag_writes, _, _ = build_plan(groups, str(crate))
 
         assert len(tag_writes) == 1
         path, aa = tag_writes[0]
@@ -183,11 +183,17 @@ class TestResolveCrateRequiredNoFallback:
     rather than guess a directory."""
 
     def test_raises_when_no_crate_arg_and_archive_path_unresolved(self, monkeypatch):
-        import organize.cleanup as cleanup_module
+        # resolve_crate() moved into organize.cleanup.common when cleanup.py
+        # was split into a subpackage - patch resolve_path there, not on the
+        # organize.cleanup package itself. organize.cleanup only re-exports
+        # resolve_crate (see its __init__.py); setattr-ing "resolve_path" on
+        # the package module wouldn't touch the name resolve_crate() actually
+        # looks up, which lives in common.py's own module namespace.
+        import organize.cleanup.common as common_module
 
         def _raise(*a, **kw):
             raise ValueError("ARCHIVE_PATH is required")
-        monkeypatch.setattr(cleanup_module, "resolve_path", _raise)
+        monkeypatch.setattr(common_module, "resolve_path", _raise)
 
         with pytest.raises(ValueError):
             resolve_crate()
