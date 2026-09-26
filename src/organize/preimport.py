@@ -63,7 +63,7 @@ from lib.tags import (
     write_tag,
 )
 from lib.text import normalize_key
-from organize.cleanup import group_files, resolve_crate
+from organize.cleanup import group_files, is_unrelated_va_collision, resolve_crate
 
 
 def _first_audio(folder):
@@ -179,6 +179,7 @@ def build_plan(groups, unorganized, crate, idx):
         'staged_folders': [],
         'merged_folders': [],
         'merged_tracks': 0,
+        'split_groups': [],
         'duplicates': [],
         'tag_writes': 0,
         'singletons': 0,
@@ -193,6 +194,12 @@ def build_plan(groups, unorganized, crate, idx):
 
         aa = canonical_albumartist(members)
         album = dominant_album(members)
+
+        if is_unrelated_va_collision(aa, members):
+            report['singletons'] += len(members)
+            report['split_groups'].append((album, len(members)))
+            continue
+
         key = (normalize_key(aa), normalize_key(album))
         entry = idx.get(key) if idx else None
         # >=2 existing crate folders normalize to this (aa, album) -> idx flagged it
@@ -305,7 +312,8 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
     if not os.path.isdir(unorganized):
         print(f"input : {unorganized}  (not found - nothing to stage)")
         return {'staged_folders': [], 'merged_folders': [], 'merged_tracks': 0,
-                'singletons': 0, 'tag_writes': 0, 'ambiguous': [], 'scanned': 0}
+                'singletons': 0, 'tag_writes': 0, 'ambiguous': [], 'scanned': 0,
+                'split_groups': []}
 
     print(f"input : {unorganized}")
     print(f"crate : {crate}")
@@ -330,6 +338,7 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
     print(f"  merging -> existing crate albums: {len(report['merged_folders'])} folders "
           f"({report['merged_tracks']} files)")
     print(f"  singletons (left for pass 2)    : {report['singletons']}")
+    print(f"  split (false VA collision)      : {len(report['split_groups'])}")
     print(f"  duplicates (-> crate/duplicates/): {len(report['duplicates'])}")
     print(f"  albumartist tags to write       : {report['tag_writes']}")
     if idx:
@@ -345,6 +354,12 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
         print("\n  ambiguous merges (multiple existing folders match - staged as new):")
         for _aa, album in report['ambiguous'][:25]:
             print(f"    {album!r}")
+
+    if report['split_groups']:
+        print("\n  split apart (Bug 2 - same-titled but unrelated singles, left as"
+              " singletons instead of staged/merged as 'Various Artists'):")
+        for album, n in sorted(report['split_groups'], key=lambda x: -x[1])[:25]:
+            print(f"    {n:>4} files  {album!r}")
 
     if verbose:
         if staged_moves:

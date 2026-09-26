@@ -17,7 +17,7 @@ import click
 from dotenv import load_dotenv
 
 from lib.paths import archive_path
-from organize.cleanup import resolve_crate, run_cleanup
+from organize.cleanup import resolve_crate, run_cleanup, run_resplit
 from organize.preimport import stage
 from organize.beets_import import run_import, export_library_csv
 
@@ -38,12 +38,26 @@ def organize():
 @click.option('--no-tag-write', is_flag=True, help='with --apply: do not rewrite albumartist tags.')
 @click.option('--rebuild-db', 'rebuild_db_flag', is_flag=True,
               help='with --apply: rebuild beets.db from the reorganized crate.')
+@click.option('--resplit', is_flag=True,
+              help='repair already-wrongly-merged album folders (predates the Bug 2 '
+                   'grouping-key fix) instead of running the regular regroup pass. '
+                   'dry-run unless combined with --apply. ignores --rebuild-db (run '
+                   '`organize cleanup --rebuild-db` separately afterward).')
 @click.option('--verbose', is_flag=True, help='print every planned move.')
-def cleanup_cmd(crate, apply, no_tag_write, rebuild_db_flag, verbose):
+def cleanup_cmd(crate, apply, no_tag_write, rebuild_db_flag, resplit, verbose):
     """reorganize the beets crate into proper albums and singles."""
     try:
-        run_cleanup(crate=crate, apply=apply, no_tag_write=no_tag_write,
-                    rebuild_db_flag=rebuild_db_flag, verbose=verbose)
+        if resplit:
+            if rebuild_db_flag:
+                click.echo("error: --rebuild-db has no effect with --resplit - "
+                            "run `organize cleanup --rebuild-db` separately afterward.",
+                            err=True)
+                sys.exit(1)
+            run_resplit(crate=crate, apply=apply, no_tag_write=no_tag_write,
+                        verbose=verbose)
+        else:
+            run_cleanup(crate=crate, apply=apply, no_tag_write=no_tag_write,
+                        rebuild_db_flag=rebuild_db_flag, verbose=verbose)
     except Exception as e:
         click.echo(f"error: {e}", err=True)
         sys.exit(1)

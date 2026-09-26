@@ -249,11 +249,28 @@ organize cleanup --apply                # move files + write albumartist tags
 organize cleanup --apply --rebuild-db   # ...then rebuild beets.db from the reorganized crate
 organize cleanup --verbose              # print every planned move
 organize cleanup --crate /path/to/crate
+organize cleanup --resplit              # dry-run: find already-wrongly-merged album
+                                         # folders (predates the Bug 2 fix below) and
+                                         # show how they'd split apart
+organize cleanup --resplit --apply      # actually split them + write fresh tags
 ```
 
 idempotent - re-running on an already-clean crate is a no-op. flags
 plausible wrong-merges (unusually large album groups) and VA-filed albums
 in the dry-run summary for manual review.
+
+`--resplit` is a separate, opt-in repair pass for album folders that were
+already wrongly merged *before* the grouping-key fix landed (unrelated
+same-titled singles filed together as `Various Artists`, e.g. two
+different artists' "Automatic" singles). The regular `--apply` pass only
+stops *new* bad merges - a folder that's already merged now carries a
+self-inflicted `Various Artists` albumartist tag that looks like a
+genuine compilation to the forward-looking check, so `--resplit`
+recomputes each folder's grouping from the raw per-track `artist` tag
+instead. Dry-run by default, same `--apply` convention as the rest of
+the repo; doesn't rebuild `beets.db` or the crate catalog itself (and
+can't be combined with `--rebuild-db` - run `organize cleanup
+--rebuild-db` plus a playlists/tapedeck reindex afterward).
 
 the `normalize_artists` beets plugin rewrites artist strings to a
 consistent `"A, B & C"` form at import (handles `feat.`/`ft.`, collab `x`,

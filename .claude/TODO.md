@@ -42,23 +42,57 @@ script needed to confirm each hypothesis before touching code.
     updated to describe `_is_stale()`/`_newest_mtime()` auto-invalidation,
     the fail-safe direction in each case, and the Bug 1 fix it closes,
     per `NEW_FEATURE_GUIDE.md` §5.4.
-- [ ] **Unrelated same-titled singles by different artists merged into
+- [X] **Unrelated same-titled singles by different artists merged into
   one album folder** (e.g. two different artists' singles both titled
-  "Automatic" ending up in one `Automatic/` folder) — **confirmed
-  against the real source**, not just a hypothesis anymore.
-  `organize.cleanup.group_files()` (shared by `organize.preimport.stage()`)
-  keys purely on `normalize_key(album)`, no artist component at all, so
-  two singles sharing a title collide; `lib.tags.canonical_albumartist()`
-  then resolves the tie via a `>= 50%` threshold that a straight 1-vs-1
-  split satisfies, silently picking whichever artist happened to be
-  first. See `BUGFIX_PLAN.md` §Bug 2 for the exact fix.
+  "Automatic" ending up in one `Automatic/` folder) — **fixed and
+  smoke-tested**. `organize.cleanup.group_files()` still buckets by
+  album title first, but `build_plan()` (both `cleanup.py`'s and
+  `preimport.py`'s) now calls the new `is_unrelated_va_collision()`
+  right after `canonical_albumartist()` resolves a group: an exactly-
+  two-track group that only came out `'Various Artists'` because the
+  two members share zero artist tokens, and neither file's own
+  `albumartist` tag actually says VA, gets filed as two singletons
+  instead of merged. Verified against a standalone stub-module script
+  (same pattern `BUGFIX_PLAN.md`'s Bug 1 fix used) with three cases: the
+  real `Anysia Kym`/`Spencer.` "Automatic" collision (now splits), a
+  genuine shared-artist-token album (still merges), and an explicitly
+  VA-tagged compilation (still merges) — all three pass. See
+  `BUGFIX_PLAN.md` §Bug 2.
+  - [ ] Regression test still owed: the standalone script above needs
+    turning into a real `tests/organize/test_cleanup.py` /
+    `test_preimport.py` case per `NEW_FEATURE_GUIDE.md` §5.2/5.3 — same
+    "still needs wiring into the actual suite" gap Bug 1's fix had
+    before it was closed out.
+  - [ ] `organize cleanup`'s resplit mode (see the item below) is still
+    needed to fix folders that were already wrongly merged *before*
+    this fix landed — this only stops *new* bad merges.
 - [ ] **`organize cleanup` needs a resplit mode** to repair
   already-wrongly-merged folders once the grouping-key fix above lands
-  — `--resplit` (or a new flag under `--apply`, TBD), dry-run by
-  default, `--apply` to actually move files + rebuild the db. Explicitly
-  scoped to regrouping + tag-driven renames, not a general "fix all
-  formatting" pass — see `BUGFIX_PLAN.md`'s cleanup/rebuild section for
-  why that scope line matters.
+  — **implemented and smoke-tested as `plan_resplit()`/`run_resplit()`
+  in `cleanup.py`**, opt-in and separate from the regular `--apply`
+  pass (a normal `cleanup --apply` run can't undo the historical damage
+  on its own: an already-wrongly-merged folder now carries a
+  self-inflicted `'Various Artists'` albumartist tag that looks like a
+  genuine compilation signal to the forward-looking check, so resplit
+  recomputes each folder's grouping from the untouched raw `artist` tag
+  instead). Dry-run by default, `--apply` to actually move files,
+  matching every other command's convention; doesn't rebuild `beets.db`
+  or the crate catalog itself, prints a reminder to run
+  `cleanup --rebuild-db` + a playlists/tapedeck reindex afterward.
+  Verified against a real (temp-dir) filesystem: a poisoned
+  `Various Artists - Automatic` folder splits into two singles and the
+  old folder is removed; a genuine multi-track album with chained
+  artist overlap (varying featured collaborators per track, like the
+  real Ash Levi album) is correctly left untouched.
+  - [ ] **Blocked on `organize/cli.py`**: `run_resplit()` isn't wired to
+    a `--resplit` flag yet — that file hasn't been shared in this
+    thread, so the CLI-argument-parsing side of this is still open.
+    Upload it to close this out, then update `README.md`'s `organize`
+    usage section per `NEW_FEATURE_GUIDE.md` §5.5 (new user-facing
+    flag needs both docs updated, not just `PACKAGE_OVERVIEW.md`).
+  - [ ] Regression test still owed (same gap as Bug 2's grouping-key
+    fix above) — the filesystem smoke test used to verify this should
+    become a real `tests/organize/test_cleanup.py` case.
 
 ---
 

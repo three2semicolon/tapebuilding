@@ -341,6 +341,58 @@ tags, independent of beets/beets.db.
   MusicBrainz) reimport. Flags plausible wrong-merges (unusually large
   album groups) and VA-filed albums in the dry-run summary.
 - Idempotent.
+- **Fixes Bug 2** (`BUGFIX_PLAN.md`): grouping is now artist-aware, not
+  just album-title-based. `build_plan()` calls the new
+  `is_unrelated_va_collision(aa, members)` right after computing
+  `canonical_albumartist()` — true only when that call resolved to
+  `'Various Artists'` by fallback (no majority/dominant collaborator),
+  no member's own `albumartist` tag actually says Various Artists/VA
+  (checked via `_is_explicit_va()`), and the group is exactly two
+  tracks whose artist tokens (`shares_artist_token()`, unioning
+  `artist`+`albumartist` per file, split/normalized via
+  `lib.text.split_artists`/`normalize_key`) share nothing in common.
+  That combination — e.g. `Anysia Kym - Automatic` and `Spencer. -
+  Automatic`, two unrelated singles that happen to share a title — is
+  now filed as two singletons instead of merged into one `Various
+  Artists - Automatic` folder. Deliberately scoped to exactly two
+  members: a 3+ track group with no full overlap still falls through
+  to the existing ambiguous-VA flagging (now reported separately from
+  the new `split_groups` count) rather than being auto-split, since
+  that broader case hasn't been confirmed as the same pattern. A
+  genuine collab album (any shared artist token) or an explicitly
+  VA-tagged compilation still merges exactly as before.
+  `organize.preimport.stage()`'s `build_plan()` imports and applies the
+  same `is_unrelated_va_collision()` check (before its existing-folder
+  merge lookup, so a confirmed collision can't merge into an unrelated
+  real VA folder either) — one shared decision, not a second copy.
+- **Resplit mode (Bug 2's other half)**: `plan_resplit(crate)` /
+  `run_resplit(crate=None, apply=False, no_tag_write=False, verbose=False)`
+  — opt-in repair for album folders that were already wrongly merged
+  *before* the grouping-key fix above landed. The forward-looking
+  `is_unrelated_va_collision()` check can't undo those on a normal
+  `cleanup --apply` run: a folder merged by the old bug now carries a
+  self-inflicted `'Various Artists'` albumartist tag on disk, which
+  looks exactly like a genuine compilation signal. `plan_resplit()`
+  instead walks every folder under `<crate>/albums`, reads each
+  member's tags fresh (`_scan_folder()`), and partitions them by raw
+  `artist`-tag token overlap only — never `albumartist` — via
+  `_artist_components()` (a union-find over `_raw_artist_tokens()`,
+  transitive: a real album with varying featured collaborators per
+  track still resolves to one component). A folder that splits into
+  ≥2 components gets each piece named and placed by `run_resplit()`
+  (`_name_album_component()` reuses `canonical_albumartist()`/
+  `dominant_album()` scoped to just that piece; a single-member piece
+  goes to `singles/`). Dry-run by default; `--apply` moves files and
+  writes fresh albumartist tags per piece, then reminds the caller that
+  `beets.db`/the crate catalog/local playlists still need
+  `cleanup --rebuild-db` + a reindex/rescrape afterward — resplit itself
+  doesn't touch any of those. Verified against a real temp-dir
+  filesystem (not just import-checked): a poisoned
+  `Various Artists - Automatic` folder correctly splits into two
+  singles; a genuine multi-track album with chained artist overlap is
+  left untouched. **Not yet wired to a CLI flag** — `organize/cli.py`
+  hasn't been shared in this thread, so `--resplit` doesn't exist as an
+  invokable command yet; see `TODO.md`.
 
 ### `preimport.py`
 Runs the same regrouping logic **before** beets ever sees the drop.
@@ -354,9 +406,11 @@ Runs the same regrouping logic **before** beets ever sees the drop.
 - Returns a `report` dict (`staged_folders`, `merged_folders`,
   `merged_tracks`, `duplicates`, `ambiguous`, `singletons`, `tag_writes`)
   that `beets_import.py` consumes.
-- Only `group_files`/`resolve_crate` still come from `organize.cleanup`
-  (deliberately organize-specific policy); everything else imports
-  directly from `lib.tags`/`lib.text`.
+- Only `group_files`/`resolve_crate`/`is_unrelated_va_collision` still
+  come from `organize.cleanup` (deliberately organize-specific policy,
+  shared with `cleanup.py`'s own regroup-in-place pass rather than
+  duplicated); everything else imports directly from `lib.tags`/
+  `lib.text`.
 
 ### `beets_import.py`
 Two-pass beets importer: pass 1 groups multi-track albums and matches
