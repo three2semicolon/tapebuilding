@@ -50,6 +50,15 @@ tapes/bootlegs that won't match MusicBrainz anyway, so matching is by name:
 progressively relaxed tiers, first hit wins, each tier guarded tightly
 enough that relaxing doesn't start cross-matching unrelated tracks.
 
+**Album-name normalization (added after the correction above):** tiers 3
+and 6b are the only tiers that compare album strings at all (tiers 1/2/4/5
+are title+artist-only). Both now key/compare on lib.text.normalize_album()
+rather than plain normalize_key(), so a spotify row's "Album" matches a
+local file tagged "Album (Deluxe)"/"Album (2009 Remaster)"/"Album (25th
+Anniversary Edition)" without the literal strings needing to agree -
+edition suffixes are stripped conservatively (delimited clauses only, see
+lib.text's docstring) before the comparison, never mid-title.
+
 catalog entries are lib.tags.read_tags() dicts: {path, artist, albumartist,
 album, title, track, length}.
 """
@@ -57,7 +66,7 @@ album, title, track, length}.
 import collections
 import difflib
 
-from lib.text import normalize_key, primary_artist, split_artists, strip_feat_clause
+from lib.text import normalize_album, normalize_key, primary_artist, split_artists, strip_feat_clause
 
 FUZZY_RATIO_THRESHOLD = 0.92
 FUZZY_PREFIX_LEN = 4
@@ -242,7 +251,10 @@ class MatchIndex:
             if raw_key:
                 self.by_raw_title[raw_key].append(entry)
 
-            album_key = normalize_key(entry.get('album') or '')
+            # normalize_album() (not normalize_key()) so an edition variant
+            # ("Album (Deluxe)") indexes under the same identity as the
+            # plain release - see lib.text's docstring.
+            album_key = normalize_album(entry.get('album') or '')
             track = entry.get('track') or 0
             if album_key and track:
                 self.by_album_track[(album_key, track)].append(entry)
@@ -272,10 +284,13 @@ class MatchIndex:
         return _pick_best(self.by_title.get(title_key, []), pred, want_dur, _TOLERANCE[2])
 
     def _tier3(self, row, title_key, want_dur):
-        row_album_key = normalize_key(_row_album(row))
+        # normalize_album() so a spotify "Album" row still matches a local
+        # file tagged "Album (Deluxe)"/"Album (2009 Remaster)" here instead
+        # of falling through to the weaker fuzzy tier.
+        row_album_key = normalize_album(_row_album(row))
         if not row_album_key:
             return None
-        pred = lambda entry: normalize_key(entry.get('album') or '') == row_album_key
+        pred = lambda entry: normalize_album(entry.get('album') or '') == row_album_key
         return _pick_best(self.by_title.get(title_key, []), pred, want_dur, _TOLERANCE[3])
 
     def _tier4(self, row, title_key, want_dur):
@@ -324,7 +339,10 @@ class MatchIndex:
         if title_key:
             return None
         row_raw = _raw_key(_row_title(row))
-        row_album_key = normalize_key(_row_album(row))
+        # normalize_album() so the by_album_track lookup below stays
+        # consistent with how MatchIndex._build() indexed it, and so the
+        # anchor check doesn't reject an edition-suffixed local album tag.
+        row_album_key = normalize_album(_row_album(row))
         row_artists = _row_artist_set(row)
         row_primary = _row_primary(row)
 
@@ -332,7 +350,7 @@ class MatchIndex:
             if row_artists and (row_artists & _entry_artist_set(entry)
                                  or (row_primary and row_primary == _entry_primary(entry))):
                 return True
-            if row_album_key and normalize_key(entry.get('album') or '') == row_album_key:
+            if row_album_key and normalize_album(entry.get('album') or '') == row_album_key:
                 return True
             return False
 

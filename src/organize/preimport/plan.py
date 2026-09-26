@@ -15,7 +15,7 @@ files with no album tag are singletons - left untouched for the singles pass.
 import os
 
 from lib.tags import EXTENSIONS, canonical_albumartist, dominant_album, read_tags, sanitize
-from lib.text import normalize_key
+from lib.text import normalize_album, normalize_key
 from organize.cleanup import is_unrelated_va_collision
 
 
@@ -36,7 +36,13 @@ def index_existing_albums(crate):
     an album name collision across multiple folders marks the key None
     (ambiguous) so stage() refuses to merge against it - staging a new folder is
     always safer than risking a wrong merge of two different real albums that
-    happen to share a normalized name."""
+    happen to share a normalized name.
+
+    the album half of the key uses lib.text.normalize_album() (edition
+    suffix stripped) rather than plain normalize_key(), so an incoming
+    "Album (Deluxe)" group in build_plan() below resolves to the same key
+    as an existing crate folder for the plain "Album" release and merges
+    into it instead of staging a sibling folder."""
     root = os.path.join(crate, 'albums')
     if not os.path.isdir(root):
         return {}
@@ -54,7 +60,7 @@ def index_existing_albums(crate):
         albumartist, album = tags['albumartist'], tags['album']
         if not album:
             continue
-        key = (normalize_key(albumartist), normalize_key(album))
+        key = (normalize_key(albumartist), normalize_album(album))
         if key in idx:
             idx[key] = None  # ambiguous: >=2 existing folders match -> never merge
         else:
@@ -145,7 +151,10 @@ def build_plan(groups, unorganized, crate, idx):
             report['split_groups'].append((album, len(members)))
             continue
 
-        key = (normalize_key(aa), normalize_key(album))
+        # normalize_album() (not normalize_key()) so this group looks up
+        # the same key index_existing_albums() built above, whether or
+        # not this incoming batch's album tag carries an edition suffix.
+        key = (normalize_key(aa), normalize_album(album))
         entry = idx.get(key) if idx else None
         # >=2 existing crate folders normalize to this (aa, album) -> idx flagged it
         # None -> can't safely merge; stage (if multi-track) or leave as singleton,

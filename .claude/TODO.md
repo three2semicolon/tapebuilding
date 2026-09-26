@@ -7,9 +7,13 @@ unscheduled work, not a checklist to execute in order.
 
 **Current status note:** Bug 1's implementation and regression coverage are
 complete. Bug 2's forward fix and resplit implementation are present and
-smoke-tested, but the real organize regression tests are still outstanding,
-and the current resplit source has a missing `sanitize` import that must be
-fixed before the resplit command is considered complete.
+smoke-tested; the missing `sanitize` import in `resplit.py` flagged below is
+now fixed (confirmed against the current source), and a real resplit run
+against the live crate has cleaned up the pre-existing wrong merges — the
+real organize regression tests are still the outstanding piece there. Album-
+name normalization (merge-on-ingest half) is now implemented — see that
+section below. What's left across both is genuinely unscheduled work, not a
+checklist to execute in order.
 
 ---
 
@@ -99,10 +103,11 @@ script needed to confirm each hypothesis before touching code.
   - [ ] Regression test still owed (same gap as Bug 2's grouping-key
     fix above) — the filesystem smoke test used to verify this should
     become a real `tests/organize/test_cleanup.py` case.
-  - [ ] **Current resplit runtime bug:** `resplit.py` calls `sanitize()`
-    when constructing destination names but does not import it from
-    `lib.tags`. Add `sanitize` to that import before treating resplit
-    as production-ready.
+  - [X] **Resplit runtime bug, fixed:** `resplit.py` calls `sanitize()`
+    when constructing destination names — confirmed the current source
+    imports it (`from lib.tags import safe_move, write_tag, sanitize`).
+    A real resplit run against the live crate has since cleaned up the
+    pre-existing wrong merges.
   - [ ] **Resplit destination collision:** `_name_album_component()`
     currently turns an already-existing canonical destination into
     `Name (2)`, `Name (3)`, etc. This can create duplicate album folders
@@ -196,28 +201,68 @@ only so the "documented as done ≠ actually done" lesson stays visible.
 
 ## Album-name normalization / edition collapsing
 
-- [ ] Add a shared album-name normalization layer for matching, grouping,
-  folder naming, and (optionally/apply-time) metadata cleanup. The goal is
-  for edition suffixes such as `(Deluxe)`, `(Deluxe Edition)`,
-  `(25th Anniversary Edition)`, `(Remastered)`, and similar release-label
-  suffixes to resolve to the same canonical album identity.
-- [ ] Use the normalized album identity in playlist/crate matching so a
-  playlist album `ABC` matches local `ABC (Remastered)`, and vice versa,
-  without requiring the literal album strings to be identical.
-- [ ] Use the same normalized album identity for organize grouping and
-  resplit destination naming, so edition-only differences do not create
-  separate album groups/folders.
-- [ ] Add an explicit metadata/folder-cleanup path that can write the
-  canonical album name back to tags and rename folders, rather than
-  changing metadata implicitly during ordinary matching. Preserve the
-  original album string where appropriate unless this cleanup is applied.
-- [ ] Define the suffix allowlist conservatively and test repeated/common
-  forms (e.g. `Deluxe`, `Deluxe Edition`, `Remastered`, `Remaster`,
-  anniversary editions, and year-based remasters) without stripping
-  meaningful album titles that merely contain parentheses.
-- [ ] Add regression tests covering matching, grouping, folder naming,
-  metadata normalization, and interaction with resplit/existing-folder
-  collisions.
+- [X] **Shared album-name normalization layer for matching + grouping —
+  implemented and smoke-tested.** `lib/text.py` gained
+  `strip_edition_suffix(s)`/`normalize_album(s)`: a conservative,
+  delimiter-anchored suffix stripper (parens/brackets, or a trailing
+  dash/colon clause only — never bare mid-title) covering `(Deluxe)`,
+  `(Deluxe Edition)`, `(25th Anniversary Edition)`, `(Remastered)`,
+  `(Remaster)`, year-based remasters (`(2009 Remaster)`/`(Remastered
+  2009)`), and stacked suffixes (`(Deluxe) (2011 Remaster)`). A
+  parenthetical that doesn't match the keyword pattern — `(Ohia)`,
+  `(Original Soundtrack)` — is left untouched by design.
+  - [X] Wired into `lib.catalog.matcher`'s tiers 3 and 6b (the only two
+    tiers that compare album at all — tiers 1/2/4/5 are title+artist-only
+    and untouched). A Spotify row's `Album` now matches a local file
+    tagged `Album (Deluxe)`/`Album (2009 Remaster)`.
+  - [X] Wired into `organize.cleanup.grouping.group_files()`'s grouping
+    key, so a track tagged `Album` and one tagged `Album (Deluxe)` land in
+    the same group instead of forking — **merge-on-ingest**, the option
+    chosen over a separate opt-in cleanup pass for now.
+  - [X] Wired into `organize.preimport.plan.index_existing_albums()`/
+    `build_plan()`'s merge-target key, so a freshly-downloaded edition
+    variant merges straight into the existing plain-album crate folder
+    instead of staging a sibling folder for resplit to untangle later.
+  - [X] Verified against real fixtures, not just diffed: tier 3/6b
+    isolation tests (title+album match with disjoint artists, and a
+    symbol-only title anchored by `(album, track)` position), plus a
+    `group_files()`/`build_plan()` fixture confirming two edition-variant
+    tracks land in one destination folder, and an
+    `index_existing_albums()`/`build_plan()` fixture confirming an
+    incoming `Title (Deluxe)` track merges into an existing `Title`
+    crate folder with zero staged (sibling) folders.
+  - [X] `PACKAGE_OVERVIEW.md` updated: `lib/text.py`,
+    `lib.catalog.matcher`, `organize/cleanup/grouping.py`,
+    `organize/preimport/plan.py` sections, plus the cross-cutting
+    consolidated-primitives note.
+
+- [ ] **Not done — resplit destination naming.**
+  `resplit_plan.py`'s `_name_album_component()` still names/disambiguates
+  purely by raw `canonical_albumartist()`/`dominant_album()` strings +
+  `(2)`/`(3)` suffixing; it doesn't consult `normalize_album()` to detect
+  that a resplit piece is actually an edition variant of an existing
+  crate folder. Low priority now that merge-on-ingest should prevent most
+  *new* edition forks from reaching resplit in the first place, but a
+  pre-existing edition-variant fork already on disk would still resplit
+  into a numbered sibling rather than merging. Same underlying issue as
+  the pre-existing "resplit destination collision" item below — worth
+  fixing both together if either comes up again.
+- [ ] **Not done — explicit metadata/folder-cleanup path.** No command
+  writes a canonical album string back to tags or renames an
+  already-existing folder pair (e.g. an old `Album` and `Album
+  (Deluxe)` folder that both predate this fix, sitting as two separate
+  folders today). Merge-on-ingest only affects new imports going
+  forward. If this is wanted, it's a new opt-in `organize cleanup` flag
+  (dry-run by default, same convention as everything else) — deliberately
+  deferred rather than bundled in, per `NEW_FEATURE_GUIDE.md`'s "decide
+  what 'everything' means before building it."
+- [ ] Regression tests still owed as real `tests/` cases (the fixtures
+  used to verify the above were standalone scripts against a temp
+  package tree, same "still needs wiring into the actual suite" gap as
+  Bug 2's fix had before it was closed out): `tests/lib/test_text.py` for
+  `strip_edition_suffix`/`normalize_album`, a matcher fixture test for
+  tier 3/6b, and `tests/organize/test_cleanup.py`/`test_preimport.py`
+  cases for the grouping-key changes.
 
 ## Enhancements
 

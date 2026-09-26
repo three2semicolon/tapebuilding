@@ -26,6 +26,25 @@ problems, and collapsing them into one "normalize" would change behavior:
                            won't collide on this alone, since it isn't a
                            lookup key by itself.
 
+  strip_edition_suffix(s) - same conservative shape as strip_feat_clause,
+                           but for albums: removes only a trailing,
+                           delimited edition/remaster/anniversary clause
+                           ("(Deluxe)", "(Deluxe Edition)", "[Remastered]",
+                           " - 2009 Remaster", "(25th Anniversary
+                           Edition)"). A parenthetical that doesn't match
+                           the edition-keyword pattern - "(Ohia)", "(Original
+                           Soundtrack)" - is left untouched. normalize_album()
+                           feeds this through normalize_key() for an actual
+                           lookup/grouping key, same relationship
+                           strip_feat_clause() has to normalize_key(). Used
+                           by lib.catalog.matcher's album-keyed tiers (3,
+                           6b) and by organize's grouping keys (both
+                           organize.cleanup.grouping.group_files() and
+                           organize.preimport.plan's merge-target index) so
+                           an edition variant of an album merges/matches
+                           against the plain release instead of forking
+                           into a separate group.
+
 split_artists() / primary_artist() are the shared artist-credit splitter
 used by both the spotify dedup pass and the crate matcher.
 """
@@ -45,6 +64,28 @@ _FEAT_PAREN_RE = re.compile(
 
 _ARTIST_SPLIT_RE = re.compile(
     r'\s*(?:,|&|/| x | vs | feat\.?|ft\.?|featuring)\s*', re.IGNORECASE
+)
+
+# conservative edition/remaster/anniversary suffix - only matched when
+# delimited (parens/brackets, or a trailing dash/colon clause), never bare
+# in the middle of a title, so a real album that happens to contain a
+# parenthetical ("Songs (Ohia)", "The Wall (Original Soundtrack)") is never
+# touched. See strip_edition_suffix()'s docstring for the intended cases.
+_EDITION_INNER = (
+    r"(?:\d{4}\s+)?"                                   # optional leading year, "2009 Remaster"
+    r"(?:\d+(?:st|nd|rd|th)\s+)?"                       # optional ordinal, "25th Anniversary"
+    r"(?:super\s+)?"
+    r"(?:deluxe|remaster(?:ed)?|anniversary|expanded|"
+    r"special|collector'?s?|platinum|extended|bonus\s+tracks?)"
+    r"(?:\s+(?:edition|version|remaster(?:ed)?|anniversary))*"
+    r"(?:\s+\d{4})?"                                    # optional trailing year, "Remastered 2009"
+)
+
+_EDITION_BRACKET_RE = re.compile(
+    r'\s*[\(\[]\s*' + _EDITION_INNER + r'\s*[\)\]]\s*$', re.IGNORECASE
+)
+_EDITION_DASH_RE = re.compile(
+    r'\s*[-\u2013\u2014:]\s*' + _EDITION_INNER + r'\s*$', re.IGNORECASE
 )
 
 
@@ -88,6 +129,35 @@ def primary_artist(s):
     """first credited artist from a split_artists() result."""
     parts = split_artists(s)
     return parts[0] if parts else ''
+
+
+def strip_edition_suffix(s):
+    """remove only a trailing, delimited edition/remaster/anniversary
+    clause - "(Deluxe)", "(Deluxe Edition)", "[Remastered]", " - 2009
+    Remaster", "(25th Anniversary Edition)" - leaving everything else
+    intact. Conservative like strip_feat_clause(): a parenthetical that
+    doesn't match the edition-keyword pattern ("(Ohia)", "(Original
+    Soundtrack)") is never touched. Stacked suffixes ("Title (Deluxe)
+    (2011 Remaster)") are stripped iteratively."""
+    if not s:
+        return ''
+    s = str(s)
+    prev = None
+    while prev != s:
+        prev = s
+        s = _EDITION_BRACKET_RE.sub('', s)
+        s = _EDITION_DASH_RE.sub('', s)
+        s = s.rstrip()
+    return s
+
+
+def normalize_album(s):
+    """canonical album identity for matching/grouping: strip a trailing
+    edition/remaster/anniversary clause, then normalize_key(). Feeds
+    lib.catalog.matcher's album-keyed tiers and organize's grouping keys
+    so "Title" and "Title (Deluxe)"/"Title (2009 Remaster)" resolve to
+    the same identity without requiring the literal strings to match."""
+    return normalize_key(strip_edition_suffix(s))
 
 
 def _run_sanity_checks():
@@ -142,6 +212,28 @@ def _run_sanity_checks():
     # _split_artists, ported as-is. flagging this explicitly since it's an
     # easy assumption to get backwards.
     assert split_artists('A and B') == ['A and B']
+
+    # strip_edition_suffix / normalize_album: conservative edition stripping,
+    # delimiter-anchored (parens/brackets/dash) so it never fires bare
+    # mid-title
+    assert strip_edition_suffix('Title (Deluxe)') == 'Title'
+    assert strip_edition_suffix('Title (Deluxe Edition)') == 'Title'
+    assert strip_edition_suffix('Title (25th Anniversary Edition)') == 'Title'
+    assert strip_edition_suffix('Title (Remastered)') == 'Title'
+    assert strip_edition_suffix('Title (Remaster)') == 'Title'
+    assert strip_edition_suffix('Title (2009 Remaster)') == 'Title'
+    assert strip_edition_suffix('Title (Remastered 2009)') == 'Title'
+    assert strip_edition_suffix('Title - Remastered') == 'Title'
+    assert strip_edition_suffix('Title [Deluxe]') == 'Title'
+    assert strip_edition_suffix('Title (Deluxe) (2011 Remaster)') == 'Title'
+    # doesn't touch parens that aren't an edition clause
+    assert strip_edition_suffix('Songs (Ohia)') == 'Songs (Ohia)'
+    assert strip_edition_suffix('The Wall (Original Soundtrack)') == 'The Wall (Original Soundtrack)'
+    assert strip_edition_suffix('Title') == 'Title'
+    assert strip_edition_suffix('') == ''
+    # feeding it through normalize_key() is the actual intended use
+    assert normalize_album('Title (Deluxe Edition)') == normalize_album('Title')
+    assert normalize_album('Title (Ohia)') != normalize_album('Title')
 
     # symbol-only titles: normalize_key/normalize_title reduce to '', not an
     # error - callers (see lib.catalog.matcher tier 6) rely on this to

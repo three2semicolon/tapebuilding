@@ -30,7 +30,7 @@ import collections
 import os
 
 from lib.tags import canonical_albumartist, dominant_album, sanitize
-from lib.text import normalize_key, split_artists
+from lib.text import normalize_album, normalize_key, split_artists
 
 
 def _artist_tokens(f):
@@ -94,12 +94,21 @@ def is_unrelated_va_collision(aa, members):
 
 
 def group_files(files):
-    """group by normalised album (empty album -> its own single-element bucket so
-    it stays a singleton). returns {group_key: [file, ...]} preserving order."""
+    """group by normalised album identity (empty album -> its own
+    single-element bucket so it stays a singleton). Uses
+    lib.text.normalize_album() rather than plain normalize_key() so a
+    track tagged "Album" and one tagged "Album (Deluxe)"/"Album (2009
+    Remaster)" land in the same group instead of forking into two -
+    canonical_albumartist()/dominant_album() then pick the folder
+    name/tag from whichever raw string is more common across the merged
+    group, same majority-vote behavior as any other tag disagreement (no
+    new canonical string is invented here - see TODO.md's separate
+    apply-time-cleanup item for that). returns {group_key: [file, ...]}
+    preserving order."""
     groups = collections.OrderedDict()
     for i, f in enumerate(files):
         if f['album']:
-            key = ('album', normalize_key(f['album']))
+            key = ('album', normalize_album(f['album']))
         else:
             key = ('single', i)  # unique per file - never merge missing-album files
         groups.setdefault(key, []).append(f)

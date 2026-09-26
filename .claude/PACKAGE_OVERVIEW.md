@@ -80,6 +80,28 @@ pre-refactor copies.
   from `organize/normalize_artists.py`'s beets plugin, which does handle
   `and`, and that inconsistency is intentional (separate subsystem,
   pinned down with an assertion so it doesn't get "fixed" later).
+- `strip_edition_suffix(s)` / `normalize_album(s)` — **new**: album-name
+  normalization for matching/grouping (closes the `TODO.md` "album-name
+  normalization / edition collapsing" item, merge-on-ingest half).
+  `strip_edition_suffix()` removes only a trailing, *delimited* edition/
+  remaster/anniversary clause — `(Deluxe)`, `(Deluxe Edition)`,
+  `[Remastered]`, `(2009 Remaster)`, `(Remastered 2009)`, `(25th
+  Anniversary Edition)`, a trailing `` - Remastered``/`` : Remastered``
+  dash/colon clause — conservative like `strip_feat_clause()`: a
+  parenthetical that doesn't match the edition-keyword pattern (`(Ohia)`,
+  `(Original Soundtrack)`) is never touched, since it's anchored to the
+  end of the string and requires a delimiter, never firing bare
+  mid-title. `normalize_album(s)` feeds the result through
+  `normalize_key()` for an actual lookup/grouping key. Consumed by
+  `lib.catalog.matcher`'s tiers 3/6b (the only two tiers that compare
+  album strings at all) and by `organize`'s two grouping keys
+  (`organize.cleanup.grouping.group_files()`,
+  `organize.preimport.plan.index_existing_albums()`/`build_plan()`), so
+  an edition variant of an album matches/merges against the plain
+  release instead of forking into a separate group. Deliberately does
+  **not** write any canonical string back to tags or rename existing
+  folders — see "Cross-cutting notes" below for what's still open on
+  that half.
 
 ### `lib/tags.py`
 - `EXTENSIONS` — supported audio extensions.
@@ -160,6 +182,16 @@ crate, and match an external Spotify row against it. Promoted out of
   then `(album, track-number)` position. Calls `lib.text.normalize_key`/
   `normalize_title`/`primary_artist`/`split_artists` instead of its own
   regex.
+  - **Album-name normalization (new):** tier 3's exact-album comparison
+    and tier 6b's `by_album_track` index/lookup key both now use
+    `lib.text.normalize_album()` instead of plain `normalize_key()`, so a
+    Spotify row's `Album` matches a local file tagged `Album (Deluxe)`/
+    `Album (2009 Remaster)` without the literal strings needing to
+    agree. Tiers 1/2/4/5 never compared album at all and are unaffected.
+    Verified against fixtures (not just diffed): a title+album-exact
+    match where artists share no token resolves on tier 3 against an
+    edition-suffixed local album tag; a symbol-only title anchored by
+    `(album, track-number)` resolves on tier 6 the same way.
 
 ---
 
@@ -336,7 +368,23 @@ tags, independent of beets/beets.db.
   `~/music/tapebuilding` default, since this command moves files and
   rewrites tags.
 - `group_files()`, `build_plan()`, `prune_empty_dirs()`, `rebuild_db()`,
-  `run_cleanup()` (the plain entry point `cli.py` calls).
+  `run_cleanup()` (the plain entry point `cli.py` calls). (Current source
+  location is `organize/cleanup/grouping.py` post-split — see the "still
+  needs updating" note under Cross-cutting notes; this section is
+  otherwise describing the pre-split `cleanup.py` layout.)
+- **Album-name normalization (new):** `group_files()`'s grouping key is
+  now `(normalize_album(album),)` instead of `(normalize_key(album),)` —
+  see `lib/text.py`'s new `normalize_album()`/`strip_edition_suffix()`.
+  A track tagged `Album` and one tagged `Album (Deluxe)`/`Album (2009
+  Remaster)` now land in the same group; `canonical_albumartist()`/
+  `dominant_album()` then pick the folder name/tag from whichever raw
+  string is more common across the merged group, same majority-vote
+  behavior as any other tag disagreement — no new canonical string is
+  invented at grouping time. Verified against a fixture (not just
+  diffed): two tracks tagged `Title`/`Title (Deluxe)` merge into one
+  `Artist - Title` destination folder. Deliberately *not* extended to
+  `resplit_plan.py`'s naming or to writing a canonical album string back
+  to existing folders/tags — see `TODO.md`'s open items for both.
 - `--rebuild-db` deletes and rebuilds `beets.db` via an as-is (no
   MusicBrainz) reimport. Flags plausible wrong-merges (unusually large
   album groups) and VA-filed albums in the dry-run summary.
@@ -410,7 +458,18 @@ Runs the same regrouping logic **before** beets ever sees the drop.
   come from `organize.cleanup` (deliberately organize-specific policy,
   shared with `cleanup.py`'s own regroup-in-place pass rather than
   duplicated); everything else imports directly from `lib.tags`/
-  `lib.text`.
+  `lib.text`. (Current source location is `organize/preimport/plan.py`
+  post-split, same caveat as `cleanup.py` above.)
+- **Album-name normalization (new):** `index_existing_albums()`'s key
+  and `build_plan()`'s merge-target lookup key both now use
+  `lib.text.normalize_album()` for the album half instead of plain
+  `normalize_key()`, so an incoming download tagged `Album (Deluxe)`
+  merges straight into an existing crate folder for the plain `Album`
+  release rather than staging a sibling folder that resplit would later
+  have to untangle. Verified against a fixture (not just diffed): an
+  existing `Artist - Title` crate folder correctly absorbs an incoming
+  track tagged `Title (Deluxe)` via `merged_moves` with zero
+  `staged_moves`.
 
 ### `beets_import.py`
 Two-pass beets importer: pass 1 groups multi-track albums and matches
@@ -598,7 +657,12 @@ translates `ok: False` / raised exceptions into exit codes.
   replaces four independent copies; **one tag reader** (`lib.tags.read_tags`)
   replaces two; **one m3u8 reader** (`lib.m3u.read_m3u8`) replaces two;
   **one pair of Spotify auth flows** (`lib.spotify_auth`) replaces two
-  independent implementations.
+  independent implementations. **One album-identity function**
+  (`lib.text.normalize_album`/`strip_edition_suffix`, new) is now the
+  single place edition-suffix collapsing happens — `lib.catalog.matcher`
+  (tiers 3/6b), `organize.cleanup.grouping.group_files()`, and
+  `organize.preimport.plan.index_existing_albums()`/`build_plan()` all
+  call it rather than each growing its own suffix-stripping regex.
 - **Dependency graph**, now: every domain package may depend on `lib/`;
   `core/` may depend on any domain package; the one remaining
   domain-to-domain dependency is `playlists → download` (auth + export),
