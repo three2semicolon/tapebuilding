@@ -13,6 +13,7 @@ import sys
 import click
 from dotenv import load_dotenv
 
+from download.spotify_export import extract_playlist_id_from_url
 from playlists.build import build_playlists
 
 load_dotenv()
@@ -38,24 +39,46 @@ if sys.platform == "win32":
               help="refresh the spotify csvs first (full export; with -p, only the named playlists).")
 @click.option('--covers', is_flag=True,
               help='download each playlist cover to <name>.jpg (needs --rescrape or spotify auth).')
+@click.option('--exclude', multiple=True, metavar='NAME|ID',
+              help='skip a specific playlist (repeatable; applied after scope resolution).')
 @click.option('--reindex', is_flag=True,
               help='rebuild the local .playlist_index.jsonl sidecar before matching.')
 @click.option('--verbose', is_flag=True, help='print every match decision.')
 @click.option('-o', '--playlists-path', 'playlists_path_opt', help='PLAYLISTS_PATH override.')
 @click.option('--archive-path', 'archive_path_opt', help='ARCHIVE_PATH (crate root) override.')
 @click.option('--exports-dir', 'exports_dir_opt', help='exports dir override (default PLAYLISTS_PATH/exports).')
-def playlists(apply, all_playlists, mine, names, rescrape, covers, reindex, verbose,
+def playlists(apply, all_playlists, mine, names, exclude, rescrape, covers, reindex, verbose,
               playlists_path_opt, archive_path_opt, exports_dir_opt):
     """build local .m3u8 playlists from spotify playlists."""
     if mine and all_playlists:
         click.echo("error: --all and --mine are mutually exclusive.", err=True)
         sys.exit(2)
 
+    if names and exclude:
+        # check for contradictory -p/--playlist and --exclude on the same playlist
+        exclude_ids = set()
+        exclude_names_raw = set()
+        for token in exclude:
+            as_id = extract_playlist_id_from_url(token)
+            if len(as_id) >= 16:
+                exclude_ids.add(as_id)
+            else:
+                exclude_names_raw.add(token)
+        for token in names:
+            as_id = extract_playlist_id_from_url(token)
+            if len(as_id) >= 16 and as_id in exclude_ids:
+                click.echo(f"error: -p '{token}' and --exclude '{token}' are mutually exclusive.", err=True)
+                sys.exit(2)
+            if len(as_id) < 16 and token in exclude_names_raw:
+                click.echo(f"error: -p '{token}' and --exclude '{token}' are mutually exclusive.", err=True)
+                sys.exit(2)
+
     try:
         build_playlists(
             apply=apply,
             all_playlists=all_playlists,
             names=list(names),
+            exclude_names=list(exclude),
             rescrape=rescrape,
             covers=covers,
             reindex=reindex,

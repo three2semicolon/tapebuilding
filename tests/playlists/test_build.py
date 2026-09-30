@@ -154,6 +154,113 @@ class TestSelectPlaylistsOtherScopes:
         assert {row["id"] for row in selected} == {"PID1"}
 
 
+# --- _select_playlists -- exclude ---------------------------------------
+
+class TestSelectPlaylistsExclude:
+    PLAYLISTS_HEADER = "id,name,description,owner,owner_id,public,track_count,playlist_url\n"
+
+    def test_exclude_by_id_filters_out_the_matching_playlist(self, tmp_path):
+        """uses a long id (>=16 chars) so the id-vs-name heuristic triggers as id."""
+        playlists_csv = tmp_path / "playlists.csv"
+        playlists_csv.write_text(
+            self.PLAYLISTS_HEADER
+            + "37i9dQZF1DXcBWIGoYBM5Mabc,Wanted,,me,,True,1,url1\n"
+            + "37i9dQZF1DXcBWIGoYBM5Mdef,Not Wanted,,me,,True,1,url2\n",
+            encoding="utf-8",
+        )
+        selected = _select_playlists(str(playlists_csv), names=[], all_playlists=True,
+                                     exclude_names=["37i9dQZF1DXcBWIGoYBM5Mdef"])
+        assert {row["id"] for row in selected} == {"37i9dQZF1DXcBWIGoYBM5Mabc"}
+
+    def test_exclude_by_name_filters_out_the_matching_playlist(self, tmp_path):
+        playlists_csv = tmp_path / "playlists.csv"
+        playlists_csv.write_text(
+            self.PLAYLISTS_HEADER
+            + "PID1,Wanted,,me,,True,1,url1\n"
+            + "PID2,Not Wanted,,me,,True,1,url2\n",
+            encoding="utf-8",
+        )
+        selected = _select_playlists(str(playlists_csv), names=[], all_playlists=True,
+                                     exclude_names=["Not Wanted"])
+        assert {row["id"] for row in selected} == {"PID1"}
+
+    def test_exclude_url_matches_by_id(self, tmp_path, monkeypatch):
+        """url extracts to a long id (>=16 chars) so the id-vs-name heuristic triggers."""
+        monkeypatch.setattr(
+            build_module, "extract_playlist_id_from_url",
+            lambda token: "37i9dQZF1DXcBWIGoYBM5Mdef" if "spotify" in token else "",
+        )
+        playlists_csv = tmp_path / "playlists.csv"
+        playlists_csv.write_text(
+            self.PLAYLISTS_HEADER
+            + "37i9dQZF1DXcBWIGoYBM5Mabc,Wanted,,me,,True,1,url1\n"
+            + "37i9dQZF1DXcBWIGoYBM5Mdef,Not Wanted,,me,,True,1,url2\n",
+            encoding="utf-8",
+        )
+        selected = _select_playlists(
+            str(playlists_csv), names=[], all_playlists=True,
+            exclude_names=["https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5Mdef"],
+        )
+        assert {row["id"] for row in selected} == {"37i9dQZF1DXcBWIGoYBM5Mabc"}
+
+    def test_exclude_with_names_scope_returns_only_non_excluded_names(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(build_module, "extract_playlist_id_from_url", lambda token: "")
+        playlists_csv = tmp_path / "playlists.csv"
+        playlists_csv.write_text(
+            self.PLAYLISTS_HEADER
+            + "PID1,Playlist A,,me,,True,1,url1\n"
+            + "PID2,Playlist B,,me,,True,1,url2\n"
+            + "PID3,Playlist C,,me,,True,1,url3\n",
+            encoding="utf-8",
+        )
+        selected = _select_playlists(
+            str(playlists_csv), names=["Playlist A", "Playlist B"], all_playlists=False,
+            exclude_names=["Playlist B"],
+        )
+        assert {row["id"] for row in selected} == {"PID1"}
+
+    def test_exclude_on_default_scope_filters_out_unwanted_owned_playlist(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SPOTIFY_USER_ID", "me")
+        playlists_csv = tmp_path / "playlists.csv"
+        playlists_csv.write_text(
+            self.PLAYLISTS_HEADER
+            + "PID1,Wanted,,me,me,True,1,url1\n"
+            + "PID2,Unwanted,,me,me,True,1,url2\n",
+            encoding="utf-8",
+        )
+        selected = _select_playlists(str(playlists_csv), names=[], all_playlists=False,
+                                     exclude_names=["Unwanted"])
+        assert {row["id"] for row in selected} == {"PID1"}
+
+    def test_exclude_with_no_match_warns_and_returns_all(self, tmp_path, capsys):
+        playlists_csv = tmp_path / "playlists.csv"
+        playlists_csv.write_text(
+            self.PLAYLISTS_HEADER + "PID1,Something,,me,,True,1,url1\n",
+            encoding="utf-8",
+        )
+        selected = _select_playlists(str(playlists_csv), names=[], all_playlists=True,
+                                     exclude_names=["Nonexistent"])
+        assert {row["id"] for row in selected} == {"PID1"}
+        out = capsys.readouterr().out
+        assert "warning: --exclude 'Nonexistent'" in out
+
+    def test_exclude_with_no_match_still_warns_when_some_tokens_match(self, tmp_path, capsys):
+        playlists_csv = tmp_path / "playlists.csv"
+        playlists_csv.write_text(
+            self.PLAYLISTS_HEADER
+            + "PID1,Real,,me,,True,1,url1\n"
+            + "PID2,Also Real,,me,,True,1,url2\n",
+            encoding="utf-8",
+        )
+        selected = _select_playlists(
+            str(playlists_csv), names=[], all_playlists=True,
+            exclude_names=["Real", "Phantom"],
+        )
+        assert {row["id"] for row in selected} == {"PID2"}
+        out = capsys.readouterr().out
+        assert "warning: --exclude 'Phantom'" in out
+
+
 # --- _group_tracks_by_playlist ------------------------------------------
 
 class TestGroupTracksByPlaylist:
@@ -429,3 +536,17 @@ class TestBuildPlaylistsOrchestration:
             build_playlists(apply=False, playlists_path=str(playlists_path),
                              archive_path=str(tmp_path / "does_not_exist"),
                              exports_dir=str(exports))
+
+    def test_exclude_names_skips_excluded_playlists(self, tmp_path, monkeypatch):
+        exports, playlists_path, crate = self._fixture_dirs(tmp_path, monkeypatch)
+        m3u8_calls = []
+        match_map = {"t1": self._matched, "t2": self._unmatched, "t3": self._unmatched}
+        self._wire_common_fakes(monkeypatch, match_map, m3u8_calls)
+
+        build_playlists(apply=True, exclude_names=["Playlist Two"],
+                         playlists_path=str(playlists_path),
+                         archive_path=str(crate), exports_dir=str(exports))
+
+        # P2's tracks should never appear in unmatched (P2 was excluded entirely)
+        unmatched_rows = _read_csv(str(exports / "unmatched.csv"))
+        assert {r["track_id"] for r in unmatched_rows} == {"t2"}  # only P1's unmatched track

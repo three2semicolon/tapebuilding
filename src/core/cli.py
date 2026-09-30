@@ -62,15 +62,17 @@ def download_songs_cmd(source, apply, archive_path_opt, drop_opt, only_opt,
 @click.option('-p', '--playlist', 'names', multiple=True, metavar='NAME|ID',
               help='sync a specific playlist by name or spotify id (repeatable; default: all owned).')
 @click.option('--covers', is_flag=True, help='download each playlist cover to <name>.jpg.')
+@click.option('--exclude', 'exclude_opt', multiple=True, metavar='NAME|ID',
+              help='skip a specific playlist (repeatable; applied after scope resolution).')
 @click.option('--verbose', is_flag=True, help='print every match decision.')
 @click.option('--playlists-path', 'playlists_path_opt', help='PLAYLISTS_PATH override.')
 @click.option('--archive-path', 'archive_path_opt', help='ARCHIVE_PATH (crate root) override.')
 @click.option('--exports-dir', 'exports_dir_opt', help='exports dir override.')
-def sync_cmd(names, covers, verbose, playlists_path_opt, archive_path_opt, exports_dir_opt):
+def sync_cmd(names, exclude_opt, covers, verbose, playlists_path_opt, archive_path_opt, exports_dir_opt):
     """rescrape spotify + rebuild every (or named) playlist's .m3u8."""
     try:
         run_sync(
-            names=list(names), covers=covers, verbose=verbose,
+            names=list(names), exclude_names=list(exclude_opt), covers=covers, verbose=verbose,
             playlists_path=playlists_path_opt, archive_path=archive_path_opt,
             exports_dir=exports_dir_opt,
         )
