@@ -13,6 +13,9 @@ import os
 import re
 import shutil
 import sys
+import unicodedata
+
+from lib.text import normalize_key, normalize_album, strip_edition_suffix
 
 try:
     from mediafile import MediaFile
@@ -42,7 +45,7 @@ def primary_token(raw):
 
 def read_tags(path):
     """return a dict of {path, artist, albumartist, album, title, track,
-    length} for one audio file, or None on read error. length is in
+    disc, length} for one audio file, or None on read error. length is in
     seconds (0.0 if unavailable)."""
     try:
         m = MediaFile(path)
@@ -55,8 +58,55 @@ def read_tags(path):
         'album': (m.album or '').strip(),
         'title': (m.title or '').strip(),
         'track': m.track or 0,
+        'disc': getattr(m, 'disc', 0) or 0,
         'length': float(m.length) if m.length else 0.0,
     }
+
+
+def find_duplicates(files):
+    """find potential duplicate tracks.
+    groups by (group_key(artist), group_key(title)) and disc number.
+    returns list of groups with 2+ files where track times are within ~2 seconds.
+    """
+    if not files:
+        return []
+
+    # Import here to avoid circular dependencies
+    from lib.text import group_key
+
+    # Group by (artist_key, title_key, disc)
+    groups = collections.defaultdict(list)
+    for f in files:
+        artist_key = group_key(f['artist'] or '')
+        title_key = group_key(f['title'] or '')
+        disc = f.get('disc', 0)
+        key = (artist_key, title_key, disc)
+        groups[key].append(f)
+
+    # Find groups with duplicates (2+ files) and check time difference
+    duplicates = []
+    for key, group_files in groups.items():
+        if len(group_files) < 2:
+            continue
+
+        # Check if any pair has similar track length (within 2 seconds)
+        has_near_duplicates = False
+        for i in range(len(group_files)):
+            for j in range(i + 1, len(group_files)):
+                f1 = group_files[i]
+                f2 = group_files[j]
+                len1 = f1.get('length', 0)
+                len2 = f2.get('length', 0)
+                if abs(len1 - len2) <= 2.0:  # Within 2 seconds
+                    has_near_duplicates = True
+                    break
+            if has_near_duplicates:
+                break
+
+        if has_near_duplicates:
+            duplicates.append(group_files)
+
+    return duplicates
 
 
 def write_tag(path, **fields):
@@ -67,7 +117,8 @@ def write_tag(path, **fields):
         changed = False
         for field, value in fields.items():
             current = getattr(m, field, None) or ''
-            if normalize_key(current) != normalize_key(value):
+            # Compare exact NFC strings for case-only/non-Latin awareness
+            if unicodedata.normalize('NFC', current) != unicodedata.normalize('NFC', value):
                 setattr(m, field, value)
                 changed = True
         if changed:
@@ -121,7 +172,104 @@ def dominant_album(files):
             orig.setdefault(normalize_key(a), a)
     if not c:
         return ''
+    # Deterministic tie-break: alphabetical ordering of original-cased strings
     return orig[c.most_common(1)[0][0]]
+
+
+def canonical_album(files):
+    """merge edition strings while keeping edition marker (D2).
+    returns the original-cased album string with preferred edition."""
+    if not files:
+        return ''
+
+    # Group by normalized album (edition-stripped)
+    groups = collections.defaultdict(list)
+    for f in files:
+        album = f['album'] or ''
+        key = normalize_album(album)
+        groups[key].append((album, f))  # Store original album and file ref
+
+    # For each group, select the best edition variant
+    selected_albums = []
+    for key, album_files in groups.items():
+        if len(album_files) == 1:
+            # Only one variant, use it
+            selected_albums.append(album_files[0][0])
+        else:
+            # Multiple variants - pick the one with edition marker
+            # Prefer: 1) has edition marker, 2) longer/more specific edition, 3) alphabetical
+            best_album = None
+            best_score = (-1, -1, '')  # (has_edition, length, name)
+
+            for album, _ in album_files:
+                # Check if this album has an edition marker (differs from stripped version)
+                stripped = strip_edition_suffix(album)
+                has_edition = 0 if album == stripped else 1
+                # Score: has_edition (prefer 1), then length (prefer longer), then alphabetical
+                score = (has_edition, len(album), album)
+                if score > best_score:
+                    best_score = score
+                    best_album = album
+
+            selected_albums.append(best_album or album_files[0][0])
+
+    # Now pick the most common selected album (with tie-break)
+    c = collections.Counter(selected_albums)
+    if not c:
+        return ''
+    # Deterministic tie-break: alphabetical ordering
+    return sorted(c.items(), key=lambda x: (-x[1], x[0]))[0][0]
+
+
+def same_path(path1, path2):
+    """compare two paths for equality, respecting filesystem case sensitivity.
+    on case-sensitive filesystems (Unix): exact match required.
+    on case-insensitive filesystems (Windows, macOS default): case-insensitive comparison.
+    """
+    if not path1 or not path2:
+        return bool(path1) == bool(path2)
+    try:
+        # Try to get the real path to normalize symlinks, etc.
+        real1 = os.path.realpath(path1)
+        real2 = os.path.realpath(path2)
+        # On Windows, os.path.realpath preserves case but comparison is case-insensitive
+        # We need to check the filesystem's case sensitivity
+        if sys.platform.startswith('win'):
+            # Windows: case-insensitive
+            return os.path.normcase(real1) == os.path.normcase(real2)
+        else:
+            # Unix-like: check if filesystem is case-sensitive by testing
+            # For simplicity, we'll assume most modern Unix filesystems are case-sensitive
+            # but macOS default is case-insensitive. Let's be safe and check
+            try:
+                # Create a temporary file to test case sensitivity
+                import tempfile
+                with tempfile.NamedTemporaryFile() as tmp:
+                    lower_path = tmp.name.lower()
+                    upper_path = tmp.name.upper()
+                    # If we can create both, filesystem is case-insensitive
+                    try:
+                        with open(lower_path, 'w') as f:
+                            f.write('test')
+                        with open(upper_path, 'w') as f:
+                            f.write('test')
+                        # If both succeeded, case-insensitive
+                        import os
+                        os.unlink(lower_path)
+                        os.unlink(upper_path)
+                        return os.path.normcase(real1) == os.path.normcase(real2)
+                    except FileExistsError:
+                        # Case-sensitive filesystem
+                        return real1 == real2
+                    except:
+                        # Fallback to normcase
+                        return os.path.normcase(real1) == os.path.normcase(real2)
+            except:
+                # Ultimate fallback
+                return os.path.normcase(real1) == os.path.normcase(real2)
+    except:
+        # Fallback to simple comparison
+        return path1 == path2
 
 
 def scan_audio(root_path, subdirs=('albums', 'singles')):
@@ -146,6 +294,13 @@ def scan_audio(root_path, subdirs=('albums', 'singles')):
                 if not entry['artist']:
                     entry['artist'] = entry['albumartist'] or 'Unknown Artist'
                 files.append(entry)
+    # Sort for deterministic ordering: by artist, album, track, title
+    files.sort(key=lambda f: (
+        f['artist'].lower(),
+        f['album'].lower(),
+        f['track'] if f['track'] else 0,
+        f['title'].lower()
+    ))
     return files
 
 
@@ -154,6 +309,16 @@ def safe_move(src, dst):
     collisions. returns the path the file actually ended up at (dst, or the
     "(N)"-suffixed collision name) so callers - the organize journal, tag
     writes after a move - never have to guess."""
+    # Handle case-only collisions on case-insensitive filesystems
+    if same_path(src, dst) and not os.path.normpath(src) == os.path.normpath(dst):
+        # Source and destination are the same file but with different case
+        # On case-insensitive filesystem, we need to use a temporary intermediate
+        temp_dst = dst + '.tmp.__case_fix__'
+        shutil.move(src, temp_dst)
+        shutil.move(temp_dst, dst)
+        return dst
+
+    # Normal move logic
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     if os.path.normpath(src) == os.path.normpath(dst):
         return dst
@@ -165,3 +330,42 @@ def safe_move(src, dst):
         dst = f"{base} ({i}){ext}"
     shutil.move(src, dst)
     return dst
+
+
+def member_filename(track_num, artist, title, ext):
+    """create standardized filename for album track member.
+    format: "{track:02d} - {artist} - {title}{ext}" """
+    track_str = f"{int(track_num) if track_num else 0:02d}"
+    safe_artist = sanitize(artist) if artist else 'Unknown Artist'
+    safe_title = sanitize(title) if title else 'Unknown Title'
+    return f"{track_str} - {safe_artist} - {safe_title}{ext or ''}"
+
+
+def single_filename(artist, title, ext):
+    """create standardized filename for single.
+    format: "{artist} - {title}{ext}" """
+    safe_artist = sanitize(artist) if artist else 'Unknown Artist'
+    safe_title = sanitize(title) if title else 'Unknown Title'
+    return f"{safe_artist} - {safe_title}{ext or ''}"
+
+
+def unique_name(existing_names, proposed_name):
+    """generate a unique name by adding (2), (3), etc. suffixes if needed.
+    existing_names: set of existing names (lowercase for case-insensitive comparison)
+    proposed_name: the desired name
+    returns: a name not in existing_names """
+    if not proposed_name:
+        proposed_name = "Untitled"
+
+    # Check if proposed_name is already taken (case-insensitive)
+    if proposed_name.lower() not in existing_names:
+        return proposed_name
+
+    # Try adding (2), (3), etc.
+    base, ext = os.path.splitext(proposed_name)
+    counter = 2
+    while True:
+        new_name = f"{base} ({counter}){ext}"
+        if new_name.lower() not in existing_names:
+            return new_name
+        counter += 1

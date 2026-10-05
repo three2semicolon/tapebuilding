@@ -58,6 +58,20 @@ class TestBuildIndex:
         assert "Skipped" not in titles
         assert "Kept" in titles
 
+    def test_skips_duplicates_and_unorganized_dirs_at_top_level_only(self, tmp_path, make_tagged_file):
+        # Bug 12: top-level "duplicates" and "unorganized" dirs should never be scanned
+        make_tagged_file(filename="duplicates/should_be_skipped.mp3", title="Skipped Dup")
+        make_tagged_file(filename="unorganized/should_be_skipped.mp3", title="Skipped Unorg")
+        # a legitimately-named directory nested deeper is not the same thing and should still be indexed
+        make_tagged_file(filename="Artist/duplicates/track.mp3", title="Kept Dup")
+        make_tagged_file(filename="Artist/unorganized/track.mp3", title="Kept Unorg")
+
+        titles = {e["title"] for e in build_index(str(tmp_path))}
+        assert "Skipped Dup" not in titles
+        assert "Skipped Unorg" not in titles
+        assert "Kept Dup" in titles
+        assert "Kept Unorg" in titles
+
     def test_empty_root_returns_empty_list(self, tmp_path):
         assert build_index(str(tmp_path)) == []
 

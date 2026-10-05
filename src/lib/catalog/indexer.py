@@ -32,7 +32,7 @@ INDEX_NAME = '.playlist_index.jsonl'
 
 # top-level subdirs never scanned: the playlists tree holds .m3u8/.csv, not
 # audio, and re-indexing would otherwise stat everything under exports/.
-_SKIP_TOPLEVEL = {'playlists', '$RECYCLE.BIN', 'System Volume Information'}
+_SKIP_TOPLEVEL = {'playlists', '$RECYCLE.BIN', 'System Volume Information', 'duplicates', 'unorganized'}
 
 
 def index_path(exports_dir_value):

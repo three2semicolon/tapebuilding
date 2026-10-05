@@ -724,7 +724,7 @@ passes.
   `check_tags(apply=True)`'s tag writes.
 - [x] *(code done; V8 still to run)* **Bug 13 (plugin)** can ship any time in Phase 0–1 and should precede
   any further `organize import`. Run V8 first to see existing damage.
-- [ ] `python -c "import organize.cli, organize.preimport.apply,
+- [x] `python -c "import organize.cli, organize.preimport.apply,
   organize.cleanup.resplit"` (until Phase 4 deletes it) as an import smoke test, and confirm
   `organize/cleanup/__init__.py` re-exports everything `cli.py` imports,
   including `check_tags` (defined in `apply.py`).
@@ -847,7 +847,7 @@ passes.
   `normalize_key` — deliberate, say why).
 - [ ] `README.md`: new/changed flags, `--resplit` removal, journal/undo,
   leftover report.
-- [ ] `TODO.md`: strike what's done.
+- [x] `TODO.md`: strike what's done.
 
 ### Phase 7 — matcher precision (after the library is clean; D6 decided)
 

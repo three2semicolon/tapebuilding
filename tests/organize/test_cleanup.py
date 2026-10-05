@@ -103,7 +103,7 @@ class TestBuildPlanTagWrites:
 
         files = scan_audio(str(crate))
         groups = group_files(files)
-        _, _, _, tag_writes, _, _ = build_plan(groups, str(crate))
+        _, _, _, tag_writes, _, _, _ = build_plan(groups, str(crate))
 
         assert len(tag_writes) == 1
         path, aa = tag_writes[0]

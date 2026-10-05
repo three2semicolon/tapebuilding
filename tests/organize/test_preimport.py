@@ -213,6 +213,7 @@ class TestStageReportShape:
         assert set(report.keys()) == {
             'scanned', 'staged_folders', 'merged_folders', 'merged_tracks',
             'split_groups', 'duplicates', 'tag_writes', 'singletons', 'ambiguous',
+            'album_tag_writes',
         }
 
     def test_missing_input_dir_returns_a_report_without_erroring(self, tmp_path):

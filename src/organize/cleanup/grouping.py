@@ -168,7 +168,11 @@ def build_plan(groups, crate):
                 if art:
                     artist_counts[art] = artist_counts.get(art, 0) + 1
             if artist_counts:
-                aa = max(artist_counts, key=artist_counts.get)
+                # override only if there is a clear majority
+                top, top_n = max(artist_counts.items(), key=lambda kv: kv[1])
+                total = sum(artist_counts.values())
+                if top_n >= total * 0.5:
+                    aa = top
 
         if is_unrelated_va_collision(members):
             # Bug 2: two different artists' singles that happen to share a

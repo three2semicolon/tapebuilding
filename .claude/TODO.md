@@ -39,48 +39,50 @@ organize source.
 ### Reopened / new — in fix order
 
 **Phase 0 — safety net (before any `--apply`)**
-- [x] Move/tag **journal** (`<crate>/.organize_journal.jsonl`) written before
+
+- [X] Move/tag **journal** (`<crate>/.organize_journal.jsonl`) written before
   each action → undo + resumable runs.
-- [ ] Back up `beets.db` + `.playlist_index.jsonl`; confirm a recent
+- [X] Back up `beets.db` + `.playlist_index.jsonl`; confirm a recent
   `library.csv` export or filesystem snapshot.
-- [x] **Bug 15:** `rebuild_db()` renames `beets.db` to a timestamped backup
+- [X] **Bug 15:** `rebuild_db()` renames `beets.db` to a timestamped backup
   instead of `os.remove()`.
-- [x] Journal must cover `preimport/apply._apply()` and `check_tags(apply=True)`
+- [X] Journal must cover `preimport/apply._apply()` and `check_tags(apply=True)`
   too, not only `run_cleanup()`.
-- [x] *(code done; run V8 to see existing damage)* **Bug 13 (any time, before the next `organize import`):** fix
+- [X] *(code done; run V8 to see existing damage)* **Bug 13 (any time, before the next `organize import`):** fix
   `normalize_artists.py` — `_FEAT_RE` has no word boundaries (`Daft Punk` →
   `Da feat. Punk`, `Soft Cell` → `So feat. Cell`); drop the `_COLLAB_X_RE`
   misfire; `_normalize_list` joins with `, ` (D8). Run V8 first to see
   existing damage.
-- [ ] Import smoke test: `python -c "import organize.cli,
-  organize.preimport.apply, organize.cleanup.resplit"`; confirm
+- [X] Import smoke test: `python -c "import organize.cli, organize.preimport.apply, organize.cleanup.resplit"`; confirm
   `organize/cleanup/__init__.py` re-exports `check_tags` (it lives in
   `apply.py`).
 
 **Phase 1 — `lib/` primitives**
-- [ ] `lib.text.group_key()` / `group_album_key()` — Unicode-aware (NFKC +
+
+- [x] `lib.text.group_key()` / `group_album_key()` — Unicode-aware (NFKC +
   casefold + keep `\w`), never `''` for non-blank input. **Do not change
   `normalize_key()`** — matcher tier 6 and download filename matching depend
   on its ASCII-only/`''` behavior. (Bug 4)
-- [ ] `lib.tags.write_tag()`: compare exact NFC strings, not `normalize_key`,
+- [x] `lib.tags.write_tag()`: compare exact NFC strings, not `normalize_key`,
   so case-only/non-Latin fixes actually write and identical values no-op. (Bug 7)
-- [ ] `lib.tags`: deterministic tie-breaks in `dominant_album()` /
+- [x] `lib.tags`: deterministic tie-breaks in `dominant_album()` /
   `canonical_albumartist()`; `canonical_album()` (merge editions, keep the
   edition marker — D2); `same_path()` + case-aware `safe_move()` (two-step
   for case-only); shared `member_filename()` / `single_filename()` /
   `unique_name()`; sort `scan_audio()` output. (Bugs 3b, 6)
-- [ ] `lib.text.fold_key()` (NFKD fold, `''` for non-Latin = no evidence;
+- [x] `lib.text.fold_key()` (NFKD fold, `''` for non-Latin = no evidence;
   matcher veto only) alongside `group_key()`.
-- [ ] `lib.tags.read_tags()` adds `disc` (D5); force one `--reindex` after.
+- [x] `lib.tags.read_tags()` adds `disc` (D5); force one `--reindex` after.
   `lib.tags.find_duplicates()` (same `group_key` artist+title, ≤ ~2 s, never
   across differing `disc`) shared by cleanup + preimport.
-- [ ] **Bug 12:** `lib.catalog.indexer._SKIP_TOPLEVEL` += `duplicates`,
+- [x] **Bug 12:** `lib.catalog.indexer._SKIP_TOPLEVEL` += `duplicates`,
   `unorganized` (D7). `unorganized/` is handled by `preimport` + `import`,
   which move files into `albums/`/`singles/` before they're indexed. Must land
   before duplicate quarantine.
-- [ ] Tests: `tests/lib/test_text.py`, `tests/lib/test_tags.py`, indexer skip-list.
+- [x] Tests: `tests/lib/test_text.py`, `tests/lib/test_tags.py`, indexer skip-list.
 
 **Phase 2 — grouping logic**
+
 - [ ] **Bug 2b:** shared `split_group()` (raw-`artist` union-find promoted from
   resplit, compilation guard, self-titled-single signal, ambiguity reported not
   guessed) used by `cleanup/grouping.py` and `preimport/plan.py`. Any group
@@ -106,7 +108,7 @@ organize source.
   destinations.
 - [ ] **Bug 3b:** `index_existing_albums()` returns the raw album string;
   preimport merges compute `canonical_album()` over incoming ∪ existing.
-- [x] **Bug 10 (fixed in Phase 0):** `run_cleanup()` `UnboundLocalError` (`moved` defined inside
+- [X] **Bug 10 (fixed in Phase 0):** `run_cleanup()` `UnboundLocalError` (`moved` defined inside
   one `if`, used in the next).
 - [ ] `preimport/plan.py`: remove dead `if … : pass` no-op.
 - [ ] **`organize import` leftovers report:** beets runs `--quiet` and skips
@@ -118,6 +120,7 @@ organize source.
   reviewed by hand.
 
 **Phase 3 — artist-credit rendering + `sanitize()` (isolated, high churn)**
+
 - [ ] Plugin fix + `, ` join (D8) shipped before this phase if not already.
 - [ ] **Bug 9 / D1:** `render_credit()` — split on `/` only, join with `, `;
   `&` and `,` inside credits untouched. Used for filename artist part and
@@ -130,6 +133,7 @@ organize source.
   reindex → `core sync`.
 
 **Phase 4 — retire resplit (D4)**
+
 - [ ] Confirm the regular pass reproduces what resplit was for (fixtures in
   `BUGFIX_PLAN.md`), then delete `resplit.py` / `resplit_plan.py`, the
   `--resplit` option + its `--rebuild-db` / `--check-tags` conflict checks in
@@ -139,6 +143,7 @@ organize source.
   renumbers by position and blanks `albumartist`/`album` on singles).
 
 **Phase 5 — converge on the live crate**
+
 - [ ] Snapshot `unmatched.csv` before the first `--apply`.
 - [ ] dry run → `--apply --no-tag-write` → dry run empty of moves →
   `--apply` → dry run **completely empty** → `--check-tags` (also repairs the
@@ -149,6 +154,7 @@ organize source.
   via `duplicates/`/`unorganized/` will now show as unmatched — expected.
 
 **Phase 6 — tests + docs**
+
 - [ ] `tests/organize/test_cleanup.py`, `test_preimport.py` from the
   known-answer fixtures (no resplit tests — it's retired).
 - [ ] **Idempotency test:** apply plan to a temp tree, re-plan, assert empty
@@ -160,6 +166,7 @@ organize source.
   for any flag changes incl. `--resplit` removal.
 
 **Phase 7 — matcher precision (after the library is clean; D6 decided)**
+
 - [ ] Measure first — V6 (extended: would-be-vetoed set, ≤ 1 s same-album
   subset, hard-gate collateral, accent-only matches) and V9 (non-Latin rows).
 - [ ] **Bug 11 / D6:** `_artists_contradict()` (fold_key sets, both non-empty,
@@ -176,9 +183,9 @@ organize source.
   prerequisite for `PLAYLIST_SYNC_PLAN.md` §3.
 
 **Superseded / folded in**
+
 - ~~Bug 3 album-tag unification~~ → **Bug 3b**, Phase 1–2: the old
-  `normalize_key`-gated loop never fires on `4x4 SCORPION` vs `4 X 4
-  Scorpion` (keys are equal). Needs exact-string comparison + edition
+  `normalize_key`-gated loop never fires on `4x4 SCORPION` vs `4 X 4 Scorpion` (keys are equal). Needs exact-string comparison + edition
   policy (**D2**).
 - ~~Resplit destination collision / naming via `normalize_album()`~~ and the
   rest of the resplit defect list → resplit is being **retired** (D4, Phase 4).
@@ -202,6 +209,7 @@ organize source.
 - **D9** names only — `artist`/`albumartist` tags stay as stored (`/`).
 
 ### Quick checks to run first (cheap, settle open questions)
+
 - [ ] `Yeat - 2093 (P2)`: read the real album tag (likely not a bug).
 - [ ] Adhesive Wombat `02 → 03`: read the `track` tag (expect 3; confirms
   resplit's `idx+1` renumbering).
@@ -209,7 +217,7 @@ organize source.
 - [ ] V6 (extended, see `BUGFIX_PLAN.md`): tier-3/5 matches with disjoint
   fold_key artist sets, the ≤ 1 s same-album subset, hard-gate collateral,
   accent-only matches.
-- [ ] V8: artist tags mangled by the plugin (` feat. ` after ≤ 3 chars).
+- [ ] V8: artist tags mangled by the plugin (`feat.` after ≤ 3 chars).
 - [ ] V9: rows/entries with empty title key *and* empty primary-artist key.
 - [ ] V10: albums with repeated track numbers across discs (after `disc`
   is readable).
@@ -279,8 +287,7 @@ not something `app/` needs to duplicate. Scoping `app/` to what Navidrome
      Navidrome just scan the result, rather than introducing a second
      playlist store that can drift out of sync with it.
 2. **Downloader page** — paste a Spotify/SoundCloud track/playlist/album
-   URL, it runs the equivalent of `download spotify`/`download
-   soundcloud`/`download ytdl` under the hood, shows live progress, drops
+   URL, it runs the equivalent of `download spotify`/`download soundcloud`/`download ytdl` under the hood, shows live progress, drops
    the result into the crate. This is the strongest case for actually
    deciding the progress-reporting question now (see below) — a
    multi-minute download run has no synchronous-request-friendly shape.
@@ -303,8 +310,7 @@ rather than leave it open indefinitely.
 - **Job store:** a small in-process module (e.g. `core/jobs.py` or
   `app/jobs.py` — either works, since `app/` can import `core/` directly
   per the constraints above) wrapping a background thread per job,
-  storing `{'id', 'state': running|ok|error, 'log': [...], 'result':
-  ...}` in memory (or a tiny sqlite/json file if `app/` needs jobs to
+  storing `{'id', 'state': running|ok|error, 'log': [...], 'result': ...}` in memory (or a tiny sqlite/json file if `app/` needs jobs to
   survive its own process restarting).
 - **Bridging the print()-narration problem:** most domain functions
   narrate progress via bare `print()` today. Two ways to surface that
@@ -354,5 +360,5 @@ round-tripping through that one-directional sync model at all, which is
 what `TODO.md` already anticipated ("worst case I'll just use the
 tapedeck to load certain playlists").
 
-Source: [Symfonium support forum, "Playlist
-Support Question"](https://support.symfonium.app/t/playlist-support-question/7626).
+Source: [Symfonium support forum, &#34;Playlist
+Support Question&#34;](https://support.symfonium.app/t/playlist-support-question/7626).

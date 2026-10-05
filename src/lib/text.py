@@ -50,6 +50,7 @@ used by both the spotify dedup pass and the crate matcher.
 """
 
 import re
+import unicodedata
 
 _FEAT_TO_END_RE = re.compile(r'\s*(feat\.?|ft\.?|featuring)\s+.*', re.IGNORECASE)
 _ANY_PAREN_RE = re.compile(r'\s*\(.*?\)')
@@ -160,6 +161,46 @@ def normalize_album(s):
     return normalize_key(strip_edition_suffix(s))
 
 
+def group_key(s):
+    """Unicode-aware grouping key: NFKC → casefold → keep \\w (letters/digits in any script).
+    Never returns '' for non-blank input; if everything strips, fall back to casefold(strip(s)).
+    Used for organize grouping (Bug 4)."""
+    if not s:
+        return ''
+    # NFKC normalization
+    normalized = unicodedata.normalize('NFKC', s)
+    # casefold
+    folded = normalized.casefold()
+    # keep only word characters (letters/digits in any script)
+    kept = ''.join(c for c in folded if unicodedata.category(c)[0] in 'LN')
+    # if we kept something, return it; otherwise fall back to casefold(strip(s))
+    if kept:
+        return kept
+    return folded.strip()
+
+
+def group_album_key(s):
+    """Group key for albums: apply group_key to the string with edition suffix stripped.
+    Used for organize grouping (Bug 4)."""
+    return group_key(strip_edition_suffix(s))
+
+
+def fold_key(s):
+    """NFKD, drop combining marks, lowercase, keep [a-z0-9]. Used only by matcher veto.
+    '' means "no evidence" (non-Latin), never a contradiction (Bug 11)."""
+    if not s:
+        return ''
+    # NFKD normalization
+    normalized = unicodedata.normalize('NFKD', s)
+    # drop combining marks (category starts with 'M')
+    no_combining = ''.join(c for c in normalized if unicodedata.category(c)[0] != 'M')
+    # lowercase
+    lowered = no_combining.lower()
+    # keep only ASCII alphanumerics
+    kept = ''.join(c for c in lowered if c.isascii() and c.isalnum())
+    return kept
+
+
 def _run_sanity_checks():
     """inline regression checks - `python -m lib.text` to run.
 
@@ -241,6 +282,31 @@ def _run_sanity_checks():
     assert normalize_key('$$$') == ''
     assert normalize_title('$$$') == ''
     assert normalize_key('!!!') == ''
+
+    # group_key: Unicode-aware, never '' for non-blank input
+    assert group_key('Hello, World!') == 'helloworld'
+    assert group_key('') == ''
+    assert group_key('Hello') == 'hello'
+    assert group_key('Café') == 'café'  # accent preserved
+    assert group_key('🚀') == '🚀'  # emoji preserved (it's a letter in Unicode)
+    # group_key: Unicode-aware, never '' for non-blank input
+    # Never returns '' for a non-blank input; if everything strips, fall back to casefold(strip(s))
+    # So for '!!!', after NFKC and casefold, we still have '!!!', then we try to keep \w characters, but there are none,
+    # so we fall back to casefold(strip(s)) = '!!!'. But strip(s) of '!!!' is '!!!', so casefold is '!!!'.
+    # So group_key('!!!') should be '!!!', not ''.
+    assert group_key('!!!') == '!!!'  # symbols only -> fall back to casefold(strip(s))
+
+    # group_album_key: just group_key after stripping edition suffix
+    assert group_album_key('Title (Deluxe)') == group_key('Title')
+    assert group_album_key('Title') == group_key('Title')
+
+    # fold_key: NFKD, drop combining marks, lowercase, keep [a-z0-9]
+    assert fold_key('Jhené') == fold_key('Jhene')  # accent folded
+    assert fold_key('ぬいぐるみ') == ''  # non-Latin -> no evidence
+    assert fold_key('Hello123') == 'hello123'
+    assert fold_key('Hello_World!') == 'helloworld'  # underscore kept? Wait, [a-z0-9] only, so underscore removed
+    # Actually, [a-z0-9] means only lowercase letters and digits, so underscore should be removed
+    assert fold_key('Hello_World!') == 'helloworld'
 
     print('lib.text sanity checks: ok')
 
