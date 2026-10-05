@@ -39,15 +39,15 @@ organize source.
 ### Reopened / new — in fix order
 
 **Phase 0 — safety net (before any `--apply`)**
-- [ ] Move/tag **journal** (`<crate>/.organize_journal.jsonl`) written before
+- [x] Move/tag **journal** (`<crate>/.organize_journal.jsonl`) written before
   each action → undo + resumable runs.
 - [ ] Back up `beets.db` + `.playlist_index.jsonl`; confirm a recent
   `library.csv` export or filesystem snapshot.
-- [ ] **Bug 15:** `rebuild_db()` renames `beets.db` to a timestamped backup
+- [x] **Bug 15:** `rebuild_db()` renames `beets.db` to a timestamped backup
   instead of `os.remove()`.
-- [ ] Journal must cover `preimport/apply._apply()` and `check_tags(apply=True)`
+- [x] Journal must cover `preimport/apply._apply()` and `check_tags(apply=True)`
   too, not only `run_cleanup()`.
-- [ ] **Bug 13 (any time, before the next `organize import`):** fix
+- [x] *(code done; run V8 to see existing damage)* **Bug 13 (any time, before the next `organize import`):** fix
   `normalize_artists.py` — `_FEAT_RE` has no word boundaries (`Daft Punk` →
   `Da feat. Punk`, `Soft Cell` → `So feat. Cell`); drop the `_COLLAB_X_RE`
   misfire; `_normalize_list` joins with `, ` (D8). Run V8 first to see
@@ -106,7 +106,7 @@ organize source.
   destinations.
 - [ ] **Bug 3b:** `index_existing_albums()` returns the raw album string;
   preimport merges compute `canonical_album()` over incoming ∪ existing.
-- [ ] **Bug 10:** `run_cleanup()` `UnboundLocalError` (`moved` defined inside
+- [x] **Bug 10 (fixed in Phase 0):** `run_cleanup()` `UnboundLocalError` (`moved` defined inside
   one `if`, used in the next).
 - [ ] `preimport/plan.py`: remove dead `if … : pass` no-op.
 - [ ] **`organize import` leftovers report:** beets runs `--quiet` and skips

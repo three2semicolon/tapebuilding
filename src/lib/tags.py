@@ -150,10 +150,13 @@ def scan_audio(root_path, subdirs=('albums', 'singles')):
 
 
 def safe_move(src, dst):
-    """move src -> dst, creating parent dirs; rename on destination collisions."""
+    """move src -> dst, creating parent dirs; rename on destination
+    collisions. returns the path the file actually ended up at (dst, or the
+    "(N)"-suffixed collision name) so callers - the organize journal, tag
+    writes after a move - never have to guess."""
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     if os.path.normpath(src) == os.path.normpath(dst):
-        return
+        return dst
     if os.path.exists(dst):
         base, ext = os.path.splitext(dst)
         i = 2
@@ -161,3 +164,4 @@ def safe_move(src, dst):
             i += 1
         dst = f"{base} ({i}){ext}"
     shutil.move(src, dst)
+    return dst

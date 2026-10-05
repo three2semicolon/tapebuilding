@@ -457,7 +457,9 @@ so it does not suppress these renames.
 
 ---
 
-## Bug 10: `run_cleanup()` crashes when only album tags need writing
+## Bug 10: `run_cleanup()` crashes when only album tags need writing — FIXED in Phase 0
+
+*(`moved` is now hoisted above both tag blocks and built from the journal's actual move results, singletons included. Phase 2 only needs to carry it forward.)*
 
 `moved` is defined inside `if not no_tag_write and tag_writes:` but used in
 the following `album_tag_writes` block. If `tag_writes` is empty and
@@ -709,18 +711,18 @@ passes.
 
 ### Phase 0 — safety net (before any `--apply`)
 
-- [ ] Add a **move/tag journal** (`<crate>/.organize_journal.jsonl`): every
+- [x] *(done — `organize/journal.py`, wired into cleanup, preimport and check-tags; `organize undo [--list] [--run ID] [--apply]`)* Add a **move/tag journal** (`<crate>/.organize_journal.jsonl`): every
   planned `move` / `tag write` with old and new value, written before it is
   performed. Enables a real undo and makes interrupted runs resumable. `safe_move()`
   and `write_tag()` stay dumb; the journal lives in the apply layer.
 - [ ] Back up `beets.db` and keep a copy of `.playlist_index.jsonl`; confirm
   a filesystem snapshot or at least a `library.csv` export exists.
-- [ ] **Bug 15:** `rebuild_db()` renames `beets.db` to a timestamped backup
+- [x] **Bug 15:** `rebuild_db()` renames `beets.db` to a timestamped backup
   instead of deleting it.
-- [ ] The journal wraps *every* mutating path, not just `run_cleanup()`:
+- [x] The journal wraps *every* mutating path, not just `run_cleanup()`:
   `preimport/apply._apply()` (incl. duplicate quarantine) and
   `check_tags(apply=True)`'s tag writes.
-- [ ] **Bug 13 (plugin)** can ship any time in Phase 0–1 and should precede
+- [x] *(code done; V8 still to run)* **Bug 13 (plugin)** can ship any time in Phase 0–1 and should precede
   any further `organize import`. Run V8 first to see existing damage.
 - [ ] `python -c "import organize.cli, organize.preimport.apply,
   organize.cleanup.resplit"` (until Phase 4 deletes it) as an import smoke test, and confirm

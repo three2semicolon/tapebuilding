@@ -3,23 +3,30 @@ pass. calls grouping.py's group_files()/build_plan() to decide the
 plan, then performs the moves + albumartist tag-writes and prints the
 dry-run/applied report. cli.py's `organize cleanup` (no --resplit)
 entry point.
+
+every mutating step on the --apply path goes through organize.journal
+(<crate>/.organize_journal.jsonl), so a run can be reverted with
+`organize undo`. dry-runs never touch the journal.
 """
 
+import glob
 import os
 import sys
+import time
 
 from lib.tags import (
     canonical_albumartist,
     dominant_album,
     read_tags,
-    safe_move,
     scan_audio,
-    write_tag,
 )
 from lib.text import normalize_key, split_artists
+from organize.journal import Journal
 
 from .common import resolve_crate
 from .grouping import build_plan, group_files
+
+DB_BACKUPS_KEPT = 5
 
 
 def prune_empty_dirs(crate):
@@ -37,22 +44,52 @@ def prune_empty_dirs(crate):
                 pass
 
 
+def backup_db(db, keep=DB_BACKUPS_KEPT):
+    """move beets.db aside to a timestamped backup instead of deleting it
+    (BUGFIX_PLAN.md Bug 15). returns the backup path, or None if there was
+    no db. keeps the newest `keep` backups."""
+    if not os.path.exists(db):
+        return None
+    bak = f"{db}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
+    os.replace(db, bak)
+    for old in sorted(glob.glob(db + '.bak-*'))[:-keep]:
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+    return bak
+
+
 def rebuild_db(crate, config_path):
-    """fresh beets.db matching the reorganized crate: delete the old db, then
-    as-is reimport (no autotag, no MusicBrainz lookups) of albums/ and singles/."""
+    """fresh beets.db matching the reorganized crate: back up (not delete)
+    the old db, then as-is reimport (no autotag, no MusicBrainz lookups) of
+    albums/ and singles/. if either import exits non-zero the backup path is
+    printed so the old db can be restored by hand."""
     import subprocess
     db = os.path.join(crate, 'beets.db')
-    if os.path.exists(db):
-        os.remove(db)
+    bak = backup_db(db)
+    if bak:
+        print(f"\nbacked up existing beets.db -> {bak}")
     base = [sys.executable, '-m', 'beets', '--config', config_path,
             '--directory', crate, '--library', db]
     print("\n=== rebuilding beets.db (as-is, no musicbrainz) ===")
+    failed = []
     if os.path.isdir(os.path.join(crate, 'albums')):
         print("  importing albums/...")
-        subprocess.run(base + ['import', '-A', '-q', os.path.join(crate, 'albums')], check=False)
+        r = subprocess.run(base + ['import', '-A', '-q', os.path.join(crate, 'albums')], check=False)
+        if r.returncode != 0:
+            failed.append(('albums/', r.returncode))
     if os.path.isdir(os.path.join(crate, 'singles')):
         print("  importing singles/...")
-        subprocess.run(base + ['import', '-A', '-q', '-s', os.path.join(crate, 'singles')], check=False)
+        r = subprocess.run(base + ['import', '-A', '-q', '-s', os.path.join(crate, 'singles')], check=False)
+        if r.returncode != 0:
+            failed.append(('singles/', r.returncode))
+    if failed:
+        for what, code in failed:
+            print(f"  WARNING: beets import of {what} exited {code}", file=sys.stderr)
+        if bak:
+            print(f"  the previous db is intact at {bak} - restore it by renaming it back "
+                  "to beets.db if this rebuild is incomplete.", file=sys.stderr)
     print("  done. library.csv will regenerate on the next export.")
 
 
@@ -114,7 +151,8 @@ def check_tags(crate=None, apply=False, verbose=False):
         straggler tagged by a different album name/artist. with --apply,
         write the canonical value.
 
-    dry-run by default (reports only); plain, import-safe entry point."""
+    dry-run by default (reports only); plain, import-safe entry point.
+    --apply tag writes are journaled (organize.journal)."""
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
 
@@ -190,10 +228,13 @@ def check_tags(crate=None, apply=False, verbose=False):
         return {'suspicious': len(suspicious), 'fixed': 0}
 
     fixed = 0
-    for path, kind, cur, exp, reason in suspicious:
-        write_tag(path, albumartist=exp)
-        fixed += 1
-    print(f"\nwrote {fixed} albumartist tag(s).")
+    with Journal(crate, 'check-tags') as j:
+        for path, kind, cur, exp, reason in suspicious:
+            if j.tag(path, albumartist=exp) == 'done':
+                fixed += 1
+    print(f"\nwrote {fixed} albumartist tag(s) "
+          f"({len(suspicious) - fixed} unchanged/skipped - see the journal for why).")
+    print(f"journal: {j.path}  (run {j.run_id}; revert with `organize undo`)")
     print("note: beets.db may still hold the old tags - rebuild with `uv run organize cleanup --rebuild-db`")
     print("      if you want the library csv/beets.db to match.")
     return {'suspicious': len(suspicious), 'fixed': fixed}
@@ -273,33 +314,41 @@ def run_cleanup(crate=None, apply=False, no_tag_write=False,
             print(f"(would write album tags on {len(album_tag_writes)} files; pass --no-tag-write to skip)")
         return True
 
-    if album_moves:
-        print(f"\nmoving {len(album_moves)} files into albums/...")
-        for src, dst, aa in album_moves:
-            safe_move(src, dst)
-    if singleton_moves:
-        print(f"moving {len(singleton_moves)} files into singles/...")
-        for src, dst in singleton_moves:
-            safe_move(src, dst)
-    prune_empty_dirs(crate)
+    # --- apply: every move + tag write is journaled (organize.journal) ---
+    # `moved` maps each original path -> where the file actually ended up
+    # (safe_move may suffix on collision), hoisted out of the tag-write
+    # blocks so album-tag-only runs can't hit an UnboundLocalError after
+    # files have already moved (BUGFIX_PLAN.md Bug 10) and so singleton
+    # moves are tracked too.
+    moved = {}
+    with Journal(crate, 'cleanup') as j:
+        if album_moves:
+            print(f"\nmoving {len(album_moves)} files into albums/...")
+            for src, dst, aa in album_moves:
+                moved[os.path.normpath(src)] = j.move(src, dst)
+        if singleton_moves:
+            print(f"moving {len(singleton_moves)} files into singles/...")
+            for src, dst in singleton_moves:
+                moved[os.path.normpath(src)] = j.move(src, dst)
+        prune_empty_dirs(crate)
 
-    if not no_tag_write and tag_writes:
-        print(f"writing albumartist tags on {len(tag_writes)} files...")
-        # after the move, re-resolve each path: file may have moved to its album folder
-        moved = {os.path.normpath(s): d for s, d, _ in album_moves}
-        for src, aa in tag_writes:
-            path = moved.get(os.path.normpath(src), src)
-            write_tag(path, albumartist=aa)
-    elif no_tag_write:
-        print("(--no-tag-write: albumartist tags left as-is - albums may re-split on a future beets run)")
+        if not no_tag_write and tag_writes:
+            print(f"writing albumartist tags on {len(tag_writes)} files...")
+            # after the move, re-resolve each path: file may have moved to its album folder
+            for src, aa in tag_writes:
+                path = moved.get(os.path.normpath(src), src)
+                j.tag(path, albumartist=aa)
+        elif no_tag_write:
+            print("(--no-tag-write: albumartist tags left as-is - albums may re-split on a future beets run)")
 
-    if not no_tag_write and album_tag_writes:
-        print(f"writing album tags on {len(album_tag_writes)} files...")
-        for src, album in album_tag_writes:
-            path = moved.get(os.path.normpath(src), src)
-            write_tag(path, album=album)
+        if not no_tag_write and album_tag_writes:
+            print(f"writing album tags on {len(album_tag_writes)} files...")
+            for src, album in album_tag_writes:
+                path = moved.get(os.path.normpath(src), src)
+                j.tag(path, album=album)
 
     print("\ndone.")
+    print(f"journal: {j.path}  (run {j.run_id}; revert with `uv run organize undo`)")
     print("note: beets.db now points at old file paths - it's stale until rebuilt.")
     print("      rebuild with:  uv run organize cleanup --rebuild-db")
     print("      (or re-run --apply --rebuild-db next time)")

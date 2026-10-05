@@ -7,8 +7,9 @@ quarantines duplicates, and writes albumartist tags.
 import os
 import sys
 
-from lib.tags import safe_move, scan_audio, write_tag
+from lib.tags import scan_audio
 from organize.cleanup import group_files, resolve_crate
+from organize.journal import Journal
 
 from .plan import build_plan, index_existing_albums
 
@@ -41,41 +42,48 @@ def prune_unorganized(unorganized):
 def _apply(staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes,
            no_tag_write, unorganized, crate):
     """perform the moves (stage + merge), quarantine duplicates, then resolve
-    moved paths for the tag writes."""
+    moved paths for the tag writes. every move and tag write goes through
+    the organize journal (<crate>/.organize_journal.jsonl) so the run can be
+    undone with `organize undo`."""
     moved = {}
-    for src, dst, _aa in staged_moves + merged_moves:
-        try:
-            prev = src
-            safe_move(src, dst)
-            moved[os.path.normpath(prev)] = dst
-        except OSError as e:
-            print(f"  move failed: {src} ({e})", file=sys.stderr)
-
-    if dup_moves:
-        dest = duplicates_dir(crate)
-        for (src,) in dup_moves:
+    quarantined = set()  # normalized *source* paths sent to duplicates/ - no tag writes for these
+    with Journal(crate, 'preimport') as j:
+        for src, dst, _aa in staged_moves + merged_moves:
             try:
-                safe_move(src, os.path.join(dest, os.path.basename(src)))
-                moved[os.path.normpath(src)] = dest
+                moved[os.path.normpath(src)] = j.move(src, dst)
             except OSError as e:
-                print(f"  dup move failed: {src} ({e})", file=sys.stderr)
+                print(f"  move failed: {src} ({e})", file=sys.stderr)
 
-    prune_unorganized(unorganized)
+        if dup_moves:
+            dest = duplicates_dir(crate)
+            for (src,) in dup_moves:
+                try:
+                    moved[os.path.normpath(src)] = j.move(
+                        src, os.path.join(dest, os.path.basename(src)))
+                    quarantined.add(os.path.normpath(src))
+                except OSError as e:
+                    print(f"  dup move failed: {src} ({e})", file=sys.stderr)
 
-    if no_tag_write:
-        print("(--no-tag-write: albumartist tags left as-is - beets may still split)")
-        return
+        prune_unorganized(unorganized)
 
-    print(f"writing albumartist tags on {len(tag_writes)} files...")
-    for src, aa in tag_writes:
-        path = moved.get(os.path.normpath(src), src)
-        write_tag(path, albumartist=aa)
+        if no_tag_write:
+            print("(--no-tag-write: albumartist tags left as-is - beets may still split)")
+        else:
+            print(f"writing albumartist tags on {len(tag_writes)} files...")
+            for src, aa in tag_writes:
+                if os.path.normpath(src) in quarantined:
+                    continue
+                path = moved.get(os.path.normpath(src), src)
+                j.tag(path, albumartist=aa)
 
-    if album_tag_writes:
-        print(f"writing album tags on {len(album_tag_writes)} files...")
-        for src, album in album_tag_writes:
-            path = moved.get(os.path.normpath(src), src)
-            write_tag(path, album=album)
+            if album_tag_writes:
+                print(f"writing album tags on {len(album_tag_writes)} files...")
+                for src, album in album_tag_writes:
+                    if os.path.normpath(src) in quarantined:
+                        continue
+                    path = moved.get(os.path.normpath(src), src)
+                    j.tag(path, album=album)
+    print(f"journal: {j.path}  (run {j.run_id}; revert with `organize undo`)")
 
 
 def stage(unorganized, crate, apply=False, merge_existing=True,
