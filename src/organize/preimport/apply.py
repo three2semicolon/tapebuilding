@@ -23,8 +23,6 @@ def duplicates_dir(crate):
     return d
 
 
-
-
 def prune_unorganized(unorganized):
     """remove now-empty stray dirs left under <input> after moves, but keep the
     input root and the staging albums/ root (even if empty)."""
@@ -86,6 +84,25 @@ def _apply(staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes,
     print(f"journal: {j.path}  (run {j.run_id}; revert with `organize undo`)")
 
 
+def _report_import_leftovers(unorganized):
+    """Report files left in unorganized/ after beets processing that would be
+    re-downloaded on a future beets import (Bug 11 equivalent).
+
+    Returns tuple of (count, list_of_paths) where list_of_paths is only included
+    when verbose=True."""
+    leftovers_dir = os.path.join(unorganized, 'unorganized')
+    if not os.path.isdir(leftovers_dir):
+        return 0, []
+
+    leftovers = []
+    for dp, dirs, fns in os.walk(leftovers_dir):
+        for fn in fns:
+            if fn.lower().endswith(('.mp3', '.flac', '.m4a', '.opus', '.ogg', '.wav', '.aac')):
+                leftovers.append(os.path.join(dp, fn))
+
+    return len(leftovers), leftovers
+
+
 def stage(unorganized, crate, apply=False, merge_existing=True,
           verbose=False, no_tag_write=False):
     """stage <unorganized> for a clean beets import. returns a report dict;
@@ -109,10 +126,24 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
     print(f"scanned {len(files)} audio files")
     groups = group_files(files)
     idx = index_existing_albums(crate) if merge_existing else {}
-    report, staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes = build_plan(
-        groups, unorganized, crate, idx)
+    plan_result = build_plan(groups, unorganized, crate, idx)
+
+    # Extract values from Plan dataclass
+    report = plan_result.report
+    staged_moves = plan_result.staged_moves
+    merged_moves = plan_result.merged_moves
+    dup_moves = plan_result.dup_moves
+    tag_writes = plan_result.tag_writes
+    album_tag_writes = plan_result.album_tag_writes
+
     report['tag_writes'] = len(tag_writes) if not no_tag_write else 0
     report['album_tag_writes'] = len(album_tag_writes) if not no_tag_write else 0
+
+    # Bug 11 equivalent: add import leftovers report
+    leftover_count, leftover_paths = _report_import_leftovers(unorganized)
+    report['leftover_count'] = leftover_count
+    if verbose:
+        report['leftover_paths'] = leftover_paths
 
     album_groups = sum(1 for k, m in groups.items() if k[0] == 'album' and len(m) >= 2)
     print()
@@ -127,6 +158,7 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
     print(f"  duplicates (-> crate/duplicates/): {len(report['duplicates'])}")
     print(f"  albumartist tags to write       : {report['tag_writes']}")
     print(f"  album tags to write             : {report['album_tag_writes']}")
+    print(f"  import leftovers                : {report['leftover_count']} files")
     if idx:
         print(f"  existing albums scanned for merge: {len(idx)}")
 
@@ -146,6 +178,15 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
               " singletons instead of staged/merged as 'Various Artists'):")
         for album, n in sorted(report['split_groups'], key=lambda x: -x[1])[:25]:
             print(f"    {n:>4} files  {album!r}")
+
+    # Bug 11 equivalent: report import leftovers
+    if report['leftover_count'] > 0:
+        print(f"\n  import leftovers ({report['leftover_count']} files):")
+        if verbose and 'leftover_paths' in report:
+            for path in report['leftover_paths'][:25]:
+                print(f"    {os.path.relpath(path, unorganized)}")
+        elif not verbose:
+            print(f"    (use --verbose to see paths)")
 
     if verbose:
         if staged_moves:

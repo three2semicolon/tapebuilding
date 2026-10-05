@@ -21,6 +21,7 @@ import os
 import sys
 
 from lib.tags import safe_move, write_tag, sanitize
+from lib.text import render_credit
 
 from .common import resolve_crate
 from .resplit_plan import plan_resplit
@@ -79,13 +80,13 @@ def run_resplit(crate=None, apply=False, no_tag_write=False, verbose=False):
                 seen = set()
                 for idx, m in enumerate(comp):
                     ext = os.path.splitext(m['path'])[1]
-                    nm = f"{idx + 1:02d} - {sanitize(m['artist'])} - {sanitize(m['title'])}{ext}"
+                    nm = f"{idx + 1:02d} - {sanitize(render_credit(m['artist']))} - {sanitize(m['title'])}{ext}"
                     base, sfx = os.path.splitext(nm); c = 2
                     while nm.lower() in seen:
                         nm = f"{base} ({c}){sfx}"; c += 1
                     seen.add(nm.lower())
                     all_moves.append((m['path'], os.path.join(dst_folder, nm), aa, dom_album))
-                print(f"    {len(comp)} files -> albums/{os.path.basename(dst_folder)}/  [albumartist={aa!r}]")
+                print(f"    {len(comp)} files -> albums/{os.path.basename(dst_folder)}/  [albumartist={render_credit(aa)!r}]")
 
     if verbose:
         print("\n  all moves:")

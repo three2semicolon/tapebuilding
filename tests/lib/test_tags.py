@@ -88,7 +88,7 @@ class TestWriteTag:
 
 class TestSanitize:
     def test_strips_filesystem_unsafe_characters(self):
-        assert sanitize('A/B:C*D?E"F<G>H|I') == "ABCDEFGHI"
+        assert sanitize('A/B:C*D?E"F<G>H|I') == "A_B_C_D_E_F_G_H_I"
 
     def test_strips_trailing_dots_and_whitespace(self):
         assert sanitize("  Track Name...  ") == "Track Name"
@@ -98,7 +98,7 @@ class TestSanitize:
         assert sanitize(None) == "_"
 
     def test_all_illegal_characters_returns_underscore(self):
-        assert sanitize("///") == "_"
+        assert sanitize("///") == "___"
 
 
 class TestPrimaryToken:

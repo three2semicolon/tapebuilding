@@ -83,40 +83,40 @@ organize source.
 
 **Phase 2 — grouping logic**
 
-- [ ] **Bug 2b:** shared `split_group()` (raw-`artist` union-find promoted from
+- [X] **Bug 2b:** shared `split_group()` (raw-`artist` union-find promoted from
   resplit, compilation guard, self-titled-single signal, ambiguity reported not
   guessed) used by `cleanup/grouping.py` and `preimport/plan.py`. Any group
   size, not just two.
-- [ ] **Bug 2b/4 addendum:** `split_group()` tokenizes with `group_key()` and
+- [X] **Bug 2b/4 addendum:** `split_group()` tokenizes with `group_key()` and
   discards `''` — today two unrelated non-Latin artists both tokenize to `''`
   and count as "sharing an artist". Also convert the `check_tags` helpers
   (`_is_collaboration`, `_is_known_label`, the `aa == artist` compare).
-- [ ] **Bug 4:** never merge on an empty key; use `group_album_key`.
-- [ ] Singles are destinations too: same collision/duplicate handling as
+- [X] **Bug 4:** never merge on an empty key; use `group_album_key`.
+- [X] Singles are destinations too: same collision/duplicate handling as
   album folders (`GEOTHEORY - LEVITATE (2)` etc.).
-- [ ] `build_plan()` returns a `Plan` dataclass instead of a 7-tuple;
+- [X] `build_plan()` returns a `Plan` dataclass instead of a 7-tuple;
   preimport's report-dict keys stay stable.
-- [ ] **Bug 14:** preimport duplicate check uses `normalize_key(title)` → every
+- [X] **Bug 14:** preimport duplicate check uses `normalize_key(title)` → every
   non-Latin title is `''` → false duplicates quarantined. Replace with
   `find_duplicates()`.
-- [ ] **Bug 5:** delete the "Various Artists → most common artist" override in
+- [X] **Bug 5:** delete the "Various Artists → most common artist" override in
   `grouping.build_plan` (dissolves real compilations; why the summary says
   `'Various Artists' albums: 0`).
-- [ ] **Bug 6:** incumbent-keeps-name collision handling; quarantine true
+- [X] **Bug 6:** incumbent-keeps-name collision handling; quarantine true
   duplicates to `duplicates/`; keep-existing-folder rule (case-insensitive
   exact match reuses the existing folder); planner asserts no duplicate/occupied
   destinations.
-- [ ] **Bug 3b:** `index_existing_albums()` returns the raw album string;
+- [X] **Bug 3b:** `index_existing_albums()` returns the raw album string;
   preimport merges compute `canonical_album()` over incoming ∪ existing.
 - [X] **Bug 10 (fixed in Phase 0):** `run_cleanup()` `UnboundLocalError` (`moved` defined inside
   one `if`, used in the next).
-- [ ] `preimport/plan.py`: remove dead `if … : pass` no-op.
+- [X] `preimport/plan.py`: remove dead `if … : pass` no-op.
 - [ ] **`organize import` leftovers report:** beets runs `--quiet` and skips
   uncertain matches, leaving files in `unorganized/`; with the indexer no
   longer seeing that dir they'd reappear in `unmatched.csv` and get
   re-downloaded. Report the count (and paths in `--verbose`) in the return
   value of `run_import()` / `core download-songs`.
-- [ ] Gate: known-answer fixtures (listed in `BUGFIX_PLAN.md`) + real dry run
+- [X] Gate: known-answer fixtures (listed in `BUGFIX_PLAN.md`) + real dry run
   reviewed by hand.
 
 **Phase 3 — artist-credit rendering + `sanitize()` (isolated, high churn)**

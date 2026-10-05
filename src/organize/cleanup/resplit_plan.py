@@ -21,7 +21,7 @@ from lib.tags import (
     read_tags,
     sanitize,
 )
-from lib.text import normalize_key, split_artists
+from lib.text import normalize_key, split_artists, render_credit
 
 
 def _raw_artist_tokens(f):
@@ -121,7 +121,7 @@ def _name_album_component(members, existing_names):
     Returns (name, canonical_albumartist, dominant_album)."""
     aa = _canonical_albumartist_from_artist(members)
     album = dominant_album(members)
-    name = sanitize(f"{aa} - {album}") or 'Unknown Album'
+    name = sanitize(f"{render_credit(aa)} - {album}") or 'Unknown Album'
     base, c = name, 2
     while name in existing_names:
         name = f"{base} ({c})"
@@ -174,7 +174,7 @@ def plan_resplit(crate):
                 f = comp[0]
                 ext = os.path.splitext(f['path'])[1]
                 dst = os.path.join(singles_dir,
-                                   f"{sanitize(f['artist'])} - {sanitize(f['title'])}{ext}")
+                                   f"{sanitize(render_credit(f['artist']))} - {sanitize(f['title'])}{ext}")
                 pieces.append(('single', f, dst))
             else:
                 new_name, aa, album = _name_album_component(comp, existing_names)

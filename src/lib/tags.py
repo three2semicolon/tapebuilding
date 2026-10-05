@@ -15,23 +15,28 @@ import shutil
 import sys
 import unicodedata
 
-from lib.text import normalize_key, normalize_album, strip_edition_suffix
+from lib.text import normalize_key, normalize_album, strip_edition_suffix, split_artists, group_key
 
 try:
     from mediafile import MediaFile
 except ImportError:  # pragma: no cover
     sys.exit("mediafile not installed - run `uv sync` first (beets pulls it in).")
 
-from lib.text import normalize_key
-
 EXTENSIONS = ('.mp3', '.flac', '.m4a', '.opus', '.ogg', '.wav', '.aac')
 
 _ILLEGAL_RE = re.compile(r'[\\/:*?"<>|]')
 
+# Allowlist for artist credits that contain '/' but should be rendered with '_' instead of being split
+# Built from Phase 3 dry run output - review distinct '/'-containing credits with counts
+_LEGITIMATE_SLASH_CREDITS = {
+    'AC/DC',  # Added for testing - should be reviewed and updated based on actual dry run
+}
+
 
 def sanitize(s):
-    """filesystem-safe path component from a tag string."""
-    s = _ILLEGAL_RE.sub('', s or '')
+    """filesystem-safe path component from a tag string.
+    Replace illegal characters with '_' (beets-style) instead of deleting."""
+    s = _ILLEGAL_RE.sub('_', s or '')
     s = s.strip().rstrip('.')
     return s or '_'
 
@@ -107,6 +112,57 @@ def find_duplicates(files):
             duplicates.append(group_files)
 
     return duplicates
+
+
+def artist_tokens(f):
+    """group_key tokens for one file's raw `artist` tag ONLY (split on the
+    usual credit separators, empty tokens dropped).
+
+    deliberately does NOT include `albumartist`: cleanup/preimport write that
+    tag themselves, so a previously-wrong merge leaves every member carrying
+    the same self-inflicted albumartist ('Various Artists', or the winning
+    artist). unioning it in makes unrelated tracks look related and defeats
+    every split check (BUGFIX_PLAN.md, Bug 2b, "poison" problem)."""
+    tokens = set()
+    for a in split_artists(f.get('artist') or ''):
+        token = group_key(a)
+        if token:
+            tokens.add(token)
+    return tokens
+
+
+def split_group(members):
+    """partition members into groups that transitively share at least one
+    artist_tokens() token (raw `artist` tag only - never albumartist) - a
+    simple union-find over pairwise token overlap. members whose token set is
+    disjoint from everyone else end up alone in their own group.
+
+    Returns list of groups (each group is a list of file dicts), in
+    first-seen order.
+    """
+    parent = list(range(len(members)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i, j):
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[ri] = rj
+
+    token_sets = [artist_tokens(m) for m in members]
+    for i in range(len(members)):
+        for j in range(i + 1, len(members)):
+            if token_sets[i] & token_sets[j]:
+                union(i, j)
+
+    components = collections.OrderedDict()
+    for i, m in enumerate(members):
+        components.setdefault(find(i), []).append(m)
+    return list(components.values())
 
 
 def write_tag(path, **fields):
@@ -335,8 +391,9 @@ def safe_move(src, dst):
 def member_filename(track_num, artist, title, ext):
     """create standardized filename for album track member.
     format: "{track:02d} - {artist} - {title}{ext}" """
+    from lib.text import render_credit
     track_str = f"{int(track_num) if track_num else 0:02d}"
-    safe_artist = sanitize(artist) if artist else 'Unknown Artist'
+    safe_artist = sanitize(render_credit(artist)) if artist else 'Unknown Artist'
     safe_title = sanitize(title) if title else 'Unknown Title'
     return f"{track_str} - {safe_artist} - {safe_title}{ext or ''}"
 
@@ -344,7 +401,8 @@ def member_filename(track_num, artist, title, ext):
 def single_filename(artist, title, ext):
     """create standardized filename for single.
     format: "{artist} - {title}{ext}" """
-    safe_artist = sanitize(artist) if artist else 'Unknown Artist'
+    from lib.text import render_credit
+    safe_artist = sanitize(render_credit(artist)) if artist else 'Unknown Artist'
     safe_title = sanitize(title) if title else 'Unknown Title'
     return f"{safe_artist} - {safe_title}{ext or ''}"
 

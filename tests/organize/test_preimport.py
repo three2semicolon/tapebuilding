@@ -210,11 +210,20 @@ class TestStageReportShape:
 
         report = stage(str(tmp_path / "unorganized"), str(crate), apply=False)
 
-        assert set(report.keys()) == {
+        # Base keys that should always be present
+        base_keys = {
             'scanned', 'staged_folders', 'merged_folders', 'merged_tracks',
             'split_groups', 'duplicates', 'tag_writes', 'singletons', 'ambiguous',
             'album_tag_writes',
         }
+
+        # Additional keys that may be present
+        optional_keys = {'leftover_count'}
+        if 'leftover_paths' in report:
+            optional_keys.add('leftover_paths')
+
+        assert base_keys.issubset(set(report.keys()))
+        assert set(report.keys()) == base_keys.union(optional_keys)
 
     def test_missing_input_dir_returns_a_report_without_erroring(self, tmp_path):
         report = stage(str(tmp_path / "does_not_exist"), str(tmp_path / "crate"))

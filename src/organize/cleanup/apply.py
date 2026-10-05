@@ -20,7 +20,7 @@ from lib.tags import (
     read_tags,
     scan_audio,
 )
-from lib.text import normalize_key, split_artists
+from lib.text import group_key, split_artists
 from organize.journal import Journal
 
 from .common import resolve_crate
@@ -63,7 +63,7 @@ def backup_db(db, keep=DB_BACKUPS_KEPT):
 def rebuild_db(crate, config_path):
     """fresh beets.db matching the reorganized crate: back up (not delete)
     the old db, then as-is reimport (no autotag, no MusicBrainz lookups) of
-    albums/ and singles/. if either import exits non-zero the backup path is
+    albums/ and singles/. if either exit non-zero the backup path is
     printed so the old db can be restored by hand."""
     import subprocess
     db = os.path.join(crate, 'beets.db')
@@ -120,15 +120,15 @@ KNOWN_LABEL_ALBUMARTISTS = {
 
 def _is_known_label(aa: str) -> bool:
     """Check if albumartist is a known label (case-insensitive, normalized)."""
-    return normalize_key(aa) in KNOWN_LABEL_ALBUMARTISTS
+    return group_key(aa) in KNOWN_LABEL_ALBUMARTISTS
 
 
 def _is_collaboration(artist: str, albumartist: str) -> bool:
     """True if albumartist appears to be one of the collaborating artists.
     e.g. artist='Skrillex & Fred again..', albumartist='Skrillex' -> True
-    Uses normalized token overlap."""
-    artist_tokens = {normalize_key(a) for a in split_artists(artist or '')}
-    aa_norm = normalize_key(albumartist or '')
+    Uses group_key token overlap."""
+    artist_tokens = {group_key(a) for a in split_artists(artist or '')}
+    aa_norm = group_key(albumartist or '')
     return aa_norm in artist_tokens
 
 
@@ -183,10 +183,10 @@ def check_tags(crate=None, apply=False, verbose=False):
                         # no albumartist at all -> should be set to artist
                         suspicious.append((t['path'], 'singles', '(empty)', artist, 'missing'))
                         continue
-                    aa_norm = normalize_key(aa)
+                    aa_norm = group_key(aa)
                     if aa_norm in ('variousartists', 'va'):
                         continue  # explicit compilation tag - leave alone
-                    if aa_norm == normalize_key(artist):
+                    if aa_norm == group_key(artist):
                         continue  # matches its own artist - fine for a single
                     if _is_known_label(aa):
                         continue  # known label albumartist - legitimate
@@ -201,7 +201,7 @@ def check_tags(crate=None, apply=False, verbose=False):
                 canonical = canonical_albumartist(folder_files)
                 for t in folder_files:
                     aa = t['albumartist'] or ''
-                    if normalize_key(aa) != normalize_key(canonical):
+                    if group_key(aa) != group_key(canonical):
                         suspicious.append((t['path'], 'albums', aa, canonical, 'mismatch'))
 
     print(f"files with anomalous albumartist : {len(suspicious)}")
@@ -258,7 +258,14 @@ def run_cleanup(crate=None, apply=False, no_tag_write=False,
     files = scan_audio(crate)
     print(f"scanned {len(files)} audio files")
     groups = group_files(files)
-    album_moves, singleton_moves, noop, tag_writes, album_tag_writes, va_groups, split_groups = build_plan(groups, crate)
+    plan = build_plan(groups, crate)
+    album_moves = plan.album_moves
+    singleton_moves = plan.singleton_moves
+    noop = plan.noop_count
+    tag_writes = plan.tag_writes
+    album_tag_writes = plan.album_tag_writes
+    va_groups = plan.va_groups
+    split_groups = plan.split_groups
 
     album_groups = sum(1 for k, m in groups.items() if k[0] == 'album' and len(m) > 1)
     singleton_count = len(files) - sum(len(m) for k, m in groups.items() if k[0] == 'album' and len(m) > 1)

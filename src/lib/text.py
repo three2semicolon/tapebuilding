@@ -201,6 +201,31 @@ def fold_key(s):
     return kept
 
 
+# Allowlist for artist credits that contain '/' but should be rendered with '_' instead of being split
+# Built from Phase 3 dry run output - review distinct '/'-containing credits with counts
+# TODO: Move this allowlist to lib.tags to avoid circular dependency, or provide a getter function
+_LEGITIMATE_SLASH_CREDITS = {
+    'AC/DC',  # Placeholder - should be reviewed and updated based on actual dry run
+}
+
+
+def render_credit(raw):
+    """render artist credit for path construction: split on '/' only, join with ', ';
+    '&' and ',' inside credits left untouched (D1).
+    Legitimate slash-containing credits (from allowlist) are rendered with '_' (beets-style)."""
+    if not raw:
+        return ''
+    raw_str = str(raw)
+    # Check if this is a known legitimate slash credit that should not be split
+    if raw_str in _LEGITIMATE_SLASH_CREDITS:
+        # Render with '_' replacing '/' (beets-style)
+        return raw_str.replace('/', '_')
+    # Split on '/' only (the tag-level multi-value delimiter)
+    parts = [p.strip() for p in raw_str.split('/') if p and p.strip()]
+    # Join with ', ' (D1 decision)
+    return ', '.join(parts)
+
+
 def _run_sanity_checks():
     """inline regression checks - `python -m lib.text` to run.
 
@@ -307,6 +332,15 @@ def _run_sanity_checks():
     assert fold_key('Hello_World!') == 'helloworld'  # underscore kept? Wait, [a-z0-9] only, so underscore removed
     # Actually, [a-z0-9] means only lowercase letters and digits, so underscore should be removed
     assert fold_key('Hello_World!') == 'helloworld'
+
+    # render_credit: split on '/' only, join with ', '; '&' and ',' inside credits untouched
+    assert render_credit('Run The Jewels/El-P/Killer Mike') == 'Run The Jewels, El-P, Killer Mike'
+    assert render_credit('King Gizzard & The Lizard Wizard') == 'King Gizzard & The Lizard Wizard'
+    assert render_credit('Simon & Garfunkel') == 'Simon & Garfunkel'
+    assert render_credit('Tyler, The Creator') == 'Tyler, The Creator'
+    assert render_credit('AC/DC') == 'AC_DC'  # Legitimate slash credit -> rendered with '_'
+    assert render_credit('') == ''
+    assert render_credit(None) == ''
 
     print('lib.text sanity checks: ok')
 

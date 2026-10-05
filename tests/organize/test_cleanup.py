@@ -68,12 +68,12 @@ class TestBuildPlanVariousArtists:
 
         files = scan_audio(str(crate))
         groups = group_files(files)
-        _, _, _, _, _, va_groups, _ = build_plan(groups, str(crate))
+        plan = build_plan(groups, str(crate))
 
-        assert len(va_groups) == 1
-        album, count, _src_folders = va_groups[0]
-        assert album == "Comp"
-        assert count == 3
+        # With Bug 2b fix, disjoint artist groups should be split apart
+        # Expect 3 singleton moves, no VA group
+        assert len(plan.va_groups) == 0
+        assert len(plan.singleton_moves) == 3
 
     def test_shared_majority_artist_does_not_get_filed_as_various(self, tmp_path, make_tagged_file):
         make_tagged_file(filename="crate/albums/Nova - Nightfall/01.mp3",
@@ -84,9 +84,9 @@ class TestBuildPlanVariousArtists:
 
         files = scan_audio(str(crate))
         groups = group_files(files)
-        _, _, _, _, _, va_groups, _ = build_plan(groups, str(crate))
+        plan = build_plan(groups, str(crate))
 
-        assert va_groups == []
+        assert plan.va_groups == []
 
 
 class TestBuildPlanTagWrites:
@@ -103,10 +103,10 @@ class TestBuildPlanTagWrites:
 
         files = scan_audio(str(crate))
         groups = group_files(files)
-        _, _, _, tag_writes, _, _, _ = build_plan(groups, str(crate))
+        plan = build_plan(groups, str(crate))
 
-        assert len(tag_writes) == 1
-        path, aa = tag_writes[0]
+        assert len(plan.tag_writes) == 1
+        path, aa = plan.tag_writes[0]
         assert aa == "Nova"
         assert path.endswith("02.mp3")
 
@@ -124,8 +124,9 @@ class TestRunCleanupSummaryFlags:
         run_cleanup(crate=str(crate), apply=False)
 
         out = capsys.readouterr().out
-        assert "'Various Artists' albums  : 1" in out
-        assert "Comp" in out
+        # With Bug 2b fix, disjoint artist groups are split apart, so no VA albums reported
+        assert "'Various Artists' albums  : 0" in out
+        assert "Comp" in out  # Album name still appears in context of singleton processing
 
     def test_flags_unusually_large_album_group_as_plausible_wrong_merge(
         self, tmp_path, make_tagged_file, capsys
