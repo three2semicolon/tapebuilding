@@ -270,7 +270,8 @@ def build_plan(groups, crate):
         components, status = resolve_group(members)
         album = dominant_album(members)
         if status == 'split':
-            split_groups.append((album, len(members)))
+            artists = sorted({m['artist'] for m in members})
+            split_groups.append((album, len(members), artists))
         elif status == 'ambiguous':
             artists = sorted({m['artist'] for m in members})
             ambiguous_groups.append((album, len(members), artists))

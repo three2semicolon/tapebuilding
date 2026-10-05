@@ -384,6 +384,24 @@ def safe_move(src, dst):
         while os.path.exists(f"{base} ({i}){ext}"):
             i += 1
         dst = f"{base} ({i}){ext}"
+
+    # Handle Windows MAX_PATH limitation (260 characters)
+    if sys.platform.startswith('win') and len(dst) >= 260:
+        # Try to truncate the filename to fit within MAX_PATH
+        dirname = os.path.dirname(dst)
+        basename = os.path.basename(dst)
+        name, ext = os.path.splitext(basename)
+
+        # Calculate how much we need to trim
+        max_basename_len = 255 - len(dirname) - 1  # -1 for separator
+        if len(basename) > max_basename_len and max_basename_len > len(ext) + 1:  # +1 for dot
+            # Truncate the name part, keep extension
+            max_name_len = max_basename_len - len(ext) - 1  # -1 for dot
+            if max_name_len > 0:
+                truncated_name = name[:max_name_len]
+                basename = f"{truncated_name}{ext}"
+                dst = os.path.join(dirname, basename)
+
     shutil.move(src, dst)
     return dst
 

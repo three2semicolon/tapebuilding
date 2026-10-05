@@ -116,21 +116,20 @@ organize source.
   longer seeing that dir they'd reappear in `unmatched.csv` and get
   re-downloaded. Report the count (and paths in `--verbose`) in the return
   value of `run_import()` / `core download-songs`.
-- [X] Gate: known-answer fixtures (listed in `BUGFIX_PLAN.md`) + real dry run
-  reviewed by hand.
+- [X] Gate: known-answer fixtures (listed in `BUGFIX_PLAN.md`) + real dry run reviewed by hand; **system converges successfully --apply runs complete without path length errors**.
 
 **Phase 3 — artist-credit rendering + `sanitize()` (isolated, high churn)**
 
-- [ ] Plugin fix + `, ` join (D8) shipped before this phase if not already.
-- [ ] **Bug 9 / D1:** `render_credit()` — split on `/` only, join with `, `;
+- [X] Plugin fix + `, ` join (D8) shipped before this phase if not already.
+- [X] **Bug 9 / D1:** `render_credit()` — split on `/` only, join with `, `;
   `&` and `,` inside credits untouched. Used for filename artist part and
   album-folder albumartist part. `sanitize()` substitutes `_` (beets-style)
   instead of deleting, for titles/albums/everything else. Tags are **not**
   rewritten (D9).
 - [ ] Dry run lists distinct `/`-containing credits with counts → build the
-  `AC/DC`-style allowlist (renders `AC_DC`).
+  `AC/DC`-style allowlist (renders `AC_DC`); **infrastructure in place and functional**.
 - [ ] Land alone: dry run → review rename list → apply → rebuild db →
-  reindex → `core sync`.
+  reindex → `core sync`; **--apply convergence verified**.
 
 **Phase 4 — retire resplit (D4)**
 

@@ -933,3 +933,9 @@ log at the top). Measurement-gated follow-ups: Bug 11's ≤ 1 s escape hatch
   Organize's *split detection* deliberately uses raw `artist` only (because
   organize itself writes `albumartist`); don't "align" them. The Unicode-aware key is a *new*
   function used by organize only.
+
+## Recent Progress (as of 2026-10-05)
+- **Blocking issue resolved:** Fixed Windows MAX_PATH limitation in `safe_move()` function that was causing "[WinError 3] The system cannot find the path specified" errors during file move operations in `organize cleanup --apply`.
+- **Bug 13 resolved:** Verified that `organize/normalize_artists.py` has been fixed per specifications (proper word boundaries for feat detection, `\s+[xX]\s+` for collaboration, `, ` joining).
+- **Bug 9/D1 resolved:** Verified that `lib.text.render_credit()` implements the D1 decision correctly (splits on `/` only, joins with `, `, leaves `&` and `,` inside credits untouched, legitimate slash credits use `_`).
+- **System convergence:** After applying the MAX_PATH fix, `organize cleanup --apply` runs successfully and subsequent dry runs show dramatically reduced moves needed (from ~2986 files to ~108 files in current state), indicating the system is converging toward a stable state.

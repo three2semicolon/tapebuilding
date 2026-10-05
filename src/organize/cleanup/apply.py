@@ -266,6 +266,7 @@ def run_cleanup(crate=None, apply=False, no_tag_write=False,
     album_tag_writes = plan.album_tag_writes
     va_groups = plan.va_groups
     split_groups = plan.split_groups
+    ambiguous_groups = plan.ambiguous_groups
 
     album_groups = sum(1 for k, m in groups.items() if k[0] == 'album' and len(m) > 1)
     singleton_count = len(files) - sum(len(m) for k, m in groups.items() if k[0] == 'album' and len(m) > 1)
@@ -291,8 +292,13 @@ def run_cleanup(crate=None, apply=False, no_tag_write=False,
     if split_groups:
         print("\n  split apart (Bug 2 - same-titled but unrelated singles, filed separately"
               " instead of merged as 'Various Artists'):")
-        for album, n in sorted(split_groups, key=lambda x: -x[1])[:25]:
-            print(f"    {n:>4} files  {album!r}")
+        for album, n, artists in sorted(split_groups, key=lambda x: -x[1])[:25]:
+            print(f"    {n:>4} files  {album!r}  [{', '.join(artists)}]")
+
+    if ambiguous_groups:
+        print("\n  ambiguous groups (>=4 tracks, unclear structure - kept merged for review):")
+        for album, n, artists in sorted(ambiguous_groups, key=lambda x: -x[1])[:25]:
+            print(f"    {n:>4} files  {album!r}  [{', '.join(artists)}]")
 
     # suspiciously large groups are a wrong-merge smell - list the biggest
     big = sorted(((dominant_album(m), len(m), os.path.basename(os.path.dirname(m[0]['path'])))

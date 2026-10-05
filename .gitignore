@@ -40,7 +40,7 @@ retry_list.txt
 # organizing
 *config.yaml
 !organize/config.yaml.example
-dryrun.out
+dryrun.out*
 
 # downloading
 *firebase-adminsdk*
