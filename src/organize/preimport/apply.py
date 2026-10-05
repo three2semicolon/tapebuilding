@@ -38,8 +38,8 @@ def prune_unorganized(unorganized):
                 pass
 
 
-def _apply(staged_moves, merged_moves, dup_moves, tag_writes, no_tag_write,
-           unorganized, crate):
+def _apply(staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes,
+           no_tag_write, unorganized, crate):
     """perform the moves (stage + merge), quarantine duplicates, then resolve
     moved paths for the tag writes."""
     moved = {}
@@ -71,6 +71,12 @@ def _apply(staged_moves, merged_moves, dup_moves, tag_writes, no_tag_write,
         path = moved.get(os.path.normpath(src), src)
         write_tag(path, albumartist=aa)
 
+    if album_tag_writes:
+        print(f"writing album tags on {len(album_tag_writes)} files...")
+        for src, album in album_tag_writes:
+            path = moved.get(os.path.normpath(src), src)
+            write_tag(path, album=album)
+
 
 def stage(unorganized, crate, apply=False, merge_existing=True,
           verbose=False, no_tag_write=False):
@@ -95,9 +101,10 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
     print(f"scanned {len(files)} audio files")
     groups = group_files(files)
     idx = index_existing_albums(crate) if merge_existing else {}
-    report, staged_moves, merged_moves, dup_moves, tag_writes = build_plan(
+    report, staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes = build_plan(
         groups, unorganized, crate, idx)
     report['tag_writes'] = len(tag_writes) if not no_tag_write else 0
+    report['album_tag_writes'] = len(album_tag_writes) if not no_tag_write else 0
 
     album_groups = sum(1 for k, m in groups.items() if k[0] == 'album' and len(m) >= 2)
     print()
@@ -111,6 +118,7 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
     print(f"  split (false VA collision)      : {len(report['split_groups'])}")
     print(f"  duplicates (-> crate/duplicates/): {len(report['duplicates'])}")
     print(f"  albumartist tags to write       : {report['tag_writes']}")
+    print(f"  album tags to write             : {report['album_tag_writes']}")
     if idx:
         print(f"  existing albums scanned for merge: {len(idx)}")
 
@@ -150,6 +158,10 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
 
     if not apply:
         print("\ndry run - re-run with --apply to stage folders and write tags.")
+        if tag_writes:
+            print(f"(would write albumartist tags on {len(tag_writes)} files; pass --no-tag-write to skip)")
+        if album_tag_writes:
+            print(f"(would write album tags on {len(album_tag_writes)} files; pass --no-tag-write to skip)")
         return report
 
     if staged_moves:
@@ -158,7 +170,7 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
         print(f"merging {len(merged_moves)} files into existing crate albums...")
     if dup_moves:
         print(f"quarantining {len(dup_moves)} duplicates -> crate/duplicates/...")
-    _apply(staged_moves, merged_moves, dup_moves, tag_writes, no_tag_write,
+    _apply(staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes, no_tag_write,
            unorganized, crate)
 
     if report['merged_folders']:

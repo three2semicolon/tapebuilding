@@ -109,7 +109,7 @@ def _member_name(i, m, folder_path, seen):
 
 
 def build_plan(groups, unorganized, crate, idx):
-    """decide a destination + albumartist tag for every album-group file.
+    """decide a destination + albumartist + album tag for every album-group file.
     returns a report dict + move/tag-write lists (src, dst, albumartist_to_write).
 
     three outcomes per group (= album tag shared):
@@ -123,6 +123,7 @@ def build_plan(groups, unorganized, crate, idx):
     merged_moves = []     # (src, dst, aa_for_tag)
     dup_moves = []        # (src,) - tracks the target album already owns; -> duplicates/
     tag_writes = []       # (src, aa_for_tag)
+    album_tag_writes = []   # (src, album)
     seen = {}             # folder -> set of lowercased names (collision guard)
     existing_titles_cache = {}  # folder_path -> set(norm(title)) (lazy, merge targets only)
     report = {
@@ -146,7 +147,7 @@ def build_plan(groups, unorganized, crate, idx):
         aa = canonical_albumartist(members)
         album = dominant_album(members)
 
-        if is_unrelated_va_collision(aa, members):
+        if is_unrelated_va_collision(members):
             report['singletons'] += len(members)
             report['split_groups'].append((album, len(members)))
             continue
@@ -182,7 +183,13 @@ def build_plan(groups, unorganized, crate, idx):
                     merged_moves.append((m['path'], dst, aa_for_tag))
                 if normalize_key(m['albumartist'] or '') != normalize_key(aa_for_tag):
                     tag_writes.append((m['path'], aa_for_tag))
+                if normalize_key(m['album'] or '') != normalize_key(aa_for_tag if aa_for_tag == album else album):
+                    pass
                 merged_here += 1
+            # album tag writes: enforce the dominant album string so all files in group agree
+            for m in members:
+                if normalize_key(m['album'] or '') != normalize_key(album):
+                    album_tag_writes.append((m['path'], album))
             if merged_here:
                 report['merged_folders'].append(folder_path)
             report['merged_tracks'] += merged_here
@@ -196,6 +203,10 @@ def build_plan(groups, unorganized, crate, idx):
                     staged_moves.append((m['path'], dst, aa))
                 if normalize_key(m['albumartist'] or '') != normalize_key(aa):
                     tag_writes.append((m['path'], aa))
+            # album tag writes: enforce the dominant album string so all files in group agree
+            for m in members:
+                if normalize_key(m['album'] or '') != normalize_key(album):
+                    album_tag_writes.append((m['path'], album))
             report['staged_folders'].append(folder_path)
             if ambiguous:
                 report['ambiguous'].append((aa, album))
@@ -205,6 +216,6 @@ def build_plan(groups, unorganized, crate, idx):
             if ambiguous:
                 report['ambiguous'].append((aa, album))
 
-    return report, staged_moves, merged_moves, dup_moves, tag_writes
+    return report, staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes
 
 

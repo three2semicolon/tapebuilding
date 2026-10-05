@@ -65,17 +65,17 @@ def run_resplit(crate=None, apply=False, no_tag_write=False, verbose=False):
         print("\nnothing to resplit - every existing album folder is already artist-coherent.")
         return True
 
-    all_moves = []  # (src, dst, albumartist_or_None)
+    all_moves = []  # (src, dst, albumartist_or_None, album_or_None)
     for old_folder, pieces in folder_splits:
         rel = os.path.relpath(old_folder, os.path.join(crate, 'albums'))
         print(f"\n  {rel}/  ->  {len(pieces)} piece(s):")
         for piece in pieces:
             if piece[0] == 'single':
                 _kind, f, dst = piece
-                all_moves.append((f['path'], dst, None))
+                all_moves.append((f['path'], dst, '', ''))
                 print(f"    1 file  -> singles/{os.path.basename(dst)}")
             else:
-                _kind, comp, dst_folder, aa = piece
+                _kind, comp, dst_folder, (aa, dom_album) = piece
                 seen = set()
                 for idx, m in enumerate(comp):
                     ext = os.path.splitext(m['path'])[1]
@@ -84,12 +84,12 @@ def run_resplit(crate=None, apply=False, no_tag_write=False, verbose=False):
                     while nm.lower() in seen:
                         nm = f"{base} ({c}){sfx}"; c += 1
                     seen.add(nm.lower())
-                    all_moves.append((m['path'], os.path.join(dst_folder, nm), aa))
+                    all_moves.append((m['path'], os.path.join(dst_folder, nm), aa, dom_album))
                 print(f"    {len(comp)} files -> albums/{os.path.basename(dst_folder)}/  [albumartist={aa!r}]")
 
     if verbose:
         print("\n  all moves:")
-        for src, dst, _aa in all_moves:
+        for src, dst, _aa, _album in all_moves:
             print(f"    {os.path.relpath(src, crate)}  ->  {os.path.relpath(dst, crate)}")
 
     if not apply:
@@ -98,7 +98,7 @@ def run_resplit(crate=None, apply=False, no_tag_write=False, verbose=False):
         return True
 
     print(f"\nmoving {len(all_moves)} files...")
-    for src, dst, _aa in all_moves:
+    for src, dst, _aa, _album in all_moves:
         safe_move(src, dst)
     for old_folder, _pieces in folder_splits:
         try:
@@ -108,10 +108,16 @@ def run_resplit(crate=None, apply=False, no_tag_write=False, verbose=False):
             pass
 
     if not no_tag_write:
-        writes = [(dst, aa) for _s, dst, aa in all_moves if aa]
-        print(f"writing albumartist tags on {len(writes)} files...")
-        for dst, aa in writes:
-            write_tag(dst, albumartist=aa)
+        aa_writes = [(dst, aa) for _s, dst, aa, _album in all_moves if aa is not None]
+        album_writes = [(dst, album) for _s, dst, _aa, album in all_moves if album is not None]
+        if aa_writes:
+            print(f"writing albumartist tags on {len(aa_writes)} files...")
+            for dst, aa in aa_writes:
+                write_tag(dst, albumartist=aa)
+        if album_writes:
+            print(f"writing album tags on {len(album_writes)} files...")
+            for dst, album in album_writes:
+                write_tag(dst, album=album)
     else:
         print("(--no-tag-write: albumartist tags left as-is - split folders may re-merge on a future beets run)")
 

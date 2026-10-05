@@ -59,7 +59,7 @@ from .grouping import (
 )
 from .resplit_plan import plan_resplit
 from .resplit import run_resplit
-from .apply import config_path, prune_empty_dirs, rebuild_db, run_cleanup
+from .apply import check_tags, config_path, prune_empty_dirs, rebuild_db, run_cleanup
 
 __all__ = [
     'resolve_crate',
@@ -69,6 +69,7 @@ __all__ = [
     'shares_artist_token',
     'plan_resplit',
     'run_resplit',
+    'check_tags',
     'config_path',
     'prune_empty_dirs',
     'rebuild_db',

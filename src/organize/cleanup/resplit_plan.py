@@ -86,12 +86,40 @@ def _scan_folder(folder):
     return members
 
 
+def _canonical_albumartist_from_artist(members):
+    """Like canonical_albumartist but uses ONLY the 'artist' tag, not
+    'albumartist'. For resplit, the albumartist tag is untrustworthy
+    (it's the self-inflicted 'Various Artists' from the wrong merge).
+    Returns the dominant artist string from raw 'artist' tags only."""
+    from collections import Counter
+    counts = Counter()
+    total = 0
+    for m in members:
+        # Use ONLY the 'artist' tag, split on features/commas
+        from lib.text import normalize_key, split_artists
+        for a in split_artists(m.get('artist') or ''):
+            counts[normalize_key(a)] += 1
+            total += 1
+    if not counts:
+        return 'Various Artists'
+    top_token, top_n = counts.most_common(1)[0]
+    # 50% threshold: if top token reaches >=50% of total, it's the canonical
+    if top_n * 2 >= total:
+        # Return the raw (unnormalized) version of the winning token
+        for m in members:
+            for a in split_artists(m.get('artist') or ''):
+                if normalize_key(a) == top_token:
+                    return a
+    return 'Various Artists'
+
+
 def _name_album_component(members, existing_names):
     """canonical '<albumartist> - <album>' folder name for one resplit
     component, disambiguated against every folder name already claimed
     this run (existing crate folders + earlier components from this same
-    resplit pass) so two components never collide."""
-    aa = canonical_albumartist(members)
+    resplit pass) so two components never collide.
+    Returns (name, canonical_albumartist, dominant_album)."""
+    aa = _canonical_albumartist_from_artist(members)
     album = dominant_album(members)
     name = sanitize(f"{aa} - {album}") or 'Unknown Album'
     base, c = name, 2
@@ -99,7 +127,7 @@ def _name_album_component(members, existing_names):
         name = f"{base} ({c})"
         c += 1
     existing_names.add(name)
-    return name, aa
+    return name, aa, album
 
 
 def plan_resplit(crate):
@@ -115,7 +143,8 @@ def plan_resplit(crate):
 
     returns (folder_splits, noop_count). folder_splits is a list of
     (old_folder_path, pieces) where each piece is either
-    ('single', member, dst_path) or ('album', members, dst_folder, aa)."""
+    ('single', member, dst_path) or ('album', members, dst_folder,
+    (canonical_albumartist, dominant_album))."""
     albums_dir = os.path.join(crate, 'albums')
     singles_dir = os.path.join(crate, 'singles')
     if not os.path.isdir(albums_dir):
@@ -148,8 +177,8 @@ def plan_resplit(crate):
                                    f"{sanitize(f['artist'])} - {sanitize(f['title'])}{ext}")
                 pieces.append(('single', f, dst))
             else:
-                new_name, aa = _name_album_component(comp, existing_names)
-                pieces.append(('album', comp, os.path.join(albums_dir, new_name), aa))
+                new_name, aa, album = _name_album_component(comp, existing_names)
+                pieces.append(('album', comp, os.path.join(albums_dir, new_name), (aa, album)))
         folder_splits.append((folder, pieces))
 
     return folder_splits, noop

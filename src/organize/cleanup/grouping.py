@@ -68,26 +68,32 @@ def shares_artist_token(members):
     return False
 
 
-def is_unrelated_va_collision(aa, members):
-    """True when canonical_albumartist() resolved a group to 'Various
-    Artists' by fallback (no majority, no dominant collaborator) rather
-    than because any member's own albumartist tag actually says so, AND
-    the group is the narrow case Bug 2 confirmed: exactly two tracks
-    whose artist tokens share nothing at all. That combination is almost
-    certainly two unrelated same-titled singles, not a compilation -
-    default to splitting rather than merging-and-flagging.
+def is_unrelated_va_collision(members):
+    """True when a group of files that ended up with a shared album key
+    are actually two unrelated same-titled singles, not a genuine album
+    or compilation — regardless of what canonical_albumartist() resolved
+    to. The previous version only caught the case where
+    canonical_albumartist() fell back to 'Various Artists', but a 2-track
+    group with completely disjoint artist tokens can resolve to one of
+    the two artists on a tie (50% threshold), skipping the check entirely.
 
-    Deliberately scoped to exactly two members. A 3+ track group that
-    resolves to 'Various Artists' with no full overlap is left to the
-    existing ambiguous-VA flagging path instead of being auto-split -
-    that's a genuinely murkier case (could be a real collab album with
-    scattered features, could be an accidental collision) that hasn't
-    been confirmed to be the same pattern. See BUGFIX_PLAN.md's Bug 2."""
-    if aa != 'Various Artists':
+    The real condition: exactly 2 tracks with completely disjoint
+    normalized artist tokens (artist + albumartist union), and neither
+    track's own albumartist tag explicitly says Various Artists/VA. This
+    catches both the 'Various Artists' fallback case and the tie-break
+    case (e.g. Diversa's "Ego Death" and The Internet's "Ego Death"
+    landing in the same group — canonical_albumartist picks one artist,
+    but the tracks are unrelated).
+
+    Deliberately scoped to exactly two members. A 3+ track group with
+    no full overlap is left to the existing ambiguous-VA flagging path
+    instead of being auto-split — that's a genuinely murkier case (could
+    be a real collab album with scattered features, could be an
+    accidental collision) that hasn't been confirmed to be the same
+    pattern. See BUGFIX_PLAN.md's Bug 2."""
+    if len(members) != 2:
         return False
     if any(_is_explicit_va(m) for m in members):
-        return False
-    if len(members) != 2:
         return False
     return not shares_artist_token(members)
 
@@ -117,14 +123,15 @@ def group_files(files):
 
 def build_plan(groups, crate):
     """decide a target path + tag fix for every file.
-    returns (album_moves, singleton_moves, noop_count, tag_writes, va_groups,
-    split_groups)."""
+    returns (album_moves, singleton_moves, noop_count, tag_writes,
+    album_tag_writes, va_groups, split_groups)."""
     albums_dir = os.path.join(crate, 'albums')
     singles_dir = os.path.join(crate, 'singles')
 
     album_moves = []      # (src, dst, new_albumartist)
     singleton_moves = []  # (src, dst)
     tag_writes = []       # (src, new_albumartist)
+    album_tag_writes = [] # (src, new_album)
     va_groups = []        # (album, track_count, src_skewed_folders)
     split_groups = []     # (album, track_count) - Bug 2: false-VA collisions split apart
     noop = 0
@@ -151,7 +158,19 @@ def build_plan(groups, crate):
         aa = canonical_albumartist(members)
         album = dominant_album(members)
 
-        if is_unrelated_va_collision(aa, members):
+        # If the folder ends up as Various Artists, try to infer the real artist
+        # from the raw artist tags; this prevents mis‑labeling a single‑artist
+        # album as a compilation.
+        if aa == 'Various Artists':
+            artist_counts = {}
+            for m in members:
+                art = m.get('artist') or ''
+                if art:
+                    artist_counts[art] = artist_counts.get(art, 0) + 1
+            if artist_counts:
+                aa = max(artist_counts, key=artist_counts.get)
+
+        if is_unrelated_va_collision(members):
             # Bug 2: two different artists' singles that happen to share a
             # title collided into one "Various Artists" folder purely
             # because canonical_albumartist() found no majority between
@@ -179,6 +198,10 @@ def build_plan(groups, crate):
         for m in members:
             if normalize_key(m['albumartist'] or '') != normalize_key(aa):
                 tag_writes.append((m['path'], aa))
+        # album tag writes: enforce the dominant album string so all files in group agree
+        for m in members:
+            if normalize_key(m['album'] or '') != normalize_key(album):
+                album_tag_writes.append((m['path'], album))
 
         seen_names = set()
         for idx, m in enumerate(members):
@@ -195,6 +218,6 @@ def build_plan(groups, crate):
             else:
                 noop += 1
 
-    return album_moves, singleton_moves, noop, tag_writes, va_groups, split_groups
+    return album_moves, singleton_moves, noop, tag_writes, album_tag_writes, va_groups, split_groups
 
 

@@ -15,12 +15,15 @@ import pytest
 
 from organize.cleanup import (
     build_plan,
+    check_tags,
     group_files,
+    is_unrelated_va_collision,
     prune_empty_dirs,
     resolve_crate,
     run_cleanup,
+    run_resplit,
 )
-from lib.tags import scan_audio
+from lib.tags import read_tags, scan_audio
 
 
 class TestGroupFiles:
@@ -65,7 +68,7 @@ class TestBuildPlanVariousArtists:
 
         files = scan_audio(str(crate))
         groups = group_files(files)
-        _, _, _, _, va_groups, _ = build_plan(groups, str(crate))
+        _, _, _, _, _, va_groups, _ = build_plan(groups, str(crate))
 
         assert len(va_groups) == 1
         album, count, _src_folders = va_groups[0]
@@ -81,7 +84,7 @@ class TestBuildPlanVariousArtists:
 
         files = scan_audio(str(crate))
         groups = group_files(files)
-        _, _, _, _, va_groups, _ = build_plan(groups, str(crate))
+        _, _, _, _, _, va_groups, _ = build_plan(groups, str(crate))
 
         assert va_groups == []
 
@@ -200,3 +203,241 @@ class TestResolveCrateRequiredNoFallback:
 
     def test_explicit_crate_arg_is_returned(self, tmp_path):
         assert resolve_crate(str(tmp_path)) == str(tmp_path)
+
+
+class TestIsUnrelatedVaCollision:
+    """Tests for the broadened is_unrelated_va_collision() - Bug 2 fix.
+
+    The real condition: exactly 2 tracks with completely disjoint
+    normalized artist tokens (artist + albumartist union), and neither
+    track's own albumartist tag explicitly says Various Artists/VA.
+    This catches both the 'Various Artists' fallback case AND the tie-break
+    case (e.g. Diversa's "Ego Death" and The Internet's "Ego Death"
+    landing in the same group — canonical_albumartist picks one artist
+    on a 50% tie, but the tracks are unrelated).
+    """
+
+    def test_disjoint_artists_two_tracks_returns_true(self, tmp_path, make_tagged_file):
+        """Two tracks with completely disjoint artist tokens -> collision detected."""
+        # Track 1: artist=Diversa, no albumartist -> tokens={'diversa'}
+        # Track 2: artist=The Internet, albumartist=The Internet -> tokens={'theinternet'}
+        # Disjoint -> should return True
+        f1 = {"artist": "Diversa", "albumartist": "", "album": "Ego Death", "title": "Ego Death"}
+        f2 = {"artist": "The Internet", "albumartist": "The Internet", "album": "Ego Death", "title": "Ego Death"}
+        assert is_unrelated_va_collision([f1, f2]) is True
+
+    def test_disjoint_artists_with_canonical_aa_not_va_returns_true(self, tmp_path, make_tagged_file):
+        """Same as above but canonical_albumartist would pick one artist (not VA) - still collision."""
+        # This is the exact Diversa/Internet case: canonical_albumartist returns "The Internet"
+        # on a 50% tie, but they're unrelated singles sharing a title
+        f1 = {"artist": "Diversa", "albumartist": "", "album": "Ego Death", "title": "Ego Death"}
+        f2 = {"artist": "The Internet", "albumartist": "The Internet", "album": "Ego Death", "title": "Ego Death"}
+        assert is_unrelated_va_collision([f1, f2]) is True
+
+    def test_shared_artist_token_returns_false(self, tmp_path, make_tagged_file):
+        """Two tracks sharing an artist token -> not a collision (real album/collab)."""
+        # Track 1: artist="Nova", Track 2: artist="Nova & Guest"
+        # Share 'nova' token -> should return False
+        f1 = {"artist": "Nova", "albumartist": "", "album": "Nightfall", "title": "One"}
+        f2 = {"artist": "Nova & Guest", "albumartist": "", "album": "Nightfall", "title": "Two"}
+        assert is_unrelated_va_collision([f1, f2]) is False
+
+    def test_explicit_va_albumartist_returns_false(self, tmp_path, make_tagged_file):
+        """If either track has explicit Various Artists albumartist -> trust it, not a collision."""
+        f1 = {"artist": "Alpha", "albumartist": "Various Artists", "album": "Comp", "title": "One"}
+        f2 = {"artist": "Beta", "albumartist": "", "album": "Comp", "title": "Two"}
+        assert is_unrelated_va_collision([f1, f2]) is False
+
+    def test_three_tracks_returns_false(self, tmp_path, make_tagged_file):
+        """Three tracks with disjoint artists -> not auto-split (left to ambiguous VA path)."""
+        f1 = {"artist": "A", "albumartist": "", "album": "X", "title": "One"}
+        f2 = {"artist": "B", "albumartist": "", "album": "X", "title": "Two"}
+        f3 = {"artist": "C", "albumartist": "", "album": "X", "title": "Three"}
+        assert is_unrelated_va_collision([f1, f2, f3]) is False
+
+    def test_single_track_returns_false(self, tmp_path, make_tagged_file):
+        """Single track -> not a collision."""
+        f1 = {"artist": "A", "albumartist": "", "album": "X", "title": "One"}
+        assert is_unrelated_va_collision([f1]) is False
+
+
+class TestCheckTags:
+    """Tests for check_tags() - scan/fix corrupted albumartist tags."""
+
+    def test_detects_corrupted_singles_albumartist(self, tmp_path, make_tagged_file):
+        """Singles with non-empty albumartist (not VA, not own artist, not label, not collab) -> flagged."""
+        # Diversa in singles/ with albumartist="The Internet" from past wrong merge
+        make_tagged_file(filename="crate/singles/Diversa - Ego Death.mp3",
+                          artist="Diversa", albumartist="The Internet", album="Ego Death",
+                          title="Ego Death")
+        # Normal single with no albumartist -> flagged as missing (should be set to artist)
+        make_tagged_file(filename="crate/singles/Other - Song.mp3",
+                          artist="Other", albumartist="", album="", title="Song")
+        # Single with explicit VA -> not flagged
+        make_tagged_file(filename="crate/singles/Comp - Track.mp3",
+                          artist="Comp", albumartist="Various Artists", album="Comp",
+                          title="Track")
+        crate = tmp_path / "crate"
+
+        result = check_tags(crate=str(crate), apply=False)
+
+        # Now flags 2: Diversa (corruption) + Other (missing)
+        assert result['suspicious'] == 2
+        assert result['fixed'] == 0
+
+    def test_apply_sets_corrupted_singles_albumartist_to_artist(self, tmp_path, make_tagged_file):
+        """With --apply, sets corrupted albumartist to the track's own artist (not clear)."""
+        make_tagged_file(filename="crate/singles/Diversa - Ego Death.mp3",
+                          artist="Diversa", albumartist="The Internet", album="Ego Death",
+                          title="Ego Death")
+        crate = tmp_path / "crate"
+
+        result = check_tags(crate=str(crate), apply=True)
+
+        assert result['suspicious'] == 1
+        assert result['fixed'] == 1
+        # Verify the tag was SET to artist, not cleared
+        tags = read_tags(str(crate / "singles" / "Diversa - Ego Death.mp3"))
+        assert tags['albumartist'] == 'Diversa'
+
+    def test_skips_collaboration_albumartist(self, tmp_path, make_tagged_file):
+        """Collaboration: artist='Skrillex & Fred again..', albumartist='Skrillex' -> not flagged."""
+        make_tagged_file(filename="crate/singles/Skrillex_Fred again.. - Rumble.mp3",
+                          artist="Skrillex & Fred again..", albumartist="Skrillex", album="Rumble",
+                          title="Rumble")
+        crate = tmp_path / "crate"
+
+        result = check_tags(crate=str(crate), apply=False)
+        assert result['suspicious'] == 0
+
+    def test_skips_label_albumartist(self, tmp_path, make_tagged_file):
+        """Known label albumartist (Monstercat) -> not flagged."""
+        make_tagged_file(filename="crate/singles/Rundfunk - Turn Around.mp3",
+                          artist="Rundfunk", albumartist="Monstercat", album="Monstercat 030",
+                          title="Turn Around")
+        crate = tmp_path / "crate"
+
+        result = check_tags(crate=str(crate), apply=False)
+        assert result['suspicious'] == 0
+
+    def test_apply_sets_missing_albumartist_to_artist(self, tmp_path, make_tagged_file):
+        """With --apply, missing albumartist gets set to the track's artist."""
+        make_tagged_file(filename="crate/singles/Other - Song.mp3",
+                          artist="Other", albumartist="", album="", title="Song")
+        crate = tmp_path / "crate"
+
+        result = check_tags(crate=str(crate), apply=True)
+
+        assert result['suspicious'] == 1
+        assert result['fixed'] == 1
+        tags = read_tags(str(crate / "singles" / "Other - Song.mp3"))
+        assert tags['albumartist'] == 'Other'
+
+    def test_detects_albums_albumartist_mismatch(self, tmp_path, make_tagged_file):
+        """Album files whose albumartist disagrees with folder canonical -> flagged."""
+        # Folder canonical would be "Nova" but one file has "Wrong Artist"
+        make_tagged_file(filename="crate/albums/Nova - Nightfall/01 One.mp3",
+                          artist="Nova", albumartist="Nova", album="Nightfall",
+                          title="One", track=1)
+        make_tagged_file(filename="crate/albums/Nova - Nightfall/02 Two.mp3",
+                          artist="Nova", albumartist="Wrong Artist", album="Nightfall",
+                          title="Two", track=2)
+        crate = tmp_path / "crate"
+
+        result = check_tags(crate=str(crate), apply=False)
+
+        assert result['suspicious'] == 1
+        assert result['fixed'] == 0
+
+    def test_apply_fixes_albums_albumartist_mismatch(self, tmp_path, make_tagged_file):
+        """With --apply, corrects the albumartist to canonical value."""
+        make_tagged_file(filename="crate/albums/Nova - Nightfall/01 One.mp3",
+                          artist="Nova", albumartist="Nova", album="Nightfall",
+                          title="One", track=1)
+        make_tagged_file(filename="crate/albums/Nova - Nightfall/02 Two.mp3",
+                          artist="Nova", albumartist="Wrong Artist", album="Nightfall",
+                          title="Two", track=2)
+        crate = tmp_path / "crate"
+
+        result = check_tags(crate=str(crate), apply=True)
+
+        assert result['suspicious'] == 1
+        assert result['fixed'] == 1
+        # Verify the tag was corrected
+        tags = read_tags(str(crate / "albums" / "Nova - Nightfall" / "02 Two.mp3"))
+        assert tags['albumartist'] == 'Nova'
+
+    def test_no_anomalies_returns_zero(self, tmp_path, make_tagged_file):
+        """Clean crate -> no suspicious files."""
+        make_tagged_file(filename="crate/albums/Nova - Nightfall/01 One.mp3",
+                          artist="Nova", albumartist="Nova", album="Nightfall",
+                          title="One", track=1)
+        make_tagged_file(filename="crate/singles/Other - Song.mp3",
+                          artist="Other", albumartist="Other", album="", title="Song")
+        crate = tmp_path / "crate"
+
+        result = check_tags(crate=str(crate), apply=False)
+
+        assert result['suspicious'] == 0
+        assert result['fixed'] == 0
+
+
+class TestResplitSingletonTagClearing:
+    """Tests for resplit clearing albumartist on singletons."""
+
+    def test_resplit_singleton_gets_empty_albumartist(self, tmp_path, make_tagged_file):
+        """A singleton piece from resplit gets albumartist cleared (written as empty)."""
+        # Create a wrongly-merged folder with two unrelated artists
+        # The folder has albumartist="Various Artists" from past wrong merge
+        make_tagged_file(filename="crate/albums/Various Artists - Automatic/01 Diversa - Automatic.mp3",
+                          artist="Diversa", albumartist="Various Artists", album="Automatic",
+                          title="Automatic", track=1)
+        make_tagged_file(filename="crate/albums/Various Artists - Automatic/02 Spencer - Automatic.mp3",
+                          artist="Spencer.", albumartist="Various Artists", album="Automatic",
+                          title="Automatic", track=2)
+        crate = tmp_path / "crate"
+
+        # Dry-run first to see the plan
+        run_resplit(crate=str(crate), apply=False)
+
+        # Now apply
+        run_resplit(crate=str(crate), apply=True, no_tag_write=False)
+
+        # Check that Diversa's file (now in singles/) has empty albumartist
+        # The resplit should move each to singles/ with their own artist name
+        singles_dir = crate / "singles"
+        if singles_dir.exists():
+            for f in singles_dir.iterdir():
+                tags = read_tags(str(f))
+                # Both should have empty albumartist since they're singles from a split
+                assert tags['albumartist'] == '', f"Expected empty albumartist on {f}, got {tags['albumartist']!r}"
+
+    def test_resplit_album_piece_keeps_correct_albumartist(self, tmp_path, make_tagged_file):
+        """An album component from resplit gets correct canonical albumartist written."""
+        # Create a 3-track folder wrongly merged (2 by Nova, 1 by Guest)
+        # The folder has albumartist="Various Artists"
+        make_tagged_file(filename="crate/albums/Various Artists - Nightfall/01 Nova - One.mp3",
+                          artist="Nova", albumartist="Various Artists", album="Nightfall",
+                          title="One", track=1)
+        make_tagged_file(filename="crate/albums/Various Artists - Nightfall/02 Nova - Two.mp3",
+                          artist="Nova", albumartist="Various Artists", album="Nightfall",
+                          title="Two", track=2)
+        make_tagged_file(filename="crate/albums/Various Artists - Nightfall/03 Guest - Three.mp3",
+                          artist="Guest", albumartist="Various Artists", album="Nightfall",
+                          title="Three", track=3)
+        crate = tmp_path / "crate"
+
+        run_resplit(crate=str(crate), apply=True, no_tag_write=False)
+
+        # The Nova tracks should stay in albums/ with albumartist="Nova"
+        albums_dir = crate / "albums"
+        nova_folder = None
+        for d in albums_dir.iterdir():
+            if d.is_dir() and "Nova" in d.name and "Nightfall" in d.name:
+                nova_folder = d
+                break
+
+        assert nova_folder is not None, "Nova - Nightfall folder should exist after resplit"
+        for f in nova_folder.iterdir():
+            tags = read_tags(str(f))
+            assert tags['albumartist'] == 'Nova', f"Expected Nova on {f}, got {tags['albumartist']!r}"

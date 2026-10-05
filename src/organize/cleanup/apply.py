@@ -8,7 +8,15 @@ entry point.
 import os
 import sys
 
-from lib.tags import dominant_album, safe_move, scan_audio, write_tag
+from lib.tags import (
+    canonical_albumartist,
+    dominant_album,
+    read_tags,
+    safe_move,
+    scan_audio,
+    write_tag,
+)
+from lib.text import normalize_key, split_artists
 
 from .common import resolve_crate
 from .grouping import build_plan, group_files
@@ -56,6 +64,141 @@ def config_path():
     return os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.yaml')
 
 
+# Known label albumartists that are legitimate for compilations/remix albums
+# These are labels that release albums under their own name (e.g. "Monstercat 030")
+KNOWN_LABEL_ALBUMARTISTS = {
+    'monstercat', 'zephyr', 'daruma', 'joekay', 'joekays',
+    'soulection', 'mrsuit', 'chillhop', 'chillhopmusic', 'lofigirl',
+    'strangefruits', 'bitbird', 'foreignfamilycollective', 'owsel',
+    'gravitas', 'gravitasrecordings', 'wakaan', 'deadbeats', 'neversaydie',
+    'disciple', 'disciplerecordings', 'rampage', 'subsidia', 'ophelia',
+    'annihilation', 'bassrush', 'insomniac', 'ukf', 'ukfmusic',
+    'proximity', 'proximitymusic', 'mrsuicidesheep', 'suicidesheep',
+    'tasty', 'tastynetwork', 'ninety9lives', 'nocopyrightsounds', 'ncs',
+    'monstercatinstinct', 'monstercatuncaged', 'monstercatsilk', 'kendricklamar',
+    'joekay', 'wuxirecordings'
+}
+
+
+
+def _is_known_label(aa: str) -> bool:
+    """Check if albumartist is a known label (case-insensitive, normalized)."""
+    return normalize_key(aa) in KNOWN_LABEL_ALBUMARTISTS
+
+
+def _is_collaboration(artist: str, albumartist: str) -> bool:
+    """True if albumartist appears to be one of the collaborating artists.
+    e.g. artist='Skrillex & Fred again..', albumartist='Skrillex' -> True
+    Uses normalized token overlap."""
+    artist_tokens = {normalize_key(a) for a in split_artists(artist or '')}
+    aa_norm = normalize_key(albumartist or '')
+    return aa_norm in artist_tokens
+
+
+def check_tags(crate=None, apply=False, verbose=False):
+    """scan singles/ and albums/ for albumartist tag anomalies and report
+    (with --apply: fix) them. targets two corruption patterns:
+
+      singles/: a file in singles/ carries a non-empty albumartist that is
+        neither explicit VA nor its own artist nor a known label nor a
+        collaboration partner - the fingerprint of a past wrong merge
+        (canonical_albumartist() picked the other artist on a 2-track tie
+        and cleanup --apply wrote it; the file went to singles/ but the tag
+        stuck). e.g. Diversa - Ego Death.mp3 in singles/ with
+        albumartist='The Internet' from a wrong merge with the Internet's
+        same-titled album. with --apply, set albumartist to the track's
+        own artist (not clear - we always want an albumartist).
+
+      albums/: a file whose albumartist disagrees with the folder's
+        canonical albumartist (computed over the folder's members) - a
+        straggler tagged by a different album name/artist. with --apply,
+        write the canonical value.
+
+    dry-run by default (reports only); plain, import-safe entry point."""
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+
+    crate = resolve_crate(crate)
+    print(f"crate : {crate}")
+    print(f"mode  : {'apply (tags written)' if apply else 'dry run (nothing changes)'}")
+    print()
+
+    suspicious = []   # (path, kind, current, expected, reason)
+    for sub in ('singles', 'albums'):
+        root = os.path.join(crate, sub)
+        if not os.path.isdir(root):
+            continue
+        for dp, dirs, fns in os.walk(root):
+            dirs[:] = [d for d in dirs if d != '__pycache__']
+            # per-album-folder canonical, computed over that folder's own files
+            folder_files = []
+            for fn in sorted(fns):
+                if fn.lower().endswith(('.mp3', '.flac', '.m4a', '.opus', '.ogg', '.wav', '.aac')):
+                    tags = read_tags(os.path.join(dp, fn))
+                    if tags:
+                        folder_files.append(tags)
+            if sub == 'singles':
+                for t in folder_files:
+                    aa = t['albumartist'] or ''
+                    artist = t['artist'] or ''
+                    if not aa:
+                        # no albumartist at all -> should be set to artist
+                        suspicious.append((t['path'], 'singles', '(empty)', artist, 'missing'))
+                        continue
+                    aa_norm = normalize_key(aa)
+                    if aa_norm in ('variousartists', 'va'):
+                        continue  # explicit compilation tag - leave alone
+                    if aa_norm == normalize_key(artist):
+                        continue  # matches its own artist - fine for a single
+                    if _is_known_label(aa):
+                        continue  # known label albumartist - legitimate
+                    if _is_collaboration(artist, aa):
+                        continue  # albumartist is one of the collaborating artists - legitimate
+                    # True corruption: disjoint albumartist (e.g. Spencer with albumartist=Anysia Kym)
+                    # Fix: set to the track's own artist
+                    suspicious.append((t['path'], 'singles', aa, artist, 'corruption'))
+            else:  # albums
+                if not folder_files:
+                    continue
+                canonical = canonical_albumartist(folder_files)
+                for t in folder_files:
+                    aa = t['albumartist'] or ''
+                    if normalize_key(aa) != normalize_key(canonical):
+                        suspicious.append((t['path'], 'albums', aa, canonical, 'mismatch'))
+
+    print(f"files with anomalous albumartist : {len(suspicious)}")
+    for path, kind, cur, exp, reason in suspicious:
+        rel = os.path.relpath(path, crate)
+        if kind == 'singles':
+            if reason == 'missing':
+                action = 'set to artist' if apply else 'would set to artist'
+            else:  # corruption
+                action = f'set to {exp!r}' if apply else f'would set to {exp!r}'
+            print(f"  singles/  {rel!r}")
+            print(f"    albumartist={cur!r} -> {action} ({reason})")
+        else:
+            action = 'fix' if apply else 'would fix'
+            print(f"  albums/   {rel!r}")
+            print(f"    albumartist={cur!r} != canonical {exp!r} -> {action}")
+
+    if not suspicious:
+        print("\nno anomalous albumartist tags found.")
+        return {'suspicious': 0, 'fixed': 0}
+
+    if not apply:
+        print(f"\ndry run - {len(suspicious)} file(s) would be changed. re-run with --apply to write tags.")
+        return {'suspicious': len(suspicious), 'fixed': 0}
+
+    fixed = 0
+    for path, kind, cur, exp, reason in suspicious:
+        write_tag(path, albumartist=exp)
+        fixed += 1
+    print(f"\nwrote {fixed} albumartist tag(s).")
+    print("note: beets.db may still hold the old tags - rebuild with `uv run organize cleanup --rebuild-db`")
+    print("      if you want the library csv/beets.db to match.")
+    return {'suspicious': len(suspicious), 'fixed': fixed}
+
+
 def run_cleanup(crate=None, apply=False, no_tag_write=False,
                 rebuild_db_flag=False, verbose=False):
     """regroup <crate>/albums + <crate>/singles in place. plain, import-safe
@@ -74,7 +217,7 @@ def run_cleanup(crate=None, apply=False, no_tag_write=False,
     files = scan_audio(crate)
     print(f"scanned {len(files)} audio files")
     groups = group_files(files)
-    album_moves, singleton_moves, noop, tag_writes, va_groups, split_groups = build_plan(groups, crate)
+    album_moves, singleton_moves, noop, tag_writes, album_tag_writes, va_groups, split_groups = build_plan(groups, crate)
 
     album_groups = sum(1 for k, m in groups.items() if k[0] == 'album' and len(m) > 1)
     singleton_count = len(files) - sum(len(m) for k, m in groups.items() if k[0] == 'album' and len(m) > 1)
@@ -88,6 +231,7 @@ def run_cleanup(crate=None, apply=False, no_tag_write=False,
     print(f"  files moving to singles/  : {len(singleton_moves)}")
     print(f"  files already in place     : {noop}")
     print(f"  albumartist tags to write : {0 if no_tag_write else len(tag_writes)}")
+    print(f"  album tags to write       : {0 if no_tag_write else len(album_tag_writes)}")
     print(f"  'Various Artists' albums  : {len(va_groups)}")
     print(f"  split (false VA collision): {len(split_groups)}")
 
@@ -125,6 +269,8 @@ def run_cleanup(crate=None, apply=False, no_tag_write=False,
         print("\ndry run - re-run with --apply to move files and write tags.")
         if tag_writes:
             print(f"(would write albumartist tags on {len(tag_writes)} files; pass --no-tag-write to skip)")
+        if album_tag_writes:
+            print(f"(would write album tags on {len(album_tag_writes)} files; pass --no-tag-write to skip)")
         return True
 
     if album_moves:
@@ -146,6 +292,12 @@ def run_cleanup(crate=None, apply=False, no_tag_write=False,
             write_tag(path, albumartist=aa)
     elif no_tag_write:
         print("(--no-tag-write: albumartist tags left as-is - albums may re-split on a future beets run)")
+
+    if not no_tag_write and album_tag_writes:
+        print(f"writing album tags on {len(album_tag_writes)} files...")
+        for src, album in album_tag_writes:
+            path = moved.get(os.path.normpath(src), src)
+            write_tag(path, album=album)
 
     print("\ndone.")
     print("note: beets.db now points at old file paths - it's stale until rebuilt.")
