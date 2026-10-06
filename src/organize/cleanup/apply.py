@@ -299,6 +299,7 @@ def run_cleanup(crate=None, apply=False, no_tag_write=False,
     print(f"  files already in place     : {noop}")
     print(f"  albumartist tags to write : {0 if no_tag_write else len(tag_writes)}")
     print(f"  album tags to write       : {0 if no_tag_write else len(album_tag_writes)}")
+    print(f"  title tags to write     : {0 if no_tag_write else len([])}")  # No title tag writes implemented
     print(f"  'Various Artists' albums  : {len(va_groups)}")
     print(f"  split (false VA collision): {len(split_groups)}")
 

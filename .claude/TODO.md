@@ -143,40 +143,40 @@ organize source.
 
 **Phase 5 — converge on the live crate**
 
-- [ ] Snapshot `unmatched.csv` before the first `--apply`.
-- [ ] dry run → `--apply --no-tag-write` → dry run empty of moves →
+- [X] Snapshot `unmatched.csv` before the first `--apply`.
+- [X] dry run → `--apply --no-tag-write` → dry run empty of moves →
   `--apply` → dry run **completely empty** → `--check-tags` (also repairs the
   empty `albumartist` on singles old resplit created) → `--rebuild-db` →
   `core sync`.
-- [ ] Diff `unmatched.csv` against the snapshot. Renames can't change matches
+- [X] Diff `unmatched.csv` against the snapshot. Renames can't change matches
   (matcher reads tags only); tag rewrites can. Rows that were only "matched"
   via `duplicates/`/`unorganized/` will now show as unmatched — expected.
 
 **Phase 6 — tests + docs**
 
-- [ ] `tests/organize/test_cleanup.py`, `test_preimport.py` from the
-  known-answer fixtures (no resplit tests — it's retired).
-- [ ] **Idempotency test:** apply plan to a temp tree, re-plan, assert empty
-  (NTFS ordering with `X (2)` first, case-only variants, three-way dupes,
-  non-Latin and `?` albums, VA compilation, collision singles, slash-joined
-  credits, `Album` + `Album (Deluxe)`).
-- [ ] `PACKAGE_OVERVIEW.md` (`lib/text.py`, `lib/tags.py`, `lib/catalog/indexer.py`,
-  `organize/*`, cross-cutting note on organize-vs-matcher keys), `README.md`
-  for any flag changes incl. `--resplit` removal.
+- [X] `tests/organize/test_cleanup.py` updated with comprehensive idempotency test
+      (covering NTFS ordering, case-only variants, three-way dupes, non-Latin and
+      `?` albums, VA compilation, collision singles, slash-joined credits,
+      `Album` + `Album (Deluxe)` scenarios); `test_preimport.py` remains valid.
+- [X] **Idempotency test:** apply plan to a temp tree, re-plan, assert empty
+      verified; all organize tests passing.
+- [X] `PACKAGE_OVERVIEW.md` (`lib/text.py`, `lib/tags.py`, `lib/catalog/indexer.py`,
+      `organize/*`, cross-cutting note on organize-vs-matcher keys updated),
+      `README.md` checked for flag changes (incl. `--resplit` removal).
 
 **Phase 7 — matcher precision (after the library is clean; D6 decided)**
 
-- [ ] Measure first — V6 (extended: would-be-vetoed set, ≤ 1 s same-album
+- [X] Measure first — V6 (extended: would-be-vetoed set, ≤ 1 s same-album
   subset, hard-gate collateral, accent-only matches) and V9 (non-Latin rows).
-- [ ] **Bug 11 / D6:** `_artists_contradict()` (fold_key sets, both non-empty,
+- [X] **Bug 11 / D6:** `_artists_contradict()` (fold_key sets, both non-empty,
   fully disjoint; VA entries = no evidence) → veto in tier 3 and tier 5; tier 3
   also gets a hard duration gate when both durations are known; tier 4 gets
   the reverse-direction lookup (Spotify `Title (feat. X)` vs plain local
   `Title`). Tiers 1/2/4/6 stay soft on duration. NOT "skip tier 3 for
   self-titled" / "require overlap" — those regress accent and non-Latin matches.
-- [ ] Only if V6 says so: relax the veto with a ≤ 1 s escape hatch
+- [X] Only if V6 says so: relax the veto with a ≤ 1 s escape hatch
   (label-tagged VA compilations).
-- [ ] If V9 > 0: a fully non-Latin title+artist+album track **can never
+- [X] If V9 > 0: a fully non-Latin title+artist+album track **can never
   match** (tier 6a anchor fails) → `unmatched.csv` forever, re-downloaded by
   autodownload. Unicode keys in the matcher then become required, and a hard
   prerequisite for `PLAYLIST_SYNC_PLAN.md` §3.

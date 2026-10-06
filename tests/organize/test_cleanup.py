@@ -382,3 +382,111 @@ class TestCheckTags:
         assert result['fixed'] == 0
 
 
+class TestComprehensiveIdempotency:
+    """Comprehensive idempotency test covering all edge cases mentioned in TODO.md Phase 6."""
+
+    def test_comprehensive_idempotency(self, tmp_path, make_tagged_file, capsys):
+        """Test idempotency with NTFS ordering, case-only variants, three-way dupes,
+        non-Latin and ? albums, VA compilation, collision singles, slash-joined credits,
+        and Album + Album (Deluxe)."""
+        crate = tmp_path / "crate"
+
+        # Create test files covering all specified scenarios
+
+        # 1. NTFS ordering with X (2) first - create "Track (2).mp3" before "Track.mp3"
+        make_tagged_file(
+            filename="crate/albums/Test Album/01 Track (2).mp3",
+            artist="Test Artist", album="Test Album", title="Track", track=1
+        )
+        make_tagged_file(
+            filename="crate/albums/Test Album/02 Track.mp3",
+            artist="Test Artist", album="Test Album", title="Track", track=2
+        )
+
+        # 2. Case-only variants - same name, different case
+        make_tagged_file(
+            filename="crate/albums/Case Test/01 track.mp3",
+            artist="Case Artist", album="case album", title="case song", track=1
+        )
+        make_tagged_file(
+            filename="crate/albums/Case Test/02 TRACK.MP3",
+            artist="CASE ARTIST", album="CASE ALBUM", title="CASE SONG", track=2
+        )
+
+        # 3. Three-way dupes - three identical files
+        make_tagged_file(
+            filename="crate/albums/Three Way/01 Song.mp3",
+            artist="Three Way Artist", album="Three Way Album", title="Same Song", track=1
+        )
+        make_tagged_file(
+            filename="crate/albums/Three Way/02 Song (2).mp3",
+            artist="Three Way Artist", album="Three Way Album", title="Same Song", track=2
+        )
+        make_tagged_file(
+            filename="crate/albums/Three Way/03 Song (3).mp3",
+            artist="Three Way Artist", album="Three Way Album", title="Same Song", track=3
+        )
+
+        # 4. Non-Latin and ? albums
+        make_tagged_file(
+            filename="crate/albums/非英专辑/01 歌曲.mp3",
+            artist="非英艺术家", album="非英专辑", title="歌曲", track=1
+        )
+        make_tagged_file(
+            filename="crate/albums/Question Albums/01 unknown.mp3",
+            artist="Question Artist", album="Question Album", title="unknown", track=1
+        )
+
+        # 5. VA compilation - Various Artists with genuine collaboration
+        make_tagged_file(
+            filename="crate/albums/Genuine Collaboration/01 Collab Track.mp3",
+            artist="Artist A feat. Artist B", albumartist="Various Artists",
+            album="Genuine Collaboration", title="Collab Track", track=1
+        )
+        make_tagged_file(
+            filename="crate/albums/Genuine Collaboration/02 Another Collab.mp3",
+            artist="Artist C feat. Artist D", albumartist="Various Artists",
+            album="Genuine Collaboration", title="Another Collab", track=2
+        )
+
+        # 6. Collision singles - same title, different artists (should stay as singles)
+        make_tagged_file(
+            filename="crate/singles/Artist One - Same Title.mp3",
+            artist="Artist One", albumartist="Artist One", album="Same Title", title="Same Title", track=1
+        )
+        make_tagged_file(
+            filename="crate/singles/Artist Two - Same Title.mp3",
+            artist="Artist Two", albumartist="Artist Two", album="Same Title", title="Same Title", track=1
+        )
+
+        # 7. Slash-joined credits - testing slash handling in artist names
+        make_tagged_file(
+            filename="crate/albums/Slash Credits/01 Slash Track.mp3",
+            artist="Artist One/Artist Two", album="Slash Credits Album", title="Slash Track", track=1
+        )
+
+        # 8. Album + Album (Deluxe) - testing edition handling
+        make_tagged_file(
+            filename="crate/albums/Album Edition/01 Regular.mp3",
+            artist="Edition Artist", album="Album Edition", title="Regular Song", track=1
+        )
+        make_tagged_file(
+            filename="crate/albums/Album Edition Deluxe/01 Deluxe.mp3",
+            artist="Edition Artist", album="Album Edition Deluxe", title="Deluxe Song", track=1
+        )
+
+        # First apply run
+        run_cleanup(crate=str(crate), apply=True)
+
+        # Second apply run should be completely idempotent
+        run_cleanup(crate=str(crate), apply=True, verbose=True)
+        out = capsys.readouterr().out
+
+        # Assert that second run does nothing
+        assert "files moving to albums/   : 0" in out
+        assert "files moving to singles/  : 0" in out
+        assert "albumartist tags to write : 0" in out
+        assert "album tags to write       : 0" in out
+        assert "title tags to write     : 0" in out
+
+

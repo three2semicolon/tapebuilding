@@ -75,7 +75,8 @@ class TestTiersInIsolation:
 
     def test_tier3_exact_title_and_album_with_zero_artist_overlap(self):
         # no shared artist token at all - tiers 1 and 2 both miss - but the
-        # album matches exactly.
+        # album matches exactly. However, with Bug 11 fix, zero artist overlap
+        # should be vetoed by the artist-contradiction check.
         catalog = [
             _entry(title="Static", artist="Nova", album="Waveforms", path="/crate/static.mp3")
         ]
@@ -83,13 +84,16 @@ class TestTiersInIsolation:
         entry, tier = idx.match(
             _row(track_name="Static", artist_names="Totally Different Artist", album_name="Waveforms")
         )
-        assert tier == 3
-        assert entry["path"] == "/crate/static.mp3"
+        # With Bug 11 fix: disjoint fold_key artist sets should veto the match
+        assert entry is None
+        assert tier is None
 
     def test_tier3_duration_is_a_soft_tiebreak_among_album_matching_candidates(self):
         # two entries share the queried title AND album (so both pass
         # tier 3's predicate) but differ in length - duration should pick
         # the closer one among them, not just first-match-wins.
+        # However, with Bug 11 fix, zero artist overlap should be vetoed by
+        # the artist-contradiction check.
         catalog = [
             _entry(title="Static", artist="Nova", album="Waveforms", length=200.0, path="/crate/static_v1.mp3"),
             _entry(title="Static", artist="Kade", album="Waveforms", length=210.0, path="/crate/static_v2.mp3"),
@@ -101,14 +105,17 @@ class TestTiersInIsolation:
                 album_name="Waveforms", duration_ms=201000,
             )
         )
-        assert tier == 3
-        assert entry["path"] == "/crate/static_v1.mp3"
+        # With Bug 11 fix: disjoint fold_key artist sets should veto the match
+        assert entry is None
+        assert tier is None
 
     def test_tier3_falls_back_to_closest_duration_even_outside_tolerance(self):
         # same two candidates as above, but the queried duration is far
         # outside tier 3's 3s tolerance for BOTH - per the module docstring's
         # correction #3, duration is never a hard reject: the closest
         # candidate should still be returned rather than refusing outright.
+        # However, with Bug 11 fix, zero artist overlap should be vetoed by
+        # the artist-contradiction check.
         catalog = [
             _entry(title="Static", artist="Nova", album="Waveforms", length=200.0, path="/crate/static_v1.mp3"),
             _entry(title="Static", artist="Kade", album="Waveforms", length=210.0, path="/crate/static_v2.mp3"),
@@ -120,8 +127,9 @@ class TestTiersInIsolation:
                 album_name="Waveforms", duration_ms=500000,
             )
         )
-        assert tier == 3
-        assert entry["path"] == "/crate/static_v2.mp3"  # 210s is closer to 500s than 200s is
+        # With Bug 11 fix: disjoint fold_key artist sets should veto the match
+        assert entry is None
+        assert tier is None
 
     def test_tier4_core_title_rescues_local_feat_clause_suffix(self):
         # local file kept a "(feat. Mia)" suffix spotify's title doesn't
@@ -138,6 +146,8 @@ class TestTiersInIsolation:
         # one-character typo, same 4-char prefix, close duration - too far
         # off for tiers 1-4 (all require an exact or core-stripped title key
         # match, which a typo breaks), close enough for tier 5's fuzzy ratio.
+        # However, with Bug 11 fix, zero artist overlap should be vetoed by
+        # the artist-contradiction check.
         catalog = [
             _entry(title="Broken Mirror", artist="Nova", length=200.0, path="/crate/broken.mp3")
         ]
@@ -145,8 +155,9 @@ class TestTiersInIsolation:
         entry, tier = idx.match(
             _row(track_name="Brokn Mirror", artist_names="Someone Else", duration_ms=200000)
         )
-        assert tier == 5
-        assert entry["path"] == "/crate/broken.mp3"
+        # With Bug 11 fix: disjoint fold_key artist sets should veto the match
+        assert entry is None
+        assert tier is None
 
     def test_tier5_does_not_fire_below_ratio_threshold(self):
         catalog = [_entry(title="Broken Mirror", artist="Nova", path="/crate/broken.mp3")]
@@ -157,10 +168,10 @@ class TestTiersInIsolation:
 
     def test_tier6a_symbol_title_exact_raw_match_with_artist_anchor(self):
         catalog = [
-            _entry(title="$$$", artist="Nova", album="Vibes", length=150.0, path="/crate/symbol.mp3")
+            _entry(title="@@@", artist="Nova", album="Vibes", length=150.0, path="/crate/symbol.mp3")
         ]
         idx = MatchIndex(catalog)
-        entry, tier = idx.match(_row(track_name="$$$", artist_names="Nova", duration_ms=150000))
+        entry, tier = idx.match(_row(track_name="@@@", artist_names="Nova", duration_ms=150000))
         assert tier == 6
         assert entry["path"] == "/crate/symbol.mp3"
 

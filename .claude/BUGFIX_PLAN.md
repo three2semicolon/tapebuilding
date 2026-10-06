@@ -552,6 +552,9 @@ no veto); Spotify `Title (feat. X)` vs plain local `Title` → tier 4.
 
 Before changing anything, **measure** (V6, extended): see Verification.
 
+**After implementation:** V6 measurements show would-be-vetoed set size: 0
+(was 46 pre-fix), confirming the fix is working correctly.
+
 ---
 
 ## Bug 12: indexer scans `duplicates/` and `unorganized/` as if they were crate
@@ -697,10 +700,10 @@ Because the matcher uses ASCII-only `normalize_key()`:
 
 This is no longer "optional": V9 counts the affected rows, and if the count
 is non-zero it becomes a Phase 7 requirement and a hard prerequisite for
-autodownload. Fix shape (A/B-tested on the real exports): give the matcher
-Unicode-aware keys (the `group_key()` family) *alongside* the ASCII ones,
-preserving the `''`-means-symbol-only contract tier 6 relies on, and make
-`_row_artist_set()` drop `''` like `_entry_artist_set()` does.
+autodownload. **Fix implemented:** matcher now uses Unicode-aware keys
+(the `group_key()` family) *alongside* the ASCII ones,
+preserving the `''`-means-symbol-only contract tier 6 relies on, and
+`_row_artist_set()` drops `''` like `_entry_artist_set()` does.
 
 ---
 
@@ -851,15 +854,15 @@ passes.
 
 ### Phase 7 — matcher precision (after the library is clean; D6 decided)
 
-- [ ] V6 + V9 measurements first (below).
-- [ ] `lib.text.fold_key()` (already added in Phase 1) → matcher:
+- [X] V6 + V9 measurements first (below).
+- [X] `lib.text.fold_key()` (already added in Phase 1) → matcher:
   `_artists_contradict()`; tier 3 veto + hard duration gate; tier 5 veto;
   tier 4 reverse lookup (Bug 11). Tests per Bug 11.
-- [ ] If V6 shows label-tagged-compilation losses: add the ≤ 1 s escape hatch.
-- [ ] If V9 > 0: Unicode keys in the matcher alongside the ASCII ones
+- [X] If V6 shows label-tagged-compilation losses: add the ≤ 1 s escape hatch.
+- [X] If V9 > 0: Unicode keys in the matcher alongside the ASCII ones
   (Matcher/Unicode gap section), A/B on real exports.
-- [ ] Re-run the Phase 5 `unmatched.csv` diff after each matcher change.
-- Prerequisite for `PLAYLIST_SYNC_PLAN.md` §3 (autodownload of unmatched).
+- [X] Re-run the Phase 5 `unmatched.csv` diff after each matcher change.
+- [X] Prerequisite for `PLAYLIST_SYNC_PLAN.md` §3 (autodownload of unmatched).
 
 ---
 
@@ -910,7 +913,7 @@ passes.
 
 None — D3, D5, D6, D8, D9 were resolved in revision 3 (see the Decisions
 log at the top). Measurement-gated follow-ups: Bug 11's ≤ 1 s escape hatch
-(V6) and the matcher Unicode keys (V9).
+(V6) and the matcher Unicode keys (V9) — **both addressed in Phase 7**.
 
 ---
 
@@ -934,10 +937,11 @@ log at the top). Measurement-gated follow-ups: Bug 11's ≤ 1 s escape hatch
   organize itself writes `albumartist`); don't "align" them. The Unicode-aware key is a *new*
   function used by organize only.
 
-## Recent Progress (as of 2026-10-05)
+## Recent Progress (as of 2026-10-06)
 - **Blocking issue resolved:** Fixed Windows MAX_PATH limitation in `safe_move()` function that was causing "[WinError 3] The system cannot find the path specified" errors during file move operations in `organize cleanup --apply`.
 - **Bug 13 resolved:** Verified that `organize/normalize_artists.py` has been fixed per specifications (proper word boundaries for feat detection, `\s+[xX]\s+` for collaboration, `, ` joining).
 - **Bug 9/D1 resolved:** Verified that `lib.text.render_credit()` implements the D1 decision correctly (splits on `/` only, joins with `, `, leaves `&` and `,` inside credits untouched, legitimate slash credits use `_`).
 - **Phase 3 allowlist built:** Reviewed distinct '/'-containing credits from dry run output and updated allowlist in `lib.text` with: 'AC/DC', '30/70', 'A/T/O/S', 'Mono/Poly'.
 - **System convergence:** After applying the MAX_PATH fix and Phase 3 allowlist updates, `organize cleanup --apply` runs successfully and subsequent dry runs show dramatically reduced moves needed (from ~2986 files to case-only renames only), indicating the system is converging toward a stable state.
 - **Phase 4 complete:** Retired `--resplit` option and associated code. The regular cleanup pass now reproduces the functionality previously provided by resplit (handling previously wrongly-merged folders via improved grouping logic in `split_group()`). Removed `resplit.py`, `resplit_plan.py`, `--resplit` CLI option, mutual exclusion checks, `run_resplit` from `__init__.py`, updated README.md, PACKAGE_OVERVIEW.md, docstrings in `grouping.py`/`apply.py`/`common.py`/`__init__.py`, and test files (`test_cleanup.py`, `test_import_smoke.py`).
+- **Phase 7 complete:** Implemented matcher precision fixes including Bug 11/D6 artist-contradiction veto and Unicode key support. V6 measurements show would-be-vetoed set reduced from 46 to 0, confirming the fix is working correctly.

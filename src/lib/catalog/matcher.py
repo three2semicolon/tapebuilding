@@ -66,7 +66,7 @@ album, title, track, length}.
 import collections
 import difflib
 
-from lib.text import normalize_album, normalize_key, primary_artist, split_artists, strip_feat_clause
+from lib.text import normalize_album, normalize_key, primary_artist, split_artists, strip_feat_clause, fold_key, group_key, group_album_key
 
 FUZZY_RATIO_THRESHOLD = 0.92
 FUZZY_PREFIX_LEN = 4
@@ -183,7 +183,7 @@ def _entry_primary(entry):
 
 
 def _row_artist_set(row):
-    return {normalize_key(a) for a in split_artists(_row_artist(row))}
+    return {normalize_key(a) for a in split_artists(_row_artist(row)) if normalize_key(a)}
 
 
 def _row_primary(row):
@@ -196,6 +196,26 @@ def _duration_close(want, have, tolerance):
     if not want or not have:
         return True
     return abs(want - have) <= tolerance
+
+
+def _artists_contradict(row, entry):
+    """Return True only when both sides have a non-empty fold_key artist set
+    (split via split_artists; entry set is artist ∪ albumartist) and the two
+    sets are completely disjoint. An entry whose artist/albumartist is
+    Various Artists or VA contributes no evidence (never contradicts)."""
+    # Get row artist set using fold_key
+    row_fold_artists = {fold_key(a) for a in split_artists(_row_artist(row)) if fold_key(a)}
+
+    # Get entry artist set using fold_key (artist ∪ albumartist)
+    entry_fold_artists = set()
+    for raw in (entry.get('artist'), entry.get('albumartist')):
+        for seg in split_artists(raw or ''):
+            fk = fold_key(seg)
+            if fk:
+                entry_fold_artists.add(fk)
+
+    # Check if both sets are non-empty and disjoint
+    return bool(row_fold_artists and entry_fold_artists and not (row_fold_artists & entry_fold_artists))
 
 
 def _pick_best(candidates, predicate, want_duration, tolerance):
@@ -227,12 +247,17 @@ class MatchIndex:
         self.by_core_title = collections.defaultdict(list)   # normalize_key(strip_feat_clause(title)) -> [entry], only when it differs from the plain key
         self.by_raw_title = collections.defaultdict(list)    # lowercased/whitespace-collapsed raw title -> [entry]
         self.by_album_track = collections.defaultdict(list)  # (normalize_key(album), track_int) -> [entry]
+        # Unicode-aware indexes alongside ASCII ones (for V9 > 0)
+        self.by_u_title = collections.defaultdict(list)      # group_key(title) -> [entry]
+        self.by_u_prefix = collections.defaultdict(list)     # group_key(title)[:4] -> [entry]
+        self.by_u_album_track = collections.defaultdict(list)  # (group_key(album), track_int) -> [entry]
         self._build()
 
     def _build(self):
         for entry in self.catalog:
             title = entry.get('title') or ''
             key = normalize_key(title)
+            u_key = group_key(title)  # Unicode-aware key
             core_key = normalize_key(strip_feat_clause(title))
             raw_key = _raw_key(title)
 
@@ -240,6 +265,8 @@ class MatchIndex:
             # stay reachable only via raw-title/(album,track), so a symbol
             # query can't cross-match another symbol title purely because
             # both normalize to ''.
+            # However, we still want to index Unicode-aware keys for non-blank titles
+            # to support V9 (non-Latin matching)
             if key:
                 self.by_title[key].append(entry)
                 self.by_prefix[key[:FUZZY_PREFIX_LEN]].append(entry)
@@ -251,13 +278,24 @@ class MatchIndex:
             if raw_key:
                 self.by_raw_title[raw_key].append(entry)
 
+            # Unicode-aware indexing (for V9 > 0)
+            # We index all non-blank Unicode-aware keys to support matching
+            # of non-Latin titles while preserving the ASCII-only contract for tier 6
+            if u_key:  # Only index if we have a meaningful Unicode key
+                self.by_u_title[u_key].append(entry)
+                self.by_u_prefix[u_key[:FUZZY_PREFIX_LEN]].append(entry)
+
             # normalize_album() (not normalize_key()) so an edition variant
             # ("Album (Deluxe)") indexes under the same identity as the
             # plain release - see lib.text's docstring.
             album_key = normalize_album(entry.get('album') or '')
+            u_album_key = group_album_key(entry.get('album') or '')  # Unicode-aware album key
             track = entry.get('track') or 0
             if album_key and track:
                 self.by_album_track[(album_key, track)].append(entry)
+            # Unicode-aware album tracking
+            if u_album_key and track:
+                self.by_u_album_track[(u_album_key, track)].append(entry)
 
     # --- tiers, in order ------------------------------------------------
 
@@ -274,14 +312,19 @@ class MatchIndex:
                     or row_primary == entry_primary
                     or (entry_primary and entry_primary in row_artists))
 
-        return _pick_best(self.by_title.get(title_key, []), pred, want_dur, _TOLERANCE[1])
+        # Tier 1 only uses ASCII indexes (preserve ''-means-symbol-only contract for tier 6)
+        ascii_candidates = self.by_title.get(title_key, [])
+        return _pick_best(ascii_candidates, pred, want_dur, _TOLERANCE[1])
 
     def _tier2(self, row, title_key, want_dur):
         row_artists = _row_artist_set(row)
         if not row_artists:
             return None
         pred = lambda entry: bool(row_artists & _entry_artist_set(entry))
-        return _pick_best(self.by_title.get(title_key, []), pred, want_dur, _TOLERANCE[2])
+
+        # Tier 2 only uses ASCII indexes (preserve ''-means-symbol-only contract for tier 6)
+        ascii_candidates = self.by_title.get(title_key, [])
+        return _pick_best(ascii_candidates, pred, want_dur, _TOLERANCE[2])
 
     def _tier3(self, row, title_key, want_dur):
         # normalize_album() so a spotify "Album" row still matches a local
@@ -290,8 +333,17 @@ class MatchIndex:
         row_album_key = normalize_album(_row_album(row))
         if not row_album_key:
             return None
-        pred = lambda entry: normalize_album(entry.get('album') or '') == row_album_key
-        return _pick_best(self.by_title.get(title_key, []), pred, want_dur, _TOLERANCE[3])
+
+        def pred(entry):
+            # Apply artist-contradiction veto (Bug 11/D6)
+            if _artists_contradict(row, entry):
+                return False
+            return normalize_album(entry.get('album') or '') == row_album_key
+
+        # Tier 3 only uses ASCII indexes for title (preserve ''-means-symbol-only contract for tier 6)
+        # Note: We still use normalize_album for album comparison as intended
+        ascii_title_candidates = self.by_title.get(title_key, [])
+        return _pick_best(ascii_title_candidates, pred, want_dur, _TOLERANCE[3])
 
     def _tier4(self, row, title_key, want_dur):
         # rescues a local "Title (feat. X)" against a clean spotify "Title"
@@ -307,7 +359,17 @@ class MatchIndex:
         def pred(entry):
             return bool(row_artists & _entry_artist_set(entry)) or (row_primary and row_primary == _entry_primary(entry))
 
-        return _pick_best(self.by_core_title.get(core_q, []), pred, want_dur, _TOLERANCE[4])
+        # Tier 4 only uses ASCII indexes (preserve ''-means-symbol-only contract for tier 6)
+        candidates = self.by_core_title.get(core_q, [])
+        if core_q != title_key:
+            # Also check the reverse direction using ASCII indexes only
+            reverse_candidates = self.by_title.get(core_q, [])
+            # Apply same artist predicate to reverse candidates
+            def reverse_pred(entry):
+                return bool(row_artists & _entry_artist_set(entry)) or (row_primary and row_primary == _entry_primary(entry))
+            candidates.extend([c for c in reverse_candidates if reverse_pred(c)])
+
+        return _pick_best(candidates, pred, want_dur, _TOLERANCE[4])
 
     def _tier5(self, row, title_key, want_dur):
         # fuzzy title (same leading-4-char prefix) + duration; hesitant.
@@ -318,8 +380,13 @@ class MatchIndex:
         if not title_key:
             return None
         best, best_ratio = None, 0.0
-        for entry in self.by_prefix.get(title_key[:FUZZY_PREFIX_LEN], []):
+        # Tier 5 only uses ASCII indexes (preserve ''-means-symbol-only contract for tier 6)
+        ascii_entries = self.by_prefix.get(title_key[:FUZZY_PREFIX_LEN], [])
+        for entry in ascii_entries:
             if not _duration_close(want_dur, entry.get('length'), _TOLERANCE[5]):
+                continue
+            # Apply artist-contradiction veto (Bug 11/D6)
+            if _artists_contradict(row, entry):
                 continue
             entry_key = normalize_key(entry.get('title') or '')
             ratio = difflib.SequenceMatcher(None, entry_key, title_key).ratio()
@@ -336,6 +403,7 @@ class MatchIndex:
         # 6a), then (album, track-number) position (hard duration gate,
         # 6b) - both anchored by artist/album so a generic "$"/"!!" can't
         # cross-match an unrelated track.
+        # Preserve the ''-means-symbol-only contract tier 6 relies on
         if title_key:
             return None
         row_raw = _raw_key(_row_title(row))
@@ -343,26 +411,43 @@ class MatchIndex:
         # consistent with how MatchIndex._build() indexed it, and so the
         # anchor check doesn't reject an edition-suffixed local album tag.
         row_album_key = normalize_album(_row_album(row))
+        u_row_album_key = group_album_key(_row_album(row))  # Unicode-aware album key
         row_artists = _row_artist_set(row)
         row_primary = _row_primary(row)
 
         def anchor(entry):
-            if row_artists and (row_artists & _entry_artist_set(entry)
-                                 or (row_primary and row_primary == _entry_primary(entry))):
+            # Use Unicode-aware artist sets for better matching (V9 > 0)
+            row_fold_artists = {fold_key(a) for a in split_artists(_row_artist(row)) if fold_key(a)}
+            entry_fold_artists = set()
+            for raw in (entry.get('artist'), entry.get('albumartist')):
+                for seg in split_artists(raw or ''):
+                    fk = fold_key(seg)
+                    if fk:
+                        entry_fold_artists.add(fk)
+            if row_fold_artists and entry_fold_artists and (row_fold_artists & entry_fold_artists):
                 return True
             if row_album_key and normalize_album(entry.get('album') or '') == row_album_key:
                 return True
             return False
 
         if row_raw:
-            chosen = _pick_best(self.by_raw_title.get(row_raw, []), anchor, want_dur, _TOLERANCE['6a'])
+            # Check both ASCII and Unicode-aware indexes for raw title
+            ascii_candidates = self.by_raw_title.get(row_raw, [])
+            u_candidates = self.by_u_title.get(group_key(_row_title(row)), [])  # Using u_title for raw title matching
+            # Combine candidates, avoiding duplicates
+            all_candidates = ascii_candidates + [c for c in u_candidates if c not in ascii_candidates]
+            chosen = _pick_best(all_candidates, anchor, want_dur, _TOLERANCE['6a'])
             if chosen:
                 return chosen
 
         track_number = _row_track_number(row)
         if row_album_key and track_number is not None:
-            candidates = self.by_album_track.get((row_album_key, track_number), [])
-            kept = [c for c in candidates if _duration_close(want_dur, c.get('length'), _TOLERANCE['6b'])]
+            # Check both ASCII and Unicode-aware indexes for album/track
+            ascii_candidates = self.by_album_track.get((row_album_key, track_number), [])
+            u_candidates = self.by_u_album_track.get((u_row_album_key, track_number), [])
+            # Combine candidates, avoiding duplicates
+            all_candidates = ascii_candidates + [c for c in u_candidates if c not in ascii_candidates]
+            kept = [c for c in all_candidates if _duration_close(want_dur, c.get('length'), _TOLERANCE['6b'])]
             if kept:
                 return min(kept, key=lambda c: abs((c.get('length') or 0) - want_dur) if want_dur else 0)
         return None

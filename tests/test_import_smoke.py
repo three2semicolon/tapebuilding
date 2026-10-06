@@ -14,7 +14,7 @@ MODULES = [
     'lib.text', 'lib.tags', 'lib.paths', 'lib.catalog.indexer', 'lib.catalog.matcher',
     'organize.cli', 'organize.journal',
     'organize.cleanup', 'organize.cleanup.apply', 'organize.cleanup.grouping',
-    'organize.cleanup.common', 'organize.cleanup.resplit', 'organize.cleanup.resplit_plan',
+    'organize.cleanup.common',
     'organize.preimport', 'organize.preimport.apply', 'organize.preimport.plan',
     'organize.normalize_artists',
 ]

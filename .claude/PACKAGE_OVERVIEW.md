@@ -419,6 +419,10 @@ tags, independent of beets/beets.db.
   The forward-looking `is_unrelated_va_collision()` check now prevents
   new wrong merges, making resplit unnecessary for ongoing maintenance.
   See `BUGFIX_PLAN.md` for the Phase 4 completion details.
+- **Phase 6 (tests + documentation)**: *Completed*.
+  Comprehensive idempotency test updated and verified, covering all
+  edge cases from TODO.md. All organize tests passing. Documentation
+  updated to reflect current system state post-refactor.
 
 ### `preimport.py`
 Runs the same regrouping logic **before** beets ever sees the drop.
@@ -654,6 +658,11 @@ translates `ok: False` / raised exceptions into exit codes.
   both require `ARCHIVE_PATH` with no fallback, unlike `lib.paths.archive_path()`'s
   convenience default used elsewhere (read-mostly contexts like
   `download/`'s existence checks).
+- **Organize-matcher key relationship**: `organize`'s grouping keys and
+  `lib.catalog.matcher`'s album-keyed tiers (3, 6b) both use
+  `lib.text.normalize_album()` for album identity, ensuring that
+  "Title" and "Title (Deluxe)"/"Title (2009 Remaster)" resolve to the
+  same identity in both systems without requiring literal string matches.
 - **Documented-as-done is not the same as actually-done.** Post-refactor
   smoke testing found three import-breaking gaps between this document
   and the real source (`download.existing.resolve_output_dir()` missing,
