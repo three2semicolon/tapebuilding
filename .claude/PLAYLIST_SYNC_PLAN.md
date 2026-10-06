@@ -188,3 +188,4 @@ this workflow just chains steps that already exist into one call.
   after `BUGFIX_PLAN.md`'s Bug 1/2 are fixed, per the recommendation
   above — or is unblocking SoundCloud sooner worth the parallel-path
   duplication of option (a) as a stopgap?
+- SpotDL fallback: consider adding an option to prompt for alternative source (YouTube Music or local file) when a track cannot be found via SpotDL, to improve matching for soundtracks and reduce unmatched tracks.

@@ -108,7 +108,7 @@ class TestRunImportArchivePathRequired:
         # got past output_dir resolution without calling resolve_path at all.
         ok = beets_import.run_import(str(tmp_path / "does_not_exist"),
                                       output_dir=str(tmp_path / "out"))
-        assert ok is False
+        assert ok['ok'] is False
 
 
 # --- run_import(): automatic preimport wiring -------------------------------

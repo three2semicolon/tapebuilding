@@ -111,7 +111,7 @@ organize source.
 - [X] **Bug 10 (fixed in Phase 0):** `run_cleanup()` `UnboundLocalError` (`moved` defined inside
   one `if`, used in the next).
 - [X] `preimport/plan.py`: remove dead `if … : pass` no-op.
-- [ ] **`organize import` leftovers report:** beets runs `--quiet` and skips
+- [X] **`organize import` leftovers report:** beets runs `--quiet` and skips
   uncertain matches, leaving files in `unorganized/`; with the indexer no
   longer seeing that dir they'd reappear in `unmatched.csv` and get
   re-downloaded. Report the count (and paths in `--verbose`) in the return
