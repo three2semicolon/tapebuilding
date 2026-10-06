@@ -11,16 +11,12 @@ library:
   2. whole albums scattered as singletons in singles/, because pass 2
      imports every track standalone (no album grouping).
 
-split into four modules, each ~150-270 lines instead of one ~600-line
+split into three modules, each ~150-270 lines instead of one ~600-line
 file, along the actual seams in what the code does:
 
   - common.py       - resolve_crate(), used by both passes below
   - grouping.py      - the forward-looking regroup pass: group_files(),
                         build_plan(), the VA-collision helpers
-  - resplit_plan.py  - resplit's read-only planning half: plan_resplit()
-                        and the raw-artist-tag grouping it's built on
-  - resplit.py        - resplit's apply half: run_resplit(), which
-                        performs the moves resplit_plan.py plans
   - apply.py           - the regular pass's apply half: run_cleanup(),
                         plus prune_empty_dirs()/rebuild_db()/
                         config_path()
@@ -30,12 +26,13 @@ is re-exported below unchanged, so cli.py's and preimport.py's existing
 `from organize.cleanup import ...` calls don't need to change.
 
 the regrouper works straight off file tags (mediafile), independent of
-beets - see grouping.py's docstring for the grouping rules and
-resplit.py's for the historical-repair pass. idempotent: re-running
+beets - see grouping.py's docstring for the grouping rules. The regular
+cleanup pass now also handles previously wrongly-merged folders that
+previously required a separate repair pass. idempotent: re-running
 `organize cleanup` on an already-clean crate is a no-op.
 
-cli.py owns argument parsing / exit codes; run_cleanup()/run_resplit()
-below are the plain, import-safe entry points cli.py (and anything
+cli.py owns argument parsing / exit codes; run_cleanup()
+below is the plain, import-safe entry point cli.py (and anything
 else) calls into.
 
 usage (via organize's cli):
@@ -44,10 +41,6 @@ usage (via organize's cli):
   uv run organize cleanup --apply --rebuild-db   # ...then rebuild beets.db from the reorganized crate
   uv run organize cleanup --verbose              # print every planned move
   uv run organize cleanup --crate /path/to/crate
-  uv run organize cleanup --resplit              # dry-run: find already-wrongly-merged album
-                                                  # folders (predates the Bug 2 fix above) and
-                                                  # show how they'd split apart
-  uv run organize cleanup --resplit --apply      # actually split them + write fresh tags
 """
 
 from .common import resolve_crate
@@ -57,8 +50,6 @@ from .grouping import (
     is_unrelated_va_collision,
     shares_artist_token,
 )
-from .resplit_plan import plan_resplit
-from .resplit import run_resplit
 from .apply import check_tags, config_path, prune_empty_dirs, rebuild_db, run_cleanup
 
 __all__ = [
@@ -67,8 +58,6 @@ __all__ = [
     'group_files',
     'is_unrelated_va_collision',
     'shares_artist_token',
-    'plan_resplit',
-    'run_resplit',
     'check_tags',
     'config_path',
     'prune_empty_dirs',

@@ -29,7 +29,7 @@ def test_module_imports(mod):
 def test_cleanup_package_reexports():
     from organize import cleanup
     # organize/cli.py
-    for name in ('resolve_crate', 'run_cleanup', 'run_resplit', 'check_tags'):
+    for name in ('resolve_crate', 'run_cleanup', 'check_tags'):
         assert hasattr(cleanup, name), f"organize.cleanup must re-export {name}"
     # organize/preimport/apply.py, plan.py
     for name in ('group_files', 'is_unrelated_va_collision'):

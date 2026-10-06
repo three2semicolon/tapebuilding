@@ -17,12 +17,12 @@ where every file in <crate>/albums + <crate>/singles belongs.
 
 this module only decides where things go (build_plan()'s returned move
 lists); apply.py's run_cleanup() performs the moves/tag-writes and owns
-the printed report. resplit.py is the separate, opt-in repair pass for
-folders that were already wrongly merged before this module's
-grouping-key fix landed - it recomputes from each file's raw 'artist'
-tag rather than reusing anything here, since a wrongly-merged folder's
-on-disk albumartist tag is exactly what this module's own tag-writes
-would have set, so it can't be trusted as an input to a repair pass.
+the printed report. This module's forward-looking grouping logic prevents
+new wrong merges (Bug 2b); folders that were already wrongly merged before
+the grouping-key fix are now handled by the regular cleanup pass's improved
+grouping rather than a separate repair mode. See BUGFIX_PLAN.md Phase 4
+for the retirement of --resplit and the carryover of _artist_components()
+into split_group().
 """
 
 import collections

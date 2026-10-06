@@ -795,11 +795,11 @@ passes.
 
 ### Phase 4 — retire resplit
 
-- [ ] Confirm on fixtures that the regular pass (Phase 2) reproduces what
+- [X] Confirm on fixtures that the regular pass (Phase 2) reproduces what
   resplit was for: a poisoned `Various Artists - Automatic` folder splits to
   two singles; a self-inflicted-VA 3-track pile-up splits; a real VA
   compilation stays; a chained-overlap album stays.
-- [ ] Delete `organize/cleanup/resplit.py`, `resplit_plan.py`; remove the
+- [X] Delete `organize/cleanup/resplit.py`, `resplit_plan.py`; remove the
   `--resplit` option, its `--rebuild-db` branch and the `--check-tags` /
   `--resplit` mutual-exclusion check from `cli.py`; drop `run_resplit` from
   `organize/cleanup/__init__.py`; remove the `--resplit` paragraph from
@@ -938,4 +938,6 @@ log at the top). Measurement-gated follow-ups: Bug 11's ≤ 1 s escape hatch
 - **Blocking issue resolved:** Fixed Windows MAX_PATH limitation in `safe_move()` function that was causing "[WinError 3] The system cannot find the path specified" errors during file move operations in `organize cleanup --apply`.
 - **Bug 13 resolved:** Verified that `organize/normalize_artists.py` has been fixed per specifications (proper word boundaries for feat detection, `\s+[xX]\s+` for collaboration, `, ` joining).
 - **Bug 9/D1 resolved:** Verified that `lib.text.render_credit()` implements the D1 decision correctly (splits on `/` only, joins with `, `, leaves `&` and `,` inside credits untouched, legitimate slash credits use `_`).
-- **System convergence:** After applying the MAX_PATH fix, `organize cleanup --apply` runs successfully and subsequent dry runs show dramatically reduced moves needed (from ~2986 files to ~108 files in current state), indicating the system is converging toward a stable state.
+- **Phase 3 allowlist built:** Reviewed distinct '/'-containing credits from dry run output and updated allowlist in `lib.text` with: 'AC/DC', '30/70', 'A/T/O/S', 'Mono/Poly'.
+- **System convergence:** After applying the MAX_PATH fix and Phase 3 allowlist updates, `organize cleanup --apply` runs successfully and subsequent dry runs show dramatically reduced moves needed (from ~2986 files to case-only renames only), indicating the system is converging toward a stable state.
+- **Phase 4 complete:** Retired `--resplit` option and associated code. The regular cleanup pass now reproduces the functionality previously provided by resplit (handling previously wrongly-merged folders via improved grouping logic in `split_group()`). Removed `resplit.py`, `resplit_plan.py`, `--resplit` CLI option, mutual exclusion checks, `run_resplit` from `__init__.py`, updated README.md, PACKAGE_OVERVIEW.md, docstrings in `grouping.py`/`apply.py`/`common.py`/`__init__.py`, and test files (`test_cleanup.py`, `test_import_smoke.py`).

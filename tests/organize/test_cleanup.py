@@ -21,7 +21,6 @@ from organize.cleanup import (
     prune_empty_dirs,
     resolve_crate,
     run_cleanup,
-    run_resplit,
 )
 from lib.tags import read_tags, scan_audio
 
@@ -383,62 +382,3 @@ class TestCheckTags:
         assert result['fixed'] == 0
 
 
-class TestResplitSingletonTagClearing:
-    """Tests for resplit clearing albumartist on singletons."""
-
-    def test_resplit_singleton_gets_empty_albumartist(self, tmp_path, make_tagged_file):
-        """A singleton piece from resplit gets albumartist cleared (written as empty)."""
-        # Create a wrongly-merged folder with two unrelated artists
-        # The folder has albumartist="Various Artists" from past wrong merge
-        make_tagged_file(filename="crate/albums/Various Artists - Automatic/01 Diversa - Automatic.mp3",
-                          artist="Diversa", albumartist="Various Artists", album="Automatic",
-                          title="Automatic", track=1)
-        make_tagged_file(filename="crate/albums/Various Artists - Automatic/02 Spencer - Automatic.mp3",
-                          artist="Spencer.", albumartist="Various Artists", album="Automatic",
-                          title="Automatic", track=2)
-        crate = tmp_path / "crate"
-
-        # Dry-run first to see the plan
-        run_resplit(crate=str(crate), apply=False)
-
-        # Now apply
-        run_resplit(crate=str(crate), apply=True, no_tag_write=False)
-
-        # Check that Diversa's file (now in singles/) has empty albumartist
-        # The resplit should move each to singles/ with their own artist name
-        singles_dir = crate / "singles"
-        if singles_dir.exists():
-            for f in singles_dir.iterdir():
-                tags = read_tags(str(f))
-                # Both should have empty albumartist since they're singles from a split
-                assert tags['albumartist'] == '', f"Expected empty albumartist on {f}, got {tags['albumartist']!r}"
-
-    def test_resplit_album_piece_keeps_correct_albumartist(self, tmp_path, make_tagged_file):
-        """An album component from resplit gets correct canonical albumartist written."""
-        # Create a 3-track folder wrongly merged (2 by Nova, 1 by Guest)
-        # The folder has albumartist="Various Artists"
-        make_tagged_file(filename="crate/albums/Various Artists - Nightfall/01 Nova - One.mp3",
-                          artist="Nova", albumartist="Various Artists", album="Nightfall",
-                          title="One", track=1)
-        make_tagged_file(filename="crate/albums/Various Artists - Nightfall/02 Nova - Two.mp3",
-                          artist="Nova", albumartist="Various Artists", album="Nightfall",
-                          title="Two", track=2)
-        make_tagged_file(filename="crate/albums/Various Artists - Nightfall/03 Guest - Three.mp3",
-                          artist="Guest", albumartist="Various Artists", album="Nightfall",
-                          title="Three", track=3)
-        crate = tmp_path / "crate"
-
-        run_resplit(crate=str(crate), apply=True, no_tag_write=False)
-
-        # The Nova tracks should stay in albums/ with albumartist="Nova"
-        albums_dir = crate / "albums"
-        nova_folder = None
-        for d in albums_dir.iterdir():
-            if d.is_dir() and "Nova" in d.name and "Nightfall" in d.name:
-                nova_folder = d
-                break
-
-        assert nova_folder is not None, "Nova - Nightfall folder should exist after resplit"
-        for f in nova_folder.iterdir():
-            tags = read_tags(str(f))
-            assert tags['albumartist'] == 'Nova', f"Expected Nova on {f}, got {tags['albumartist']!r}"

@@ -257,6 +257,24 @@ def run_cleanup(crate=None, apply=False, no_tag_write=False,
 
     files = scan_audio(crate)
     print(f"scanned {len(files)} audio files")
+
+    # Collect distinct '/' containing credits for Phase 3 allowlist building
+    slash_credits = {}
+    for f in files:
+        artist = f.get('artist', '')
+        if '/' in artist:
+            slash_credits[artist] = slash_credits.get(artist, 0) + 1
+        albumartist = f.get('albumartist', '')
+        if '/' in albumartist:
+            slash_credits[albumartist] = slash_credits.get(albumartist, 0) + 1
+
+    if slash_credits:
+        print()
+        print("=== distinct '/' containing credits (for Phase 3 allowlist) ===")
+        # Sort by count descending, then by name
+        for credit, count in sorted(slash_credits.items(), key=lambda x: (-x[1], x[0])):
+            print(f"  {count:>4}x  {credit}")
+
     groups = group_files(files)
     plan = build_plan(groups, crate)
     album_moves = plan.album_moves

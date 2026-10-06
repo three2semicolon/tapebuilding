@@ -26,11 +26,6 @@ EXTENSIONS = ('.mp3', '.flac', '.m4a', '.opus', '.ogg', '.wav', '.aac')
 
 _ILLEGAL_RE = re.compile(r'[\\/:*?"<>|]')
 
-# Allowlist for artist credits that contain '/' but should be rendered with '_' instead of being split
-# Built from Phase 3 dry run output - review distinct '/'-containing credits with counts
-_LEGITIMATE_SLASH_CREDITS = {
-    'AC/DC',  # Added for testing - should be reviewed and updated based on actual dry run
-}
 
 
 def sanitize(s):

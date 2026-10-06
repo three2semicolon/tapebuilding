@@ -17,7 +17,7 @@ import click
 from dotenv import load_dotenv
 
 from lib.paths import archive_path
-from organize.cleanup import resolve_crate, run_cleanup, run_resplit, check_tags
+from organize.cleanup import resolve_crate, run_cleanup, check_tags
 from organize.preimport import stage
 from organize.beets_import import run_import, export_library_csv
 from organize.journal import list_runs, undo_run
@@ -39,38 +39,20 @@ def organize():
 @click.option('--no-tag-write', is_flag=True, help='with --apply: do not rewrite albumartist tags.')
 @click.option('--rebuild-db', 'rebuild_db_flag', is_flag=True,
               help='with --apply: rebuild beets.db from the reorganized crate.')
-@click.option('--resplit', is_flag=True,
-              help='repair already-wrongly-merged album folders (predates the Bug 2 '
-                   'grouping-key fix) instead of running the regular regroup pass. '
-                   'dry-run unless combined with --apply. ignores --rebuild-db (run '
-                   '`organize cleanup --rebuild-db` separately afterward).')
 @click.option('--check-tags', 'check_tags_flag', is_flag=True,
               help='scan singles/ and albums/ for corrupted albumartist tags (from '
                    'past wrong merges) instead of running the regular regroup pass. '
-                   'dry-run unless combined with --apply. cannot combine with --resplit '
-                   'or --rebuild-db.')
+                   'dry-run unless combined with --apply. cannot combine with --rebuild-db.')
 @click.option('--verbose', is_flag=True, help='print every planned move.')
-def cleanup_cmd(crate, apply, no_tag_write, rebuild_db_flag, resplit, check_tags_flag, verbose):
+def cleanup_cmd(crate, apply, no_tag_write, rebuild_db_flag, check_tags_flag, verbose):
     """reorganize the beets crate into proper albums and singles."""
     try:
         if check_tags_flag:
-            if resplit:
-                click.echo("error: --check-tags and --resplit are mutually exclusive",
-                            err=True)
-                sys.exit(2)
             if rebuild_db_flag:
                 click.echo("error: --check-tags and --rebuild-db are mutually exclusive",
                             err=True)
                 sys.exit(2)
             check_tags(crate=crate, apply=apply, verbose=verbose)
-        elif resplit:
-            if rebuild_db_flag:
-                click.echo("error: --rebuild-db has no effect with --resplit - "
-                            "run `organize cleanup --rebuild-db` separately afterward.",
-                            err=True)
-                sys.exit(1)
-            run_resplit(crate=crate, apply=apply, no_tag_write=no_tag_write,
-                        verbose=verbose)
         else:
             run_cleanup(crate=crate, apply=apply, no_tag_write=no_tag_write,
                         rebuild_db_flag=rebuild_db_flag, verbose=verbose)

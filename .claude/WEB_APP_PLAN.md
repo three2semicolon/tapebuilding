@@ -100,8 +100,8 @@ not something `app/` needs to duplicate. Scoping `app/` to what Navidrome
    the result into the crate. This is the strongest case for actually
    deciding the progress-reporting question now (see below) — a
    multi-minute download run has no synchronous-request-friendly shape.
-3. **Command runway** — `core sync`, `organize cleanup` (and, once built,
-   `organize cleanup --resplit` — see `BUGFIX_PLAN.md`), per-service
+3. **Command runway** — `core sync`, `organize cleanup` (see `BUGFIX_PLAN.md`
+   for details on the retirement of `--resplit`), per-service
    playlist refresh, run from a jobs page. Recommend a plain "run this
    job, show me the log tail + final ok/fail" surface rather than a
    bespoke UI per command, at least for a first pass.

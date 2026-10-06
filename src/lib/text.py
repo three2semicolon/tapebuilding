@@ -203,9 +203,11 @@ def fold_key(s):
 
 # Allowlist for artist credits that contain '/' but should be rendered with '_' instead of being split
 # Built from Phase 3 dry run output - review distinct '/'-containing credits with counts
-# TODO: Move this allowlist to lib.tags to avoid circular dependency, or provide a getter function
 _LEGITIMATE_SLASH_CREDITS = {
-    'AC/DC',  # Placeholder - should be reviewed and updated based on actual dry run
+    'AC/DC',
+    '30/70',
+    'A/T/O/S',
+    'Mono/Poly',
 }
 
 

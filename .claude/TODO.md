@@ -59,27 +59,27 @@ organize source.
 
 **Phase 1 — `lib/` primitives**
 
-- [x] `lib.text.group_key()` / `group_album_key()` — Unicode-aware (NFKC +
+- [X] `lib.text.group_key()` / `group_album_key()` — Unicode-aware (NFKC +
   casefold + keep `\w`), never `''` for non-blank input. **Do not change
   `normalize_key()`** — matcher tier 6 and download filename matching depend
   on its ASCII-only/`''` behavior. (Bug 4)
-- [x] `lib.tags.write_tag()`: compare exact NFC strings, not `normalize_key`,
+- [X] `lib.tags.write_tag()`: compare exact NFC strings, not `normalize_key`,
   so case-only/non-Latin fixes actually write and identical values no-op. (Bug 7)
-- [x] `lib.tags`: deterministic tie-breaks in `dominant_album()` /
+- [X] `lib.tags`: deterministic tie-breaks in `dominant_album()` /
   `canonical_albumartist()`; `canonical_album()` (merge editions, keep the
   edition marker — D2); `same_path()` + case-aware `safe_move()` (two-step
   for case-only); shared `member_filename()` / `single_filename()` /
   `unique_name()`; sort `scan_audio()` output. (Bugs 3b, 6)
-- [x] `lib.text.fold_key()` (NFKD fold, `''` for non-Latin = no evidence;
+- [X] `lib.text.fold_key()` (NFKD fold, `''` for non-Latin = no evidence;
   matcher veto only) alongside `group_key()`.
-- [x] `lib.tags.read_tags()` adds `disc` (D5); force one `--reindex` after.
+- [X] `lib.tags.read_tags()` adds `disc` (D5); force one `--reindex` after.
   `lib.tags.find_duplicates()` (same `group_key` artist+title, ≤ ~2 s, never
   across differing `disc`) shared by cleanup + preimport.
-- [x] **Bug 12:** `lib.catalog.indexer._SKIP_TOPLEVEL` += `duplicates`,
+- [X] **Bug 12:** `lib.catalog.indexer._SKIP_TOPLEVEL` += `duplicates`,
   `unorganized` (D7). `unorganized/` is handled by `preimport` + `import`,
   which move files into `albums/`/`singles/` before they're indexed. Must land
   before duplicate quarantine.
-- [x] Tests: `tests/lib/test_text.py`, `tests/lib/test_tags.py`, indexer skip-list.
+- [X] Tests: `tests/lib/test_text.py`, `tests/lib/test_tags.py`, indexer skip-list.
 
 **Phase 2 — grouping logic**
 
@@ -126,14 +126,14 @@ organize source.
   album-folder albumartist part. `sanitize()` substitutes `_` (beets-style)
   instead of deleting, for titles/albums/everything else. Tags are **not**
   rewritten (D9).
-- [ ] Dry run lists distinct `/`-containing credits with counts → build the
+- [X] Dry run lists distinct `/`-containing credits with counts → build the
   `AC/DC`-style allowlist (renders `AC_DC`); **infrastructure in place and functional**.
-- [ ] Land alone: dry run → review rename list → apply → rebuild db →
+- [X] Land alone: dry run → review rename list → apply → rebuild db →
   reindex → `core sync`; **--apply convergence verified**.
 
 **Phase 4 — retire resplit (D4)**
 
-- [ ] Confirm the regular pass reproduces what resplit was for (fixtures in
+- [X] Confirm the regular pass reproduces what resplit was for (fixtures in
   `BUGFIX_PLAN.md`), then delete `resplit.py` / `resplit_plan.py`, the
   `--resplit` option + its `--rebuild-db` / `--check-tags` conflict checks in
   `cli.py`, `run_resplit` in `organize/cleanup/__init__.py`, the README
@@ -227,8 +227,7 @@ organize source.
 
 ## Enhancements
 
-- [ ] spotdl fallback, option to turn on so that each song/album that cant be found (spotdl) asks user to input either the youtube music or mu
-  _(original note was cut off mid-sentence — finish this thought)_
+- [ ] spotdl fallback, option to turn on so that each song/album that cant be found (spotdl) asks user to input either the youtube music or path to existing file so it can be matched in the future (may need a manual match functionality for this, fixed some issues with soundtrack stuff)
 - [ ] SoundCloud export/download + a `--exclude` flag for Spotify
   playlist sync + the cross-service playlist design both feed into —
   full plan in `PLAYLIST_SYNC_PLAN.md` (new), superseding the shorter

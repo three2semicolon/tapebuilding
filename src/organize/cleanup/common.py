@@ -2,10 +2,7 @@
 cleanup subpackage.
 
 split out on its own (instead of living in apply.py or grouping.py)
-because both apply.py's run_cleanup() and resplit.py's run_resplit()
-need it, and apply.py imports from grouping.py - putting it in either
-of those would make resplit.py import a module it has nothing else to
-do with, or risk a future circular import if grouping.py ever needs
+to avoid any future circular import if grouping.py ever needs
 crate resolution too.
 """
 

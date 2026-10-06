@@ -413,34 +413,12 @@ tags, independent of beets/beets.db.
   same `is_unrelated_va_collision()` check (before its existing-folder
   merge lookup, so a confirmed collision can't merge into an unrelated
   real VA folder either) — one shared decision, not a second copy.
-- **Resplit mode (Bug 2's other half)**: `plan_resplit(crate)` /
-  `run_resplit(crate=None, apply=False, no_tag_write=False, verbose=False)`
-  — opt-in repair for album folders that were already wrongly merged
-  *before* the grouping-key fix above landed. The forward-looking
-  `is_unrelated_va_collision()` check can't undo those on a normal
-  `cleanup --apply` run: a folder merged by the old bug now carries a
-  self-inflicted `'Various Artists'` albumartist tag on disk, which
-  looks exactly like a genuine compilation signal. `plan_resplit()`
-  instead walks every folder under `<crate>/albums`, reads each
-  member's tags fresh (`_scan_folder()`), and partitions them by raw
-  `artist`-tag token overlap only — never `albumartist` — via
-  `_artist_components()` (a union-find over `_raw_artist_tokens()`,
-  transitive: a real album with varying featured collaborators per
-  track still resolves to one component). A folder that splits into
-  ≥2 components gets each piece named and placed by `run_resplit()`
-  (`_name_album_component()` reuses `canonical_albumartist()`/
-  `dominant_album()` scoped to just that piece; a single-member piece
-  goes to `singles/`). Dry-run by default; `--apply` moves files and
-  writes fresh albumartist tags per piece, then reminds the caller that
-  `beets.db`/the crate catalog/local playlists still need
-  `cleanup --rebuild-db` + a reindex/rescrape afterward — resplit itself
-  doesn't touch any of those. Verified against a real temp-dir
-  filesystem (not just import-checked): a poisoned
-  `Various Artists - Automatic` folder correctly splits into two
-  singles; a genuine multi-track album with chained artist overlap is
-  left untouched. **Not yet wired to a CLI flag** — `organize/cli.py`
-  hasn't been shared in this thread, so `--resplit` doesn't exist as an
-  invokable command yet; see `TODO.md`.
+- **Resplit mode (Bug 2's other half)**: *Retired as of Phase 4*.
+  This opt-in repair mode for fixing pre-existing wrong merges was
+  superseded by the improved grouping logic in `cleanup --apply` runs.
+  The forward-looking `is_unrelated_va_collision()` check now prevents
+  new wrong merges, making resplit unnecessary for ongoing maintenance.
+  See `BUGFIX_PLAN.md` for the Phase 4 completion details.
 
 ### `preimport.py`
 Runs the same regrouping logic **before** beets ever sees the drop.
