@@ -101,6 +101,62 @@ just those playlists instead: `playlists_manifest.csv` +
 `playlists_manifest_urls.txt`, separate filenames so they don't clobber
 the full-library export.
 
+### export soundcloud data
+
+expose soundcloud sets/likes to csv for `download soundcloud`.
+
+```bash
+download export-soundcloud                                  # all sets (requires authentication, stubbed)
+download export-soundcloud --mine                            # only your own sets (requires authentication)
+download export-soundcloud -o /path/to/export               # custom output directory (default: PLAYLISTS_PATH/exports)
+download export-soundcloud -p "<set-url-or-id>"             # export a specific set
+download export-soundcloud -p "<url-1>" -p "<url-2>"        # two or more -> exported + merged into a scoped manifest
+download export-soundcloud --playlists-file sets.txt        # newline-delimited list of set urls/ids (#-comments ignored), combined with -p
+```
+
+outputs (in the export directory):
+
+- `soundcloud_sets.csv` - set metadata (if implemented)
+- `soundcloud_playlist_tracks.csv` - all set tracks (with duplicates)
+- `soundcloud_manifest.csv` - deduplicated master track list (track url as primary key)
+- `soundcloud_manifest_urls.txt` - track urls, one per line, for `download soundcloud`
+
+with two or more `-p`/`--playlists-file` identifiers, the export scopes to
+just those sets instead: `soundcloud_manifest.csv` +
+`soundcloud_manifest_urls.txt`, separate filenames so they don't clobber
+the full-library export.
+
+note: likes are not included by default; see open questions in PLAYLIST_SYNC_PLAN.md.
+### download music from soundcloud
+
+downloads from soundcloud urls (tracks, sets) via yt-dlp.
+
+```bash
+download soundcloud "https://soundcloud.com/artist/track"
+download soundcloud "https://soundcloud.com/artist/sets/my-set"     # set -> "Set Name/NN - Uploader - Title.ext"
+download soundcloud -u path/to/urls.txt
+download soundcloud -u /path/to/export/directory -o /path/to/music
+download soundcloud -u path/to/urls.txt --batch-size 25        # urls per yt-dlp call (default 1)
+download soundcloud -u path/to/urls.txt --pre-skip-existing    # skip tracks already in the library (needs csv metadata)
+download soundcloud -u path/to/urls.txt --validate-only        # check existence without downloading
+```
+
+options:
+
+- `-u, --url-file` - path to file containing urls (default: `soundcloud_manifest_urls.txt`)
+- `-f, --format` (default mp3), `-b, --bitrate` (default 320k)
+- `--overwrite-errors` - re-download files that errored previously
+- `--skip-existing` - pass `--skip-existing` through to yt-dlp
+- `--retries` (default 3), `--retry-delay` (default 3s)
+- `--cookies-from-browser` - browser to pull cookies from (e.g. `chrome`)
+- `--cookie-file` - path to a Netscape-format `cookies.txt`; preferred over `--cookies-from-browser` (avoids the browser file-lock issue)
+- `--debug` - DEBUG log level for yt-dlp instead of INFO
+- `-o, --output` - output directory (default: library root)
+
+urls are deduplicated preserving first-seen order. output is
+scanned for soft/hard failure markers and logged to
+`failed_downloads.txt` / `soft_failures.txt`.
+
 ### download music from spotify
 
 downloads from spotify urls (tracks, albums, playlists) via spotdl.

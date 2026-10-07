@@ -20,6 +20,9 @@ import subprocess
 import csv
 import glob
 import time
+import shutil
+
+import click
 
 from lib.paths import archive_path, ffmpeg_path
 from lib.text import normalize_key
@@ -50,7 +53,7 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
                    overwrite_errors=False, skip_existing=False,
                    validate_only=False, batch_size=1, pre_skip_existing=False,
                    retries=3, retry_delay=3, cookies_from_browser=None, cookie_file=None,
-                   debug=False):
+                   debug=False, spotdl_fallback=False):
     print(f"processing spotify source: {url_file}")
 
     if not os.path.exists(url_file):
@@ -98,6 +101,8 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
 
     print(f"url validation complete: {url_count} unique urls.")
 
+    metadata = None
+    library_index = {}
     if pre_skip_existing:
         metadata = read_csv_metadata(url_file)
         if not metadata:
@@ -194,7 +199,8 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
         print(f"running spotdl for: {batch}")
 
         attempt = 0
-        while attempt <= retries:
+        batch_succeeded = False
+        while attempt <= retries and not batch_succeeded:
             try:
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -209,14 +215,11 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
                 combined_output = ''.join(captured_lines)
             except Exception as e:
                 print(f"error running spotdl: {e}")
-                overall_success = False
-                _log_urls('failed_downloads.txt', batch)
-                break
+                break  # exit while loop to go to fallback
 
             if any(p in combined_output for p in HARD_FAILURE_PATTERNS):
                 print(f"hard failure (track unavailable): {batch}")
-                _log_urls('failed_downloads.txt', batch, reason='track_unavailable')
-                break
+                break  # exit while loop to go to fallback
 
             if returncode != 0:
                 attempt += 1
@@ -226,9 +229,7 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
                     continue
                 else:
                     print(f"batch failed after {retries} retries")
-                    overall_success = False
-                    _log_urls('failed_downloads.txt', batch, reason='download_failed')
-                    break
+                    break  # exit while loop to go to fallback
 
             if any(p in combined_output for p in SOFT_FAILURE_PATTERNS):
                 attempt += 1
@@ -239,11 +240,99 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
                 else:
                     reason = next((p for p in SOFT_FAILURE_PATTERNS if p in combined_output), 'soft_failure')
                     print(f"soft failure after {retries} retries ({reason}): {batch}")
-                    _log_urls('soft_failures.txt', batch, reason=reason)
-                break
+                    break  # exit while loop to go to fallback
 
             print(f"batch {batch_num} downloaded successfully")
-            break
+            batch_succeeded = True
+            break  # exit while loop
+
+        if not batch_succeeded and spotdl_fallback:
+            # Process fallback for each URL in the batch
+            print(f"\nSpotDL failed for batch {batch_num}. Initiating fallback...")
+            fallback_succeeded = []
+            fallback_failed = []
+            for url in batch:
+                meta = metadata.get(url) or {}
+                artist, track = meta.get('artist', ''), meta.get('track', '')
+                if not artist or not track:
+                    print(f"  Skipping fallback for URL with missing metadata: {url}")
+                    fallback_failed.append(url)
+                    continue
+                predicted = predict_output_filename(artist, track, format)
+                stem = os.path.splitext(predicted)[0]
+                # Check if already exists via pre-skip logic (if enabled)
+                if metadata is not None and normalize_key(stem) in library_index:
+                    print(f"  File already exists (via pre-skip): {predicted}")
+                    fallback_succeeded.append(url)
+                    continue
+                # Prompt user
+                try:
+                    user_input = click.prompt(
+                        f"SpotDL failed to find '{artist} - {track}'. "
+                        f"Enter a YouTube URL or local file path to download instead (or press Enter to skip)",
+                        default='', show_default=False
+                    )
+                except (EOFError, click.exceptions.Abort):
+                    # Treat as empty input (skip)
+                    user_input = ''
+                if not user_input:
+                    print(f"  Skipping fallback for '{artist} - {track}'.")
+                    fallback_failed.append(url)
+                    continue
+                # Determine if input is a URL or file path
+                if user_input.startswith(('http://', 'https://')):
+                    # Treat as URL, download via ytdl
+                    print(f"  Downloading via ytdl from URL: {user_input}")
+                    ytdl_success = download_ytdl(
+                        user_input,
+                        output_dir=resolved_output_dir,
+                        audio_format=format,
+                        audio_quality='0',  # best VBR
+                        embed_thumbnail=True,
+                        overwrite=overwrite_errors,
+                        verbose=False,
+                        metadata_only=False,
+                        cookies_from_browser=cookies_from_browser,
+                        ffmpeg_path=resolved_ffmpeg,
+                    )
+                    if ytdl_success:
+                        print(f"  Successfully downloaded via ytdl.")
+                        fallback_succeeded.append(url)
+                    else:
+                        print(f"  ytdl download failed.")
+                        fallback_failed.append(url)
+                else:
+                    # Treat as local file path
+                    if not os.path.exists(user_input):
+                        print(f"  Local file not found: {user_input}")
+                        fallback_failed.append(url)
+                        continue
+                    # Copy file to output directory with predicted filename
+                    try:
+                        shutil.copy2(user_input, os.path.join(resolved_output_dir, predicted))
+                        print(f"  Copied local file to: {predicted}")
+                        fallback_succeeded.append(url)
+                    except Exception as e:
+                        print(f"  Failed to copy local file: {e}")
+                        fallback_failed.append(url)
+            # After processing all URLs in batch, update overall_success
+            if fallback_failed:
+                print(f"  Fallback failed for {len(fallback_failed)} URL(s) in batch.")
+                overall_success = False
+                # Log the failed URLs to appropriate failure file
+                # We'll log to soft_failures.txt as they are soft failures (not found)
+                _log_urls('soft_failures.txt', fallback_failed, reason='spotdl_fallback_failed')
+            else:
+                print(f"  All URLs in batch succeeded via fallback.")
+                # Consider batch succeeded
+                batch_succeeded = True
+        elif not batch_succeeded:
+            # No fallback or fallback not enabled, log failure
+            print(f"  Batch {batch_num} failed after all retries.")
+            overall_success = False
+            # Determine if it was hard or soft failure? We don't have reason here.
+            # For simplicity, log to soft_failures.txt (could be either)
+            _log_urls('soft_failures.txt', batch, reason='spotdl_exhausted_retries')
 
     if overall_success:
         print(f"\nall batches processed. total: {url_count}")

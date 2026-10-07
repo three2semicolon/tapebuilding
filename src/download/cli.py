@@ -31,6 +31,7 @@ from lib.spotify_auth import authenticate_user
 from download.spotify_api import get_export_dir
 from download.spotify_export import export_all_data, export_specific_playlist, export_playlists
 from download.spotify_download import download_spotify
+from download.soundcloud_download import download_soundcloud
 from download.ytdl import download_ytdl, AUDIO_FORMATS
 from download.retry import (
     run_retry,
@@ -45,7 +46,7 @@ load_dotenv()
 
 @click.group()
 def download():
-    """spotify export/download, generic ytdl, failure retry, and soundbyte
+    """spotify/soundcloud export/download, generic ytdl, failure retry, and soundbyte
     album pulls for the tapebuilding project."""
 
 
@@ -128,10 +129,11 @@ def export_cmd(playlists, playlists_file, output, mine):
                    '--cookies-from-browser (avoids the browser file-lock issue).')
 @click.option('--debug', is_flag=True,
               help='use DEBUG log level for spotdl/yt-dlp instead of INFO.')
+@click.option('--spotdl-fallback/--no-spotdl-fallback', 'spotdl_fallback', default=False, show_default=True, help='prompt for YouTube URL or local file when spotdl fails to find a track.')
 def spotify_cmd(url_file, output, fmt, bitrate, overwrite_errors,
                  skip_existing, validate_only, batch_size, retries,
                  retry_delay, pre_skip_existing, cookies_from_browser,
-                 cookie_file, debug):
+                 cookie_file, spotdl_fallback, debug):
     """download audio from spotify urls via spotdl."""
     if not url_file:
         export_dir = get_export_dir()
@@ -154,6 +156,7 @@ def spotify_cmd(url_file, output, fmt, bitrate, overwrite_errors,
             cookies_from_browser=cookies_from_browser,
             cookie_file=cookie_file,
             debug=debug,
+            spotdl_fallback=spotdl_fallback,
         )
         if not success:
             sys.exit(1)
@@ -199,6 +202,69 @@ def ytdl_cmd(url, output, audio_format, audio_quality, no_thumbnail,
             metadata_only=metadata_only,
             cookies_from_browser=cookies_from_browser,
             ffmpeg_path=ffmpeg_path,
+        )
+        if not success:
+            sys.exit(1)
+    except Exception as e:
+        click.echo(f"error: {e}", err=True)
+        sys.exit(1)
+
+# --- soundcloud ---------------------------------------------------------
+
+@download.command('soundcloud')
+@click.option('--url-file', '-u', 'url_file', type=click.Path(),
+              help='file or directory of urls/csvs to download (defaults '
+                   'to <exports>/soundcloud_manifest_urls.txt).')
+@click.option('--output', '-o', 'output', type=click.Path(file_okay=False),
+              help='output directory for downloaded audio.')
+@click.option('--format', '-f', 'fmt', default='mp3', show_default=True)
+@click.option('--bitrate', '-b', default='320k', show_default=True)
+@click.option('--overwrite-errors', is_flag=True)
+@click.option('--skip-existing', is_flag=True)
+@click.option('--validate-only', is_flag=True,
+              help="report what would download without downloading.")
+@click.option('--batch-size', type=int, default=1, show_default=True)
+@click.option('--retries', type=int, default=3, show_default=True)
+@click.option('--retry-delay', type=float, default=3, show_default=True,
+              help='delay between retries, in seconds.')
+@click.option('--pre-skip-existing', is_flag=True,
+              help='check the crate for predicted filenames before '
+                   'downloading and skip urls already on disk.')
+@click.option('--cookies-from-browser', 'cookies_from_browser',
+              help='browser name to pull cookies from (e.g. chrome, firefox).')
+@click.option('--cookie-file', 'cookie_file', type=click.Path(exists=True),
+              help='path to a Netscape-format cookies.txt; preferred over '
+                   '--cookies-from-browser (avoids the browser file-lock issue).')
+@click.option('--debug', is_flag=True,
+              help='use DEBUG log level for spotdl/yt-dlp instead of INFO.')
+@click.option('--soundcloud-fallback/--no-soundcloud-fallback', 'soundcloud_fallback', default=False, show_default=True, help='prompt for YouTube URL or local file when soundcloud fails to find a track.')
+def soundcloud_cmd(url_file, output, fmt, bitrate, overwrite_errors,
+                    skip_existing, validate_only, batch_size, retries,
+                    retry_delay, pre_skip_existing, cookies_from_browser,
+                    cookie_file, soundcloud_fallback, debug):
+    """download audio from soundcloud urls via ytdl."""
+    if not url_file:
+        export_dir = get_export_dir()
+        url_file = f"{export_dir}/soundcloud_manifest_urls.txt"
+        click.echo(f"using default url file: {url_file}")
+
+    try:
+        success = download_soundcloud(
+            url_file=url_file,
+            output_dir=output,
+            format=fmt,
+            bitrate=bitrate,
+            overwrite_errors=overwrite_errors,
+            skip_existing=skip_existing,
+            validate_only=validate_only,
+            batch_size=batch_size,
+            pre_skip_existing=pre_skip_existing,
+            retries=retries,
+            retry_delay=retry_delay,
+            cookies_from_browser=cookies_from_browser,
+            cookie_file=cookie_file,
+            debug=debug,
+            soundcloud_fallback=soundcloud_fallback,
         )
         if not success:
             sys.exit(1)
