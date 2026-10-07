@@ -13,7 +13,7 @@ full library export - see its own docstring.
 
 import os
 
-from download.spotify_api import (
+from download.spotify.spotify_api import (
     get_user_playlists,
     get_playlist_tracks,
     get_liked_songs,

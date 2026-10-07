@@ -18,8 +18,8 @@ logic, not lib.text's normalization rules.
 """
 import pytest
 
-import download.spotify_api as spotify_api_module
-from download.spotify_api import (
+import download.spotify.spotify_api as spotify_api_module
+from download.spotify.spotify_api import (
     _extract_track,
     _fuzzy_key,
     export_manifest_as_txt,

@@ -10,7 +10,8 @@ from unittest import mock
 
 import pytest
 
-from download.spotify_download import download_spotify, _extract_urls_from_csv, _log_urls
+from download.spotify.spotify_download import download_spotify, _extract_urls_from_csv
+from download.fallback import _log_urls
 
 
 class TestExtractUrlsFromCsv:
@@ -83,7 +84,7 @@ class TestDownloadSpotifyUrlHandling:
             proc.returncode = 0
             return proc
 
-        monkeypatch.setattr("download.spotify_download.subprocess.Popen", fake_popen)
+        monkeypatch.setattr("download.spotify.spotify_download.subprocess.Popen", fake_popen)
         download_spotify(str(url_file), output_dir=str(tmp_path / "out"), batch_size=10)
 
         # only one batch, containing the deduped 2 urls, in first-seen order
@@ -106,7 +107,7 @@ class TestDownloadSpotifyBatching:
             proc.returncode = 0
             return proc
 
-        monkeypatch.setattr("download.spotify_download.subprocess.Popen", fake_popen)
+        monkeypatch.setattr("download.spotify.spotify_download.subprocess.Popen", fake_popen)
         return captured
 
     def test_batch_size_splits_urls_into_correct_number_of_batches(self, tmp_path, monkeypatch):
@@ -136,7 +137,7 @@ class TestDownloadSpotifyFailureClassification:
         url_file.write_text("https://gone\n", encoding="utf-8")
 
         popen_mock = mock.Mock(side_effect=self._fake_popen_with_output("Track no longer exists\n"))
-        monkeypatch.setattr("download.spotify_download.subprocess.Popen", popen_mock)
+        monkeypatch.setattr("download.spotify.spotify_download.subprocess.Popen", popen_mock)
 
         download_spotify(str(url_file), output_dir=str(tmp_path / "out"), retries=3)
 
@@ -151,8 +152,8 @@ class TestDownloadSpotifyFailureClassification:
         url_file.write_text("https://flaky\n", encoding="utf-8")
 
         popen_mock = mock.Mock(side_effect=self._fake_popen_with_output("No results found\n"))
-        monkeypatch.setattr("download.spotify_download.subprocess.Popen", popen_mock)
-        monkeypatch.setattr("download.spotify_download.time.sleep", lambda s: None)
+        monkeypatch.setattr("download.spotify.spotify_download.subprocess.Popen", popen_mock)
+        monkeypatch.setattr("download.spotify.spotify_download.time.sleep", lambda s: None)
 
         download_spotify(str(url_file), output_dir=str(tmp_path / "out"), retries=2, retry_delay=0)
 
@@ -166,7 +167,7 @@ class TestDownloadSpotifyFailureClassification:
         url_file.write_text("https://good\n", encoding="utf-8")
 
         popen_mock = mock.Mock(side_effect=self._fake_popen_with_output("batch downloaded successfully\n"))
-        monkeypatch.setattr("download.spotify_download.subprocess.Popen", popen_mock)
+        monkeypatch.setattr("download.spotify.spotify_download.subprocess.Popen", popen_mock)
 
         result = download_spotify(str(url_file), output_dir=str(tmp_path / "out"))
 
@@ -178,7 +179,7 @@ class TestDownloadSpotifyFailureClassification:
 class TestDownloadSpotifyPreSkipExisting:
     def test_validate_only_reports_and_returns_without_downloading(self, tmp_path, sample_manifest_csv, fixture_library, monkeypatch):
         popen_mock = mock.Mock()
-        monkeypatch.setattr("download.spotify_download.subprocess.Popen", popen_mock)
+        monkeypatch.setattr("download.spotify.spotify_download.subprocess.Popen", popen_mock)
 
         result = download_spotify(
             str(sample_manifest_csv),
@@ -205,7 +206,7 @@ class TestDownloadSpotifyPreSkipExisting:
             proc.returncode = 0
             return proc
 
-        monkeypatch.setattr("download.spotify_download.subprocess.Popen", fake_popen)
+        monkeypatch.setattr("download.spotify.spotify_download.subprocess.Popen", fake_popen)
 
         download_spotify(
             str(sample_manifest_csv),
@@ -222,7 +223,7 @@ class TestDownloadSpotifyPreSkipExisting:
         url_file.write_text("https://x\n", encoding="utf-8")
 
         popen_mock = mock.Mock()
-        monkeypatch.setattr("download.spotify_download.subprocess.Popen",
+        monkeypatch.setattr("download.spotify.spotify_download.subprocess.Popen",
                              lambda cmd, **kw: mock.Mock(
                                  stdout=iter(["batch downloaded successfully\n"]),
                                  wait=lambda: None, returncode=0))

@@ -28,10 +28,10 @@ import click
 from dotenv import load_dotenv
 
 from lib.spotify_auth import authenticate_user
-from download.spotify_api import get_export_dir
-from download.spotify_export import export_all_data, export_specific_playlist, export_playlists
-from download.spotify_download import download_spotify
-from download.soundcloud_download import download_soundcloud
+from download.spotify.spotify_api import get_export_dir
+from download.spotify.spotify_export import export_all_data, export_specific_playlist, export_playlists
+from download.spotify.spotify_download import download_spotify
+from download.soundcloud.soundcloud_download import download_soundcloud
 from download.ytdl import download_ytdl, AUDIO_FORMATS
 from download.retry import (
     run_retry,
@@ -39,7 +39,7 @@ from download.retry import (
     DEFAULT_SOFT,
     DEFAULT_OUT,
 )
-from download.soundbyte import run_soundbyte, DEFAULT_LIMIT
+from download.other.soundbyte import run_soundbyte, DEFAULT_LIMIT
 
 load_dotenv()
 

@@ -28,8 +28,8 @@ Now we can work on enhancements and plan for the app.
 
 ## Enhancements
 
-- [ ] spotdl fallback, option to turn on so that each song/album that cant be found (spotdl) asks user to input either the youtube music or path to existing file so it can be matched in the future (may need a manual match functionality for this, fixed some issues with soundtrack stuff)
-- [ ] SoundCloud export/download + a `--exclude` flag for Spotify
+- [x] spotdl fallback, option to turn on so that each song/album that cant be found (spotdl) asks user to input either the youtube music or path to existing file so it can be matched in the future (implemented via download.fallback module)
+- [x] SoundCloud export/download + a `--exclude` flag for Spotify
   playlist sync + the cross-service playlist design both feed into —
   full plan in `PLAYLIST_SYNC_PLAN.md` (new), superseding the shorter
   note this bullet used to be. Short version:

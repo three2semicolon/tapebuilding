@@ -21,13 +21,13 @@ import csv
 
 import pytest
 
-from download.spotify_export import (
+from download.spotify.spotify_export import (
     extract_playlist_id_from_url,
     export_specific_playlist,
     export_playlists,
     export_all_data,
 )
-from download.spotify_api import (
+from download.spotify.spotify_api import (
     merge_and_deduplicate,
     get_export_dir,
 )
@@ -218,7 +218,7 @@ class TestGetExportDir:
             called_with['cli'] = cli
             return '/resolved/exports'
 
-        monkeypatch.setattr('download.spotify_api.exports_dir', fake_exports_dir)
+        monkeypatch.setattr('download.spotify.spotify_api.exports_dir', fake_exports_dir)
         result = get_export_dir(base_dir='/explicit/base')
 
         assert result == '/resolved/exports'
@@ -227,7 +227,7 @@ class TestGetExportDir:
     def test_default_base_dir_is_none(self, monkeypatch):
         called_with = {}
         monkeypatch.setattr(
-            'download.spotify_api.exports_dir',
+            'download.spotify.spotify_api.exports_dir',
             lambda cli=None: called_with.setdefault('cli', cli),
         )
         get_export_dir()

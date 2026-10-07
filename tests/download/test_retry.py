@@ -126,7 +126,7 @@ class TestRunRetryLibraryRecheckConsistency:
     """
 
     def test_agrees_with_spotify_download_pre_skip_existing(self, tmp_path, sample_manifest_csv, fixture_library, monkeypatch):
-        from download.spotify_download import _check_existing
+        from download.spotify.spotify_download import _check_existing
         from download.manifest import read_csv_metadata
 
         failed_path = tmp_path / "failed.txt"

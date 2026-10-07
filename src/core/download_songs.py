@@ -49,7 +49,7 @@ import os
 import tempfile
 
 from lib.paths import archive_path
-from download.spotify_download import download_spotify
+from download.spotify.spotify_download import download_spotify
 from organize.beets_import import run_import
 from playlists.build import build_playlists
 

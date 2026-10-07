@@ -37,8 +37,8 @@ import os
 import sys
 
 from lib.spotify_auth import authenticate_user
-from download.spotify_api import get_playlist_tracks
-from download.spotify_export import export_all_data, extract_playlist_id_from_url
+from download.spotify.spotify_api import get_playlist_tracks
+from download.spotify.spotify_export import export_all_data, extract_playlist_id_from_url
 
 from lib.paths import (
     archive_path as resolve_archive_path,

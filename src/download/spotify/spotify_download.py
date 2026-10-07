@@ -201,6 +201,7 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
 
         attempt = 0
         batch_succeeded = False
+        hard_failure_detected = False
         while attempt <= retries and not batch_succeeded:
             try:
                 proc = subprocess.Popen(
@@ -220,6 +221,7 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
 
             if any(p in combined_output for p in HARD_FAILURE_PATTERNS):
                 print(f"hard failure (track unavailable): {batch}")
+                hard_failure_detected = True
                 break  # exit while loop to go to fallback
 
             if returncode != 0:
@@ -247,7 +249,13 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
             batch_succeeded = True
             break  # exit while loop
 
-        if not batch_succeeded and spotdl_fallback:
+        # Handle hard failures specially - log to failed_downloads.txt and skip fallback
+        if hard_failure_detected:
+            print(f"  Batch {batch_num} had hard failure (track unavailable).")
+            overall_success = False
+            # Log the failed URLs to failed_downloads.txt with track_unavailable reason
+            fallback._log_urls('failed_downloads.txt', batch, reason='track_unavailable')
+        elif not batch_succeeded and spotdl_fallback:
             # Process fallback using the fallback module
             fallback_succeeded, fallback_failed, batch_succeeded = fallback.process_fallback(
                 batch=batch,

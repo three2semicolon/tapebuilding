@@ -30,7 +30,7 @@ import sys
 import time
 
 from lib.spotify_auth import authenticate_client
-from download.spotify_api import get_export_dir
+from download.spotify.spotify_api import get_export_dir
 
 DEFAULT_LIMIT = 200
 

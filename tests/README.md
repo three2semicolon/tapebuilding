@@ -11,7 +11,7 @@ rationale behind what's tested and in what priority order.
 **Real tests, written against actual source:**
 - `test_imports.py` — import + `--help` smoke tests for every module and CLI command
 - `lib/test_paths.py`, `test_text.py`, `test_tags.py`, `test_m3u.py`, `catalog/test_indexer.py`, `catalog/test_matcher.py`
-- `download/test_manifest.py`, `test_existing.py`, `test_ytdl.py`, `test_spotify_download.py`, `test_retry.py`, `test_spotify_export.py`, `test_spotify_api.py`
+- `download/test_manifest.py`, `test_existing.py`, `test_ytdl.py`, `test_spotify_download.py`, `test_retry.py`, `test_spotify_export.py`, `test_spotify_api.py`, `test_fallback.py`
 - `organize/test_preimport.py`, `test_beets_import.py`, `test_cleanup.py`
 - `playlists/test_build.py` — was one real `xfail`
   (`TestSelectPlaylistsDefaultScope::test_default_scope_matches_by_id_not_display_name`):

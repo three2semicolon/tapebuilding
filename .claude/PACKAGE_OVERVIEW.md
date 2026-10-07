@@ -22,6 +22,9 @@ src/
       indexer.py
       matcher.py
   download/              acquisition: spotify export/download, ytdl, retry, soundbyte
+    spotify/             spotify-specific: api, download, export
+    soundcloud/          soundcloud-specific: download, export
+    other/               cross-service: soundbyte
   organize/              raw downloads -> beets-managed crate
   playlists/             spotify playlist -> local .m3u8, with crate matching
   tapedeck/               mirror a rotation subset of the crate to a sync target
