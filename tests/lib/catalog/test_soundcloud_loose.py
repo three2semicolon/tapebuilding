@@ -191,3 +191,70 @@ def test_prefix_needs_artist_and_few_missing_words():
     assert idx.match(row('living off the', 'some random uploader'))[0] is None   # no artist evidence
     far = SoundcloudLooseIndex([E('Love Me Like You Do Tonight Again', 'Moody Good')])
     assert far.match(row('moody good love', 'moody good'))[0] is None            # too many words missing
+
+
+# ---- round 4: catalog shaped like the user's Mp3tag screenshots -------------------------
+def EA(title, artist, album, albumartist=None, length=200.0):
+    return {'title': title, 'artist': artist, 'albumartist': albumartist or artist, 'album': album,
+            'length': length, 'path': f'/crate/{album}/{title}.mp3'}
+
+
+SHOT = SoundcloudLooseIndex([
+    # Captain Murphy - Duality Deluxe
+    EA('Hovercrafts and Cows (Prod Flying Lotus)', 'Captain Murphy', 'Duality Deluxe'),
+    EA('Hovercrafts and Cows [Instrumental]', 'Captain Murphy', 'Duality Deluxe'),
+    # DIVERSA - underscore
+    *[EA(t, 'DIVERSA', 'underscore') for t in ['bae', 'xxxXXX', 'haveaniceday', 'srri srri',
+                                              'trigger happy', 'lunatic', 'sandboxmode2', 'once again']],
+    EA('awkward silence ft. oneira', 'DIVERSA', 'underscore'),
+    # Alina Baraz - Urban Flora (+ a remixes album)
+    *[EA(t, a, 'Urban Flora') for t, a in [
+        ('Show Me', 'Alina Baraz/Galimatias'), ('Drift', 'Galimatias/Alina Baraz'),
+        ('Can I', 'Galimatias/Alina Baraz'), ('Fantasy', 'Alina Baraz/Galimatias'),
+        ('Make You Feel', 'Alina Baraz/Galimatias'), ('Maybe', 'Alina Baraz/Galimatias'),
+        ('Pretty Thoughts', 'Galimatias/Alina Baraz'), ('Unfold', 'Alina Baraz/Galimatias')]],
+    EA('Make You Feel (Remix)', 'Alina Baraz/Galimatias', 'Urban Flora (Remixes)'),
+    # Kelela - RAVE:N, The Remixes
+    EA('Contact - Karen Nyame KG Remix', 'Kelela/Karen Nyame KG', 'RAVE:N, The Remixes', 'Kelela'),
+    EA('Closure - Flexulant x BAMBII Remix feat. Rahrah Gabor & Brazy',
+       'Kelela/Flexulant/BAMBII/Rahrah Gabor/brazy', 'RAVE:N, The Remixes', 'Kelela'),
+    EA('Divorce - DJ Manny Remix', 'Kelela/DJ Manny', 'RAVE:N, The Remixes', 'Kelela'),
+    EA('Bruises (SUCIA! Remix)', 'Kelela, SUCIA!', 'RAVE:N, The Remixes', 'Kelela'),
+])
+
+
+def shot(title, artist):
+    e, tier = SHOT.match(row(title, artist))
+    return (e['title'], tier) if e else (None, None)
+
+
+@pytest.mark.parametrize('title,uploader,want', [
+    # truncated slug; plain track wins over its [Instrumental] twin
+    ('captain murphy hovercrafts and', 'selftitledmag', 'Hovercrafts and Cows (Prod Flying Lotus)'),
+    # slug reads "<artist> <ALBUM> <title-start>"
+    ('diversa underscore awkward', '\u0486\u0485a', 'awkward silence ft. oneira'),
+    ('diversa underscore trigger', '\u0486\u0485a', 'trigger happy'),
+    # 4-char truncation, both names tagged as artists
+    ('alina baraz galimatias make', 'Galimatias', 'Make You Feel'),
+    ('alina baraz galimatias pretty', 'Galimatias', 'Pretty Thoughts'),
+    # remixer is ALSO a tagged artist and the slug dropped the word "remix"
+    ('closure flexulant x bambii', 'KELELA', 'Closure - Flexulant x BAMBII Remix feat. Rahrah Gabor & Brazy'),
+    # abbreviated name inside the title: ordered subset
+    ('contact kg remix', 'KELELA', 'Contact - Karen Nyame KG Remix'),
+])
+def test_screenshot_cases(title, uploader, want):
+    assert shot(title, uploader)[0] == want
+
+
+@pytest.mark.parametrize('title,uploader', [
+    ('divorce loraine james remix', 'KELELA'),        # local one is DJ Manny's remix - different track
+    ('Kelela - Bruises (OSSX Remix)', 'OSSX'),        # local one is SUCIA!'s remix - different track
+    ('diversa underscore', '\u0486\u0485a'),          # album name only, no title at all
+])
+def test_screenshot_must_not_match(title, uploader):
+    assert shot(title, uploader)[0] is None
+
+
+def test_instrumental_row_picks_instrumental():
+    assert shot('captain murphy hovercrafts and cows instrumental', 'selftitledmag')[0] == \
+        'Hovercrafts and Cows [Instrumental]'

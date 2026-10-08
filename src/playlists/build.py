@@ -215,6 +215,18 @@ def _download_cover(sp, playlist_id, dest_path):
     return True
 
 
+def _spotify_exports_dir(exports_dir):
+    """spotify's csvs live in <exports>/spotify/ (export_* writes them there, same as
+    soundcloud's <exports>/soundcloud/). falls back to the old flat <exports>/ layout
+    only when that's where a playlists.csv actually is and the new one isn't."""
+    new = os.path.join(exports_dir, 'spotify')
+    if os.path.isfile(os.path.join(new, 'playlists.csv')):
+        return new
+    if os.path.isfile(os.path.join(exports_dir, 'playlists.csv')):
+        return exports_dir
+    return new
+
+
 def _scope_rescrape(sp, names, exports_dir):
     """--rescrape with -p: fetch only the named playlist(s) from spotify and
     patch their rows into playlists.csv + playlist_tracks.csv, instead of the
@@ -222,6 +234,8 @@ def _scope_rescrape(sp, names, exports_dir):
     an id via the existing playlists.csv (one we don't already know can't be
     scraped by name - pass its url or id, or run a full --rescrape first to
     learn it); a url or bare id fetches directly."""
+    exports_dir = _spotify_exports_dir(exports_dir)
+    os.makedirs(exports_dir, exist_ok=True)
     playlists_csv = os.path.join(exports_dir, 'playlists.csv')
     tracks_csv = os.path.join(exports_dir, 'playlist_tracks.csv')
     metas = _read_csv(playlists_csv)          # [] on a first run
@@ -319,9 +333,9 @@ def build_playlists(apply=False, all_playlists=False, names=None, exclude_names=
         tracks_csv = os.path.join(exports_dir_resolved, 'soundcloud', 'playlist_tracks.csv')
         service_exports_dir = os.path.join(exports_dir_resolved, 'soundcloud')
     else:  # spotify (default)
-        playlists_csv = os.path.join(exports_dir_resolved, 'playlists.csv')
-        tracks_csv = os.path.join(exports_dir_resolved, 'playlist_tracks.csv')
-        service_exports_dir = os.path.join(exports_dir_resolved, 'spotify')
+        service_exports_dir = _spotify_exports_dir(exports_dir_resolved)
+        playlists_csv = os.path.join(service_exports_dir, 'playlists.csv')
+        tracks_csv = os.path.join(service_exports_dir, 'playlist_tracks.csv')
     selected = _select_playlists(playlists_csv, names, all_playlists, exclude_names=exclude_names, service=service)
     grouped = _group_tracks_by_playlist(_read_csv(tracks_csv))
 

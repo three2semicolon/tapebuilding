@@ -42,12 +42,16 @@ FUZZY_ARTIST_RATIO = 0.88         # uploader ~ local artist
 MAX_DURATION_DIFF = 15.0          # seconds; only vetoes when BOTH durations known
 TITLE_ONLY_MIN_CHARS = 12         # tier 9: joined title must be at least this long...
 TITLE_ONLY_MIN_TOKENS = 2         # ...AND at least this many words
-PREFIX_MIN_CHARS = 5              # truncated-slug rule: row text (artist removed) at least this long
+PREFIX_MIN_CHARS = 4              # truncated-slug rule: row text (artist removed) at least this long
+SUBSEQ_MAX_SKIPPED_WORDS = 3      # ordered-subset rule: at most this many local-title words skipped
 PREFIX_MAX_MISSING_WORDS = 2      # ...and at most this many words of the local title missing
 ALLOW_TITLE_ONLY = True           # set False to drop tier 9 entirely
 
 # ---- vocab ------------------------------------------------------------
-_REMIX_MARKERS = {'remix', 'flip', 'bootleg', 'rework', 'vip', 'refix', 'edit', 'dub', 'mashup'}
+_REMIX_MARKERS = {'remix', 'flip', 'bootleg', 'rework', 'vip', 'refix', 'edit', 'dub', 'mashup',
+                  'instrumental', 'acapella', 'karaoke'}
+# markers that count as a variant even OUTSIDE brackets ("Closure - Flexulant x BAMBII Remix")
+_STRONG_VARIANT = {'remix', 'flip', 'bootleg', 'rework', 'refix', 'mashup', 'instrumental', 'acapella'}
 _NOT_A_REMIX_EDIT_PREFIX = {'radio', 'extended', 'album', 'clean', 'explicit', 'single', 'original', 'club'}
 _VERSION_WORDS = {'original', 'mix', 'extended', 'radio', 'version', 'official', 'audio', 'video',
                   'lyric', 'lyrics', 'hq', 'hd', 'remastered', 'remaster'}
@@ -132,7 +136,7 @@ def _entry_has_remix(title):
         for i, w in enumerate(t):
             if w in _REMIX_MARKERS and not (w == 'edit' and i > 0 and t[i - 1] in _NOT_A_REMIX_EDIT_PREFIX):
                 return True
-    return False
+    return any(w in _STRONG_VARIANT for w in tokens(title))
 
 
 def _find_seg(left, seg):
@@ -168,9 +172,59 @@ def _filename_parts(path):
     return '', (parts[0] if parts else '')
 
 
+def _trim_free(left):
+    """strip glue words ('ft', 'prod', 'and', '1'...) from both ends only."""
+    while left and left[0] in _FREE_LEFTOVER:
+        left = left[1:]
+    while left and left[-1] in _FREE_LEFTOVER:
+        left = left[:-1]
+    return left
+
+
+def _peel(left, segs):
+    """remove artist segments that sit at the EDGES of the row text (artist-first or
+    artist-last slugs), alternating with glue-word trimming. unlike removing a name
+    wherever it occurs, this leaves a remixer who is also a tagged artist alone when
+    they are part of the title ("closure flexulant x bambii")."""
+    peeled = False
+    while True:
+        before = left
+        left = _trim_free(left)
+        for seg in segs:
+            if len(''.join(seg)) < 3 or not left:
+                continue
+            i, n = _find_seg(left, seg)
+            if i == 0:
+                left, peeled = left[n:], True
+                break
+            if i > 0 and i + n == len(left):
+                left, peeled = left[:i], True
+                break
+        if left == before:
+            return left, peeled
+
+
+def _strip_album(toks, album):
+    """SoundCloud slugs sometimes read "<artist> <album> <title>": drop the album words."""
+    if album:
+        i = _find(toks, album)
+        if i >= 0 and len(toks) > len(album):
+            return toks[:i] + toks[i + len(album):]
+    return toks
+
+
+def _ordered_subset_missing(rest, base):
+    """if `rest` is an ordered (non-contiguous) subsequence of `base`, return how many
+    base tokens it skips, else -1."""
+    it = iter(base)
+    if all(t in it for t in rest):
+        return len(base) - len(rest)
+    return -1
+
+
 # ---- per-entry precompute ---------------------------------------------
 class _Entry:
-    __slots__ = ('entry', 'bases', 'base', 'base_str', 'paren_toks', 'remix', 'segs', 'seg_strs', 'length')
+    __slots__ = ('entry', 'bases', 'base', 'base_str', 'paren_toks', 'remix', 'segs', 'seg_strs', 'length', 'album')
 
     def __init__(self, entry):
         self.entry = entry
@@ -180,6 +234,7 @@ class _Entry:
         self.paren_toks = set(t for grp in _BRACKET_RE.findall(no_feat) for t in tokens(grp))
         self.base = tokens(_BRACKET_RE.sub(' ', no_feat)) or tokens(no_feat)
         self.base_str = ' '.join(self.base)
+        self.album = tokens(_BRACKET_RE.sub(' ', entry.get('album') or ''))
         # title candidates: the tag, plus the filename's title if it differs
         # (covers empty/garbled title tags)
         f_artist, f_title = _filename_parts(entry.get('path'))
@@ -317,90 +372,114 @@ class SoundcloudLooseIndex:
                     add(self.by_artist_c[k])
         return out
 
-    def _artist_evidence(self, left, ent, up_toks, up_str):
-        """-> (left_after_artist, how) or None. removes EVERY local artist segment
-        found in the row text (multi-artist "A_B"/"A/B" files), not just the first."""
-        removed = False
-        for seg in sorted(ent.segs, key=len, reverse=True):
+    def _artist_options(self, left, ent, up_toks, up_str):
+        """every plausible reading of `left` once the artist is accounted for:
+        [(left_after, how)], how in {'title','uploader'}. several readings are returned
+        because the same name can be an artist OR part of the title (a remixer)."""
+        opts = []
+        segs = sorted(ent.segs, key=len, reverse=True)
+        peeled, did = _peel(left, segs)
+        if did:
+            opts.append((peeled, 'title'))
+        anyrem, removed = left, False                      # name removed wherever it occurs
+        for seg in segs:
             if len(''.join(seg)) < 3:
                 continue
-            i, n = _find_seg(left, seg)
+            i, n = _find_seg(anyrem, seg)
             if i >= 0:
-                left = left[:i] + left[i + n:]
-                removed = True
-        if removed:
-            return left, 'title'
-        for seg, sstr in zip(ent.segs, ent.seg_strs):
-            if self._uploader_matches(seg, sstr, up_toks, up_str):
-                return left, 'uploader'
-        # remixer uploading their own remix: uploader == the name in "(X Remix)"
-        if ent.remix:
+                anyrem, removed = anyrem[:i] + anyrem[i + n:], True
+        if removed and not (did and anyrem == peeled):
+            opts.append((anyrem, 'title'))
+        uploader_ok = any(self._uploader_matches(seg, sstr, up_toks, up_str)
+                          for seg, sstr in zip(ent.segs, ent.seg_strs))
+        if not uploader_ok and ent.remix:
+            # remixer uploading their own remix: uploader == the name in "(X Remix)"
             sig_up = {t for t in up_toks if t not in _GENERIC_ARTIST_TOKENS}
-            if sig_up and sig_up <= ent.paren_toks and len(' '.join(sorted(sig_up))) >= 4:
-                return left, 'uploader'
-        return None
+            uploader_ok = bool(sig_up and sig_up <= ent.paren_toks
+                               and len(' '.join(sorted(sig_up))) >= 4)
+        if uploader_ok:
+            opts.append((left, 'uploader'))
+        return opts
 
     # -- scoring one (variant, entry) pair -----------------------------------
     def _score(self, variant, ent, up_toks, up_str, row_remix, want_dur):
-        """returns (score, tier, kind) or None; kind in {'', 'prefix'}; best over the entry's title candidates."""
-        if not ent.bases or (ent.remix != row_remix):
+        """-> (score, tier, kind) or None. kind in {'', 'prefix', 'subseq'}.
+        'prefix'/'subseq' are the weak, unambiguity-gated matches (see match())."""
+        if not ent.bases:
             return None
+        if row_remix and not ent.remix:
+            return None                       # a remix row must never land on the original
+        remix_gap = ent.remix and not row_remix   # row dropped the "remix" word (truncated slug)
         if want_dur and ent.length and abs(want_dur - ent.length) > MAX_DURATION_DIFF:
             return None
 
         def clean_left(left):
-            if ent.remix:   # tolerate remix markers carried in the local brackets
+            if ent.remix:
                 left = tuple(t for t in left if t not in _REMIX_MARKERS)
-            # words that live in the local title's own brackets are explained, not leftover
             left = tuple(t for t in left if t not in ent.paren_toks)
+            left = _strip_album(left, ent.album)
             return tuple(t for t in left if t not in _FREE_LEFTOVER)
 
         best = None
+
+        def consider(res):
+            nonlocal best
+            if res and (best is None or (res[1], -res[0]) < (best[1], -best[0])):
+                best = res
+
         for base in ent.bases:
             base_str = ' '.join(base)
             # --- tier 7: local title contiguous inside the row text -----------------
             i = _find(variant, base)
-            if i >= 0:
-                left = variant[:i] + variant[i + len(base):]
-                ev = self._artist_evidence(left, ent, up_toks, up_str)
-                if ev is not None:
-                    left, how = ev
+            if i >= 0 and not remix_gap:
+                left0 = variant[:i] + variant[i + len(base):]
+                for left, how in self._artist_options(left0, ent, up_toks, up_str):
                     left = clean_left(left)
                     allowed = 1 if len(base) == 1 else 2
+                    if row_remix and ent.remix:
+                        allowed = 0   # both are remixes: any unexplained word is probably a DIFFERENT remixer
                     short = len(base) == 1 and len(base[0]) <= 3
                     if len(left) <= allowed and not (short and left):
-                        res = (1.0 - 0.08 * len(left) + (0.03 if how == 'title' else 0.0), 7, '')
-                        best = res if best is None or res[0] > best[0] else best
-                        continue
-            # --- tier 8: fuzzy title after the artist is taken out ---------------------
-            ev = self._artist_evidence(variant, ent, up_toks, up_str)
-            if ev is not None:
-                rest = clean_left(ev[0])
+                        consider((1.0 - 0.08 * len(left) + (0.03 if how == 'title' else 0.0), 7, ''))
+        # --- tier 8: fuzzy / prefix / subsequence, after the artist is accounted for ----
+        for rest0, how in self._artist_options(variant, ent, up_toks, up_str):
+            r1 = _trim_free(_strip_album(rest0, ent.album))
+            rests = [r1]
+            r2 = tuple(t for t in r1 if t not in ent.paren_toks)
+            if r2 and r2 != r1:
+                rests.append(r2)
+            for rest in rests:
+                if not rest:
+                    continue
                 rest_str = ' '.join(rest)
-                if len(rest_str) >= 5 and len(base_str) >= 5:
-                    if rest_str.replace(' ', '') == base_str.replace(' ', ''):
-                        res = (0.95, 7, '')           # "on my mind" == "OnMyMind"
-                    else:
-                        ratio = difflib.SequenceMatcher(None, rest_str, base_str).ratio()
-                        res = (ratio - 0.1, 8, '') if ratio >= FUZZY_TITLE_RATIO else None
-                    if res and (best is None or (res[1], -res[0]) < (best[1], -best[0])):
-                        best = res
-                # truncated slug: the row text is a PREFIX of the local title
-                # ("living off the" -> "Living Off the High"), 1-2 words missing.
-                if rest and len(rest_str) >= PREFIX_MIN_CHARS and len(rest) < len(base):
+                for base in ent.bases:
+                    base_str = ' '.join(base)
+                    if not remix_gap and len(rest_str) >= 5 and len(base_str) >= 5:
+                        if rest_str.replace(' ', '') == base_str.replace(' ', ''):
+                            consider((0.95, 7, ''))               # "on my mind" == "OnMyMind"
+                        else:
+                            ratio = difflib.SequenceMatcher(None, rest_str, base_str).ratio()
+                            if ratio >= FUZZY_TITLE_RATIO:
+                                consider((ratio - 0.1, 8, ''))
+                    if len(rest) >= len(base):
+                        continue
                     missing = len(base) - len(rest)
-                    head, last = base[:len(rest) - 1], base[len(rest) - 1]
-                    if (missing <= PREFIX_MAX_MISSING_WORDS and rest[:-1] == head
-                            and (rest[-1] == last)):
-                        res = (0.80 - 0.05 * missing, 8, 'prefix')
-                        if best is None or (res[1], -res[0]) < (best[1], -best[0]):
-                            best = res
-                    elif (len(rest[-1]) >= 4 and rest[:-1] == head and last.startswith(rest[-1])
-                          and missing <= PREFIX_MAX_MISSING_WORDS - 1):
-                        # last word itself cut mid-way ("thoug" -> "thoughts")
-                        res = (0.70 - 0.05 * missing, 8, 'prefix')
-                        if best is None or (res[1], -res[0]) < (best[1], -best[0]):
-                            best = res
+                    # truncated slug: row text is a PREFIX of the local title
+                    # ("living off the" -> "Living Off the High")
+                    if len(rest_str) >= PREFIX_MIN_CHARS:
+                        head, last = base[:len(rest) - 1], base[len(rest) - 1]
+                        if rest[:-1] == head and rest[-1] == last and missing <= PREFIX_MAX_MISSING_WORDS:
+                            consider((0.80 - 0.05 * missing, 8, 'prefix'))
+                        elif (len(rest[-1]) >= 4 and rest[:-1] == head and last.startswith(rest[-1])
+                              and missing <= PREFIX_MAX_MISSING_WORDS - 1):
+                            consider((0.70 - 0.05 * missing, 8, 'prefix'))   # last word cut mid-way
+                    # abbreviated name inside the title: "contact kg remix" ->
+                    # "Contact - Karen Nyame KG Remix" (ordered subset, same first/last word)
+                    if (len(rest) >= 2 and rest[0] == base[0] and rest[-1] == base[-1]
+                            and (len(rest) >= 3 or len(rest_str) >= 10)):
+                        skipped = _ordered_subset_missing(rest, base)
+                        if 1 <= skipped <= SUBSEQ_MAX_SKIPPED_WORDS:
+                            consider((0.75 - 0.04 * skipped, 8, 'subseq'))
         return best
 
     # -- public --------------------------------------------------------------
@@ -416,27 +495,31 @@ class SoundcloudLooseIndex:
         want_dur = _row_duration_seconds(row)
 
         best = None            # (tier, -score, entry, kind)
-        prefix_hits = set()    # distinct entries that matched only as a truncated prefix
+        soft = {}              # id(ent) -> (score, ent): entries reached only by weak prefix/subseq
         for ent in self._candidates(variants, up_toks, up_str):
             for v in variants:
                 res = self._score(v, ent, up_toks, up_str, row_remix, want_dur)
                 if res is None:
                     continue
                 score, tier, kind = res
-                if kind == 'prefix':
-                    prefix_hits.add(id(ent))
                 if want_dur and ent.length and abs(want_dur - ent.length) <= 3:
                     score += 0.1
+                if kind and (id(ent) not in soft or score > soft[id(ent)][0]):
+                    soft[id(ent)] = (score, ent)
                 cand = (tier, -score, ent.entry, kind)
                 if best is None or cand[:2] < best[:2]:
                     best = cand
         if best is not None:
-            # a prefix is only trustworthy when it's unambiguous: "pretty" must not
-            # pick between "Pretty Thoughts" and "Pretty Girl" by luck
-            if best[3] == 'prefix' and len(prefix_hits) > 1:
-                best = None
-            else:
+            if not best[3]:
                 return best[2], best[0]
+            # weak match: only trust it when unambiguous. entries of the same kind as the
+            # row (a plain row prefers the plain track over its [Instrumental]/remix) win
+            # first; "pretty" must not pick between "Pretty Thoughts" and "Pretty Girl".
+            pool = [e for _, e in soft.values()]
+            same = [e for e in pool if e.remix == row_remix]
+            pool = same or pool
+            if len(pool) == 1:
+                return pool[0].entry, 8
         if ALLOW_TITLE_ONLY:
             return self._title_only(variants, row_remix, want_dur)
         return None, None
