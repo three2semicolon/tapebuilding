@@ -32,6 +32,13 @@ from download.spotify.spotify_api import get_export_dir
 from download.spotify.spotify_export import export_all_data, export_specific_playlist, export_playlists
 from download.spotify.spotify_download import download_spotify
 from download.soundcloud.soundcloud_download import download_soundcloud
+from download.soundcloud.soundcloud_export import (
+    export_sets,
+    export_specific_set,
+    list_user_likes,
+    list_user_sets,
+    merge_and_deduplicate,
+)
 from download.ytdl import download_ytdl, AUDIO_FORMATS
 from download.retry import (
     run_retry,
@@ -40,6 +47,13 @@ from download.retry import (
     DEFAULT_OUT,
 )
 from download.other.soundbyte import run_soundbyte, DEFAULT_LIMIT
+from lib.paths import (
+    archive_path as resolve_archive_path,
+    playlists_path as resolve_playlists_path,
+    exports_dir as resolve_exports_dir,
+)
+from lib.catalog.indexer import get_index
+from lib.catalog.matcher import MatchIndex, match_rows
 
 load_dotenv()
 
@@ -70,32 +84,175 @@ def download():
 @click.option('--mine', is_flag=True,
               help='export only your own playlists (not followed/shared). '
                    'ignored with --playlist/--playlists-file.')
-def export_cmd(playlists, playlists_file, output, mine):
-    """export spotify playlists + liked songs to csv.
+@click.option('--service', type=click.Choice(['spotify', 'soundcloud']), default='spotify', show_default=True,
+              help='service to export from (spotify or soundcloud)')
+@click.option('--type', 'export_type', type=click.Choice(['likes', 'sets', 'all-sets']), default='likes', show_default=True,
+              help='type of data to export (likes, sets, or all-sets for soundcloud)')
+@click.option('--set-ids', multiple=True,
+              help='specific set ids to export (for soundcloud --type sets), repeatable')
+@click.option('--user', help='soundcloud username or url (defaults to current user)')
+@click.option('--archive-path', 'archive_path_opt', help='ARCHIVE_PATH (crate root) override for soundcloud crate checking')
+@click.option('--check-crate/--no-check-crate', 'check_crate', default=False, show_default=True, help='check soundcloud exports against local crate to avoid re-downloading existing tracks')
+def export_cmd(playlists, playlists_file, output, mine, service, export_type, set_ids, user, archive_path_opt, check_crate):
+    """export spotify playlists + liked songs to csv, or soundcloud likes/sets to csv.
 
+    SPOTIFY (default):
     with no --playlist/--playlists-file, exports the full library (all
     playlists + liked songs). with one or more, exports + merges just
     those playlists into a scoped 'playlists_manifest.csv' - useful for
     keeping a subset of playlists in sync without re-pulling everything.
+
+    SOUNDCLOUD:
+    --type likes: exports liked tracks
+    --type sets: exports specific sets (--set-ids required) or all sets
+    --type all-sets: exports all sets for a user
     """
-    identifiers = list(playlists)
-    if playlists_file:
-        with open(playlists_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    identifiers.append(line)
-
     try:
-        sp = authenticate_user()
-        export_dir = get_export_dir(base_dir=output)
+        if service == 'spotify':
+            identifiers = list(playlists)
+            if playlists_file:
+                with open(playlists_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            identifiers.append(line)
 
-        if len(identifiers) == 1:
-            export_specific_playlist(sp, identifiers[0], export_dir)
-        elif identifiers:
-            export_playlists(sp, identifiers, export_dir)
-        else:
-            export_all_data(sp, export_dir, my_playlists_only=mine)
+            sp = authenticate_user()
+            export_dir = get_export_dir(base_dir=output)
+
+            if len(identifiers) == 1:
+                export_specific_playlist(sp, identifiers[0], export_dir)
+            elif identifiers:
+                export_playlists(sp, identifiers, export_dir)
+            else:
+                export_all_data(sp, export_dir, my_playlists_only=mine)
+
+        elif service == 'soundcloud':
+            # SoundCloud export
+            export_dir = get_export_dir(base_dir=output)
+
+            # Determine username/user to use
+            soundcloud_user = user if user else 'me'  # default to current user
+
+            if export_type == 'likes':
+                click.echo(f"exporting soundcloud likes for user: {soundcloud_user}")
+                likes = list_user_likes(soundcloud_user)
+                # Write likes to CSV
+                import csv
+                likes_file = f"{export_dir}/soundcloud_likes.csv"
+                with open(likes_file, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.DictWriter(f, fieldnames=['title', 'uploader', 'track_url'])
+                    writer.writeheader()
+                    for track in likes:
+                        writer.writerow({
+                            'title': track.get('name', ''),
+                            'uploader': track.get('uploader', ''),
+                            'track_url': track.get('url', '')
+                        })
+                click.echo(f"exported {len(likes)} likes to {likes_file}")
+
+                # Also create URL manifest for download
+                urls_file = f"{export_dir}/soundcloud_manifest_urls.txt"
+                with open(urls_file, 'w', encoding='utf-8') as f:
+                    for track in likes:
+                        url = track.get('url', '')
+                        if url:
+                            f.write(url + '\n')
+                click.echo(f"created url manifest: {urls_file}")
+
+                # If crate checking is enabled, match against local archive
+                if check_crate and archive_path_opt:
+                    click.echo(f"checking soundcloud likes against crate at {archive_path_opt}")
+                    _process_soundcloud_crate_check(
+                        likes,
+                        export_dir,
+                        archive_path_opt,
+                        prefix="soundcloud_likes"
+                    )
+                elif check_crate:
+                    click.echo("error: --check-crate requires --archive-path to be specified", err=True)
+                    sys.exit(1)
+
+            elif export_type == 'sets':
+                if not set_ids:
+                    click.echo("error: --set-ids required for --type sets", err=True)
+                    sys.exit(1)
+
+                click.echo(f"exporting {len(set_ids)} specific soundcloud set(s) for user: {soundcloud_user}")
+                # Use export_sets to get deduplicated tracks and create playlist-format files
+                unique_tracks = export_sets(None, list(set_ids), export_dir)  # sp=None for soundcloud
+
+                click.echo(f"exported {len(unique_tracks)} unique tracks from {len(set_ids)} set(s)")
+
+                # If crate checking is enabled, match against local archive
+                if check_crate and archive_path_opt:
+                    click.echo(f"checking soundcloud sets against crate at {archive_path_opt}")
+                    _process_soundcloud_crate_check(
+                        unique_tracks,
+                        export_dir,
+                        archive_path_opt,
+                        prefix="soundcloud_sets"
+                    )
+                elif check_crate:
+                    click.echo("error: --check-crate requires --archive-path to be specified", err=True)
+                    sys.exit(1)
+
+            elif export_type == 'all-sets':
+                click.echo(f"exporting all soundcloud sets for user: {soundcloud_user}")
+                # Get all sets first
+                sets = list_user_sets(soundcloud_user)
+                click.echo(f"found {len(sets)} sets")
+
+                all_tracks = []
+                for soundcloud_set in sets:
+                    set_id = soundcloud_set['url']
+                    tracks = export_specific_set(None, set_id, export_dir)  # sp=None for soundcloud
+                    all_tracks.extend(tracks)
+
+                # Deduplicate tracks
+                unique_tracks = merge_and_deduplicate([all_tracks]) if all_tracks else []
+
+                click.echo(f"exported {len(unique_tracks)} unique tracks from {len(sets)} set(s)")
+
+                # Create manifest files
+                if unique_tracks:
+                    # CSV manifest
+                    manifest_csv = f"{export_dir}/soundcloud_manifest.csv"
+                    with open(manifest_csv, 'w', newline='', encoding='utf-8') as f:
+                        writer = csv.DictWriter(f, fieldnames=['title', 'uploader', 'track_url', 'position'])
+                        writer.writeheader()
+                        for i, track in enumerate(unique_tracks, 1):
+                            row = {
+                                'title': track.get('title', ''),
+                                'uploader': track.get('uploader', ''),
+                                'track_url': track.get('track_url', ''),
+                                'position': track.get('position', i)
+                            }
+                            writer.writerow(row)
+
+                    # URL manifest
+                    manifest_urls = f"{export_dir}/soundcloud_manifest_urls.txt"
+                    with open(manifest_urls, 'w', encoding='utf-8') as f:
+                        for track in unique_tracks:
+                            url = track.get('track_url', '')
+                            if url:
+                                f.write(url + '\n')
+
+                    click.echo(f"created manifest: {manifest_csv}")
+                    click.echo(f"created url manifest: {manifest_urls}")
+
+                    # If crate checking is enabled, match against local archive
+                    if check_crate and archive_path_opt:
+                        click.echo(f"checking soundcloud all sets against crate at {archive_path_opt}")
+                        _process_soundcloud_crate_check(
+                            unique_tracks,
+                            export_dir,
+                            archive_path_opt,
+                            prefix="soundcloud_all_sets"
+                        )
+                    elif check_crate:
+                        click.echo("error: --check-crate requires --archive-path to be specified", err=True)
+                        sys.exit(1)
     except Exception as e:
         click.echo(f"error: {e}", err=True)
         sys.exit(1)
@@ -359,6 +516,166 @@ def soundbyte_cmd(limit, output, delay):
         f"\nfeed the track csv to `download spotify --pre-skip-existing "
         f"-u {result['track_csv_path']}` to download."
     )
+
+
+def _process_soundcloud_crate_check(tracks, export_dir, archive_path, prefix):
+    """Process SoundCloud tracks against local crate to avoid re-downloading existing tracks.
+
+    Similar to the playlist unmatched logic, this:
+    1. Builds an index of the local music crate/archive
+    2. Matches SoundCloud track data against the crate
+    3. Writes matched/unmatched CSV and TXT files for handoff to downloader
+    """
+    try:
+        # Resolve archive path (crate root)
+        library = resolve_archive_path(archive_path)
+        if not os.path.isdir(library):
+            click.echo(f"warning: library root not found: {library} (archive path)", err=True)
+            return
+
+        # Build index of local crate
+        click.echo(f"building crate index from {library}...")
+        index = get_index(library, exports_dir=export_dir, reindex=False, verbose=False)
+        mindex = MatchIndex(index)
+
+        # Prepare SoundCloud track data for matching
+        # Convert to format expected by match_rows: list of dicts with track metadata
+        soundcloud_rows = []
+        for i, track in enumerate(tracks):
+            # Extract metadata from SoundCloud track data
+            # Based on what we get from list_user_likes and export_specific_set
+            track_id = track.get('id', f'sc_{i}')  # Use ID if available, otherwise generate
+            track_name = track.get('title', track.get('name', ''))  # title or name
+            artist_names = track.get('uploader', track.get('artist', ''))  # uploader or artist
+            album_name = track.get('album', '')  # album if available
+            spotify_url = track.get('track_url', track.get('url', ''))  # URL
+
+            # Create a row in the format expected by match_rows
+            # Based on PLAYLIST_TRACKS_FIELDS from playlists/build.py
+            row = {
+                'playlist_id': prefix,  # Use prefix as playlist ID for matching
+                'playlist_name': prefix.replace('_', ' ').title(),  # Human readable name
+                'track_id': track_id,
+                'track_name': track_name,
+                'artist_names': artist_names,
+                'album_name': album_name,
+                'duration_ms': 0,  # Unknown for SoundCloud
+                'explicit': False,
+                'popularity': 0,
+                'added_at': '',
+                'added_by': '',
+                'spotify_url': spotify_url,
+                'track_number': 0,
+                'disc_number': 0,
+                'is_local': False,
+            }
+            soundcloud_rows.append(row)
+
+        if not soundcloud_rows:
+            click.echo("warning: no soundcloud tracks to check against crate")
+            return
+
+        # Perform matching against crate index
+        click.echo(f"matching {len(soundcloud_rows)} soundcloud tracks against crate...")
+        results = match_rows(soundcloud_rows, index=mindex, verbose=False)
+
+        # Separate matched and unmatched tracks
+        matched_entries = []
+        unmatched_rows = []
+        matched_count = 0
+        unmatched_count = 0
+
+        for rec in results:
+            row = rec['row']
+            if rec['path']:  # Matched - found in crate
+                matched_count += 1
+                matched_entries.append({
+                    'track_id': row.get('track_id', ''),
+                    'track_name': row.get('track_name', ''),
+                    'artist_names': row.get('artist_names', ''),
+                    'album_name': row.get('album_name', ''),
+                    'spotify_url': row.get('spotify_url', ''),
+                    'matched_path': rec['path'],  # Where it was found in crate
+                })
+            else:  # Unmatched - not in crate, needs downloading
+                unmatched_count += 1
+                unmatched_rows.append({
+                    'track_id': row.get('track_id', ''),
+                    'track_name': row.get('track_name', ''),
+                    'artist_names': row.get('artist_names', ''),
+                    'album_name': row.get('album_name', ''),
+                    'spotify_url': row.get('spotify_url', ''),
+                })
+
+        # Write matched tracks CSV
+        if matched_entries:
+            matched_csv_path = f"{export_dir}/{prefix}_matched.csv"
+            matched_fields = ('track_id', 'track_name', 'artist_names', 'album_name', 'spotify_url', 'matched_path')
+            try:
+                with open(matched_csv_path + '.tmp', 'w', encoding='utf-8-sig', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=matched_fields)
+                    writer.writeheader()
+                    writer.writerows(matched_entries)
+                os.replace(matched_csv_path + '.tmp', matched_csv_path)
+                click.echo(f"written {len(matched_entries)} matched tracks to {matched_csv_path}")
+            except OSError as e:
+                click.echo(f"warning: could not write {matched_csv_path}: {e}", err=True)
+
+        # Write unmatched tracks CSV and URL list (for downloading)
+        if unmatched_rows:
+            unmatched_csv_path = f"{export_dir}/{prefix}_unmatched.csv"
+            unmatched_txt_path = f"{export_dir}/{prefix}_unmatched_urls.txt"
+            unmatched_fields = ('track_id', 'track_name', 'artist_names', 'album_name', 'spotify_url')
+            urls = []
+            seen = set()
+            body_lines = []
+            body_lines.append(','.join(unmatched_fields))
+
+            for r in unmatched_rows:
+                body_lines.append(','.join(_csv_escape(r.get(k, '')) for k in unmatched_fields))
+                u = (r.get('spotify_url') or '').strip()
+                if u and u not in seen:
+                    seen.add(u)
+                    urls.append(u)
+
+            try:
+                # Write CSV
+                with open(unmatched_csv_path + '.tmp', 'w', encoding='utf-8-sig', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=unmatched_fields)
+                    writer.writeheader()
+                    writer.writerows(unmatched_rows)
+                os.replace(unmatched_csv_path + '.tmp', unmatched_csv_path)
+
+                # Write URL list
+                with open(unmatched_txt_path + '.tmp', 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(urls) + ('\n' if urls else ''))
+                os.replace(unmatched_txt_path + '.tmp', unmatched_txt_path)
+
+                click.echo(f"written {len(unmatched_count)} unmatched tracks to {unmatched_csv_path}")
+                click.echo(f"written {len(unmatched_count)} URLs to {unmatched_txt_path}")
+            except OSError as e:
+                click.echo(f"warning: could not write unmatched files: {e}", err=True)
+        else:
+            click.echo("all soundcloud tracks already exist in crate - nothing to download!")
+
+        # Summary
+        click.echo(f"\nsoundcloud crate check complete: {matched_count} matched, {unmatched_count} unmatched of {len(tracks)} total tracks")
+        if unmatched_count > 0:
+            click.echo(f"unmatched tracks -> {export_dir}/{prefix}_unmatched.csv")
+            click.echo(f"unmatched URLs -> {export_dir}/{prefix}_unmatched_urls.txt")
+            click.echo(f"to download, run: uv run download soundcloud -u {export_dir}/{prefix}_unmatched_urls.txt")
+
+    except Exception as e:
+        click.echo(f"error during soundcloud crate check: {e}", err=True)
+        # Don't sys.exit(1) here - let the export succeed even if crate check fails
+
+
+def _csv_escape(v):
+    """Escape a value for CSV output."""
+    v = str(v)
+    if ',' in v or '"' in v or '\n' in v:
+        v = '"' + v.replace('"', '""') + '"'
+    return v
 
 
 if __name__ == '__main__':

@@ -4,10 +4,28 @@ and build a deduplicated manifest of track urls for `download soundcloud`.
 """
 
 import os
+import re
 
 import yt_dlp
 
 from lib.text import normalize_key
+
+
+def _extract_artist_title_from_url(url):
+    """Extract artist and title from a SoundCloud URL as fallback.
+
+    Expected format: https://soundcloud.com/ARTIST/TITLE
+    Returns tuple (artist, title) or (None, None) if pattern doesn't match.
+    """
+    match = re.match(r'https?://soundcloud\.com/([^/]+)/([^/?#]+)', url)
+    if match:
+        artist = match.group(1)
+        title = match.group(2)
+        # Clean up common URL encoding issues
+        artist = artist.replace('-', ' ').replace('_', ' ')
+        title = title.replace('-', ' ').replace('_', ' ')
+        return artist, title
+    return None, None
 
 
 def _extract_info(url, cookies_from_browser=None):
@@ -50,9 +68,22 @@ def list_user_likes(profile_url_or_username, cookies_from_browser=None):
         return []
     likes = []
     for entry in info.get('entries', []):
+        name = entry.get('title', '')
+        uploader = entry.get('uploader', '')
+        url = entry.get('url', '')
+
+        # Fallback: extract artist and title from URL if not provided by yt-dlp
+        if url:
+            fallback_artist, fallback_title = _extract_artist_title_from_url(url)
+            if not name and fallback_title:
+                name = fallback_title
+            if not uploader and fallback_artist:
+                uploader = fallback_artist
+
         likes.append({
-            'name': entry.get('title', ''),
-            'url': entry.get('url', ''),
+            'name': name,
+            'uploader': uploader,
+            'url': url,
             'track_count': 1,  # each like is a single track
         })
     return likes
@@ -65,10 +96,22 @@ def export_set(set_url, cookies_from_browser=None):
         return []
     tracks = []
     for i, entry in enumerate(info.get('entries', []), start=1):
+        title = entry.get('title', '')
+        uploader = entry.get('uploader', '')
+        track_url = entry.get('url', '')
+
+        # Fallback: extract artist and title from URL if not provided by yt-dlp
+        if track_url:
+            fallback_artist, fallback_title = _extract_artist_title_from_url(track_url)
+            if not title and fallback_title:
+                title = fallback_title
+            if not uploader and fallback_artist:
+                uploader = fallback_artist
+
         tracks.append({
-            'title': entry.get('title', ''),
-            'uploader': entry.get('uploader', ''),
-            'track_url': entry.get('url', ''),
+            'title': title,
+            'uploader': uploader,
+            'track_url': track_url,
             'position': i,
         })
     return tracks
@@ -142,7 +185,8 @@ def export_specific_set(sp, set_identifier, export_dir, cookies_from_browser=Non
 def export_sets(sp, set_identifiers, export_dir, cookies_from_browser=None, include_likes=False):
     """Export a list of specific sets (urls or identifiers) -
     each to its own per-set csv/txt, then merge all their tracks into one deduped
-    'soundcloud_manifest.csv' + urls txt."""
+    'soundcloud_manifest.csv' + urls txt.
+    Also creates playlist-format files for use with playlists command."""
     seen = set()
     deduped = []
     for identifier in set_identifiers:
@@ -152,8 +196,13 @@ def export_sets(sp, set_identifiers, export_dir, cookies_from_browser=None, incl
 
     print(f"exporting {len(deduped)} set(s)...")
     all_tracks = []
+    # Data for playlist-format files: map set_id to list of tracks
+    tracks_by_set = {}
+
     for identifier in deduped:
-        all_tracks.extend(export_specific_set(sp, identifier, export_dir, cookies_from_browser))
+        tracks = export_specific_set(sp, identifier, export_dir, cookies_from_browser)
+        all_tracks.extend(tracks)
+        tracks_by_set[identifier] = tracks
 
     # Deduplicate across sets
     manifest_tracks = merge_and_deduplicate([all_tracks])
@@ -162,6 +211,9 @@ def export_sets(sp, set_identifiers, export_dir, cookies_from_browser=None, incl
     _write_csv(manifest_tracks, 'soundcloud_manifest.csv', export_dir,
                fields=('title', 'uploader', 'track_url', 'position'))
     _write_manifest_as_txt(manifest_tracks, export_dir, filename='soundcloud_manifest_urls.txt')
+
+    # Create playlist-format files for playlists command
+    create_playlist_format_files(tracks_by_set, export_dir)
 
     return manifest_tracks
 
@@ -210,3 +262,104 @@ def _write_manifest_as_txt(rows, export_dir, filename):
         os.replace(tmp, path)
     except Exception as e:
         print(f"warning: could not write {path}: {e}")
+
+
+def _convert_to_playlist_track(track, playlist_id, playlist_name, track_number=None):
+    """Convert a SoundCloud track dict to the format expected by playlists.build.
+
+    Args:
+        track: dict with 'title', 'uploader', 'track_url' keys
+        playlist_id: identifier for the playlist/set
+        playlist_name: human-readable name of the playlist/set
+        track_number: position in playlist (optional, defaults to None)
+
+    Returns:
+        dict with keys matching PLAYLIST_TRACKS_FIELDS
+    """
+    if track_number is None:
+        track_number = 0
+
+    return {
+        'playlist_id': playlist_id,
+        'playlist_name': playlist_name,
+        'track_id': str(hash(track.get('track_url', '')))[:16],  # Simple hash-based ID
+        'track_name': track.get('title', ''),
+        'artist_names': track.get('uploader', ''),
+        'album_name': '',  # Not typically available for SoundCloud
+        'duration_ms': 0,  # Unknown
+        'explicit': False,
+        'popularity': 0,  # Unknown
+        'added_at': '',  # Unknown
+        'added_by': '',  # Unknown
+        'spotify_url': track.get('track_url', ''),  # Using SoundCloud URL as placeholder
+        'track_number': track_number,
+        'disc_number': 0,
+        'is_local': False,
+    }
+
+
+def _convert_to_playlist_meta(playlist_id, playlist_name, description='',
+                             owner='', owner_id='', public=True,
+                             track_count=0, playlist_url=''):
+    """Convert SoundCloud set data to the format expected by playlists.build for playlists.csv.
+
+    Returns:
+        dict with keys matching PLAYLIST_META_FIELDS
+    }
+    """
+    return {
+        'id': playlist_id,
+        'name': playlist_name,
+        'description': description,
+        'owner': owner,
+        'owner_id': owner_id,
+        'public': public,
+        'track_count': track_count,
+        'playlist_url': playlist_url,
+    }
+
+
+def create_playlist_format_files(tracks_by_set, export_dir):
+    """Create playlist-format files (playlists.csv and playlist_tracks.csv) for use with playlists command.
+
+    Args:
+        tracks_by_set: dict mapping set_id to list of tracks in that set
+        export_dir: base export directory where soundcloud/ subdirectory will be created
+    """
+    # Data for playlist-format files
+    playlist_meta_rows = []  # For playlists.csv
+    playlist_track_rows = []  # For playlist_tracks.csv
+
+    for set_id, tracks in tracks_by_set.items():
+        # Use set_id as playlist name if we don't have a better name
+        playlist_name = set_id
+
+        # Add to playlist metadata
+        playlist_meta_rows.append(_convert_to_playlist_meta(
+            playlist_id=set_id,
+            playlist_name=playlist_name,
+            track_count=len(tracks)
+        ))
+
+        # Add tracks to playlist track rows
+        for i, track in enumerate(tracks):
+            playlist_track_rows.append(_convert_to_playlist_track(
+                track=track,
+                playlist_id=set_id,
+                playlist_name=playlist_name,
+                track_number=i+1
+            ))
+
+    # Create playlist-format files for playlists command
+    soundcloud_dir = os.path.join(export_dir, 'soundcloud')
+    os.makedirs(soundcloud_dir, exist_ok=True)
+
+    if playlist_meta_rows:
+        _write_csv(playlist_meta_rows, 'playlists.csv', soundcloud_dir,
+                   fields=('id', 'name', 'description', 'owner', 'owner_id', 'public', 'track_count', 'playlist_url'))
+
+    if playlist_track_rows:
+        _write_csv(playlist_track_rows, 'playlist_tracks.csv', soundcloud_dir,
+                   fields=('playlist_id', 'playlist_name', 'track_id', 'track_name', 'artist_names', 'album_name',
+                           'duration_ms', 'explicit', 'popularity', 'added_at', 'added_by', 'spotify_url',
+                           'track_number', 'disc_number', 'is_local'))

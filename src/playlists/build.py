@@ -104,7 +104,7 @@ def _group_tracks_by_playlist(rows):
     return groups
 
 
-def _select_playlists(playlists_csv, names, all_playlists, exclude_names=None):
+def _select_playlists(playlists_csv, names, all_playlists, exclude_names=None, service='spotify'):
     """apply scope (names over all_playlists over the 'mine' default) ->
     [(meta_row), ...], then filter out any playlist whose name or id
     matches an exclude_names token.
@@ -119,7 +119,10 @@ def _select_playlists(playlists_csv, names, all_playlists, exclude_names=None):
     'owner_id' existed won't have it; those rows just won't match the
     default scope until re-exported (same as any other never-null'd new
     column - not attempting to backfill it here, since we'd need to
-    re-hit Spotify's API to learn each row's real owner id anyway)."""
+    re-hit Spotify's API to learn each row's real owner id anyway).
+
+    For soundcloud service, the 'mine' filter is disabled since SoundCloud
+    doesn't use Spotify user IDs."""
     rows = _read_csv(playlists_csv)
     if not rows:
         raise ValueError(f"no playlists.csv found at {playlists_csv} - run `export` or --rescrape first")
@@ -140,13 +143,18 @@ def _select_playlists(playlists_csv, names, all_playlists, exclude_names=None):
     elif all_playlists:
         selected = rows
     else:
-        # default: only your own playlists
-        user_id = os.getenv('SPOTIFY_USER_ID')
-        if not user_id:
-            print("warning: SPOTIFY_USER_ID not set - can't filter to your playlists; building all.")
+        # default: only your own playlists (for spotify) or all (for soundcloud)
+        if service == 'soundcloud':
+            # For SoundCloud, we don't have Spotify user IDs, so show all playlists
             selected = rows
         else:
-            selected = [r for r in rows if (r.get('owner_id') or '') == user_id]
+            # default: only your own playlists
+            user_id = os.getenv('SPOTIFY_USER_ID')
+            if not user_id:
+                print("warning: SPOTIFY_USER_ID not set - can't filter to your playlists; building all.")
+                selected = rows
+            else:
+                selected = [r for r in rows if (r.get('owner_id') or '') == user_id]
 
     # apply exclude filter after scope resolution
     if exclude_names:
@@ -275,8 +283,9 @@ def _scope_rescrape(sp, names, exports_dir):
 
 def build_playlists(apply=False, all_playlists=False, names=None, exclude_names=None, rescrape=False,
                      covers=False, reindex=False, verbose=False,
-                     playlists_path=None, archive_path=None, exports_dir=None):
-    """build/refresh local .m3u8s from current spotify playlist membership.
+                     playlists_path=None, archive_path=None, exports_dir=None,
+                     service='spotify'):
+    """build/refresh local .m3u8s from current playlist membership (spotify or soundcloud).
 
     plain, import-safe entry point - cli.py resolves click options into
     these kwargs and turns exceptions into exit codes; nothing in here
@@ -304,9 +313,14 @@ def build_playlists(apply=False, all_playlists=False, names=None, exclude_names=
             print("rescraping spotify (--rescrape) into " + exports_dir_resolved)
             export_all_data(sp, exports_dir_resolved, my_playlists_only=True)
 
-    playlists_csv = os.path.join(exports_dir_resolved, 'playlists.csv')
-    tracks_csv = os.path.join(exports_dir_resolved, 'playlist_tracks.csv')
-    selected = _select_playlists(playlists_csv, names, all_playlists, exclude_names=exclude_names)
+    # Determine file paths based on service
+    if service == 'soundcloud':
+        playlists_csv = os.path.join(exports_dir_resolved, 'soundcloud', 'playlists.csv')
+        tracks_csv = os.path.join(exports_dir_resolved, 'soundcloud', 'playlist_tracks.csv')
+    else:  # spotify (default)
+        playlists_csv = os.path.join(exports_dir_resolved, 'playlists.csv')
+        tracks_csv = os.path.join(exports_dir_resolved, 'playlist_tracks.csv')
+    selected = _select_playlists(playlists_csv, names, all_playlists, exclude_names=exclude_names, service=service)
     grouped = _group_tracks_by_playlist(_read_csv(tracks_csv))
 
     print(f"\nbuilding {len(selected)} playlist(s) from {tracks_csv}")

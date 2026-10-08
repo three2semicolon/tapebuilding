@@ -47,9 +47,11 @@ if sys.platform == "win32":
 @click.option('-o', '--playlists-path', 'playlists_path_opt', help='PLAYLISTS_PATH override.')
 @click.option('--archive-path', 'archive_path_opt', help='ARCHIVE_PATH (crate root) override.')
 @click.option('--exports-dir', 'exports_dir_opt', help='exports dir override (default PLAYLISTS_PATH/exports).')
+@click.option('--service', type=click.Choice(['spotify', 'soundcloud']), default='spotify', show_default=True,
+              help='service to process (spotify or soundcloud)')
 def playlists(apply, all_playlists, mine, names, exclude, rescrape, covers, reindex, verbose,
-              playlists_path_opt, archive_path_opt, exports_dir_opt):
-    """build local .m3u8 playlists from spotify playlists."""
+              playlists_path_opt, archive_path_opt, exports_dir_opt, service):
+    """build local .m3u8 playlists from spotify or soundcloud playlists."""
     if mine and all_playlists:
         click.echo("error: --all and --mine are mutually exclusive.", err=True)
         sys.exit(2)
@@ -86,6 +88,7 @@ def playlists(apply, all_playlists, mine, names, exclude, rescrape, covers, rein
             playlists_path=playlists_path_opt,
             archive_path=archive_path_opt,
             exports_dir=exports_dir_opt,
+            service=service,
         )
     except Exception as e:
         click.echo(f"error: {e}", err=True)

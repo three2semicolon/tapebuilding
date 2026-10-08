@@ -1,35 +1,17 @@
-# tapebuilding — todo
-
-The `pipelines/` → `core/` refactor (`lib/` foundation + per-package
-`cli.py` split + in-process `core/`) is complete. See `PACKAGE_OVERVIEW.md`
-for current state and `README.md` for usage.
+# tapebuilding - todo
 
 ## Next steps
-The core phases (0-7) are complete. See `BUGFIX_PLAN.md` for a summary of what was accomplished.
-Now we can work on enhancements and plan for the app.
 
-### Quick checks to run first (cheap, settle open questions)
 
-- [ ] `Yeat - 2093 (P2)`: read the real album tag (likely not a bug).
-- [ ] Adhesive Wombat `02 → 03`: read the `track` tag (expect 3; confirms
-  resplit's `idx+1` renumbering).
-- [ ] XXXTENTACION `?` album: confirm `normalize_key()` → `''`.
-- [ ] V6 (extended, see `BUGFIX_PLAN.md`): tier-3/5 matches with disjoint
-  fold_key artist sets, the ≤ 1 s same-album subset, hard-gate collateral,
-  accent-only matches.
-- [ ] V8: artist tags mangled by the plugin (`feat.` after ≤ 3 chars).
-- [ ] V9: rows/entries with empty title key *and* empty primary-artist key.
-- [ ] V10: albums with repeated track numbers across discs (after `disc`
-  is readable).
-- [ ] `Ital Tek - Control\09 - Janet Jackson …`: confirm `albumartist` is
-  `Ital Tek` (poisoned tag).
 
 ---
 
+
+
 ## Enhancements
 
-- [x] spotdl fallback, option to turn on so that each song/album that cant be found (spotdl) asks user to input either the youtube music or path to existing file so it can be matched in the future (implemented via download.fallback module)
-- [x] SoundCloud export/download + a `--exclude` flag for Spotify
+- [X] spotdl fallback, option to turn on so that each song/album that cant be found (spotdl) asks user to input either the youtube music or path to existing file so it can be matched in the future (implemented via download.fallback module)
+- [X] SoundCloud export/download + a `--exclude` flag for Spotify
   playlist sync + the cross-service playlist design both feed into —
   full plan in `PLAYLIST_SYNC_PLAN.md` (new), superseding the shorter
   note this bullet used to be. Short version:
@@ -159,5 +141,5 @@ round-tripping through that one-directional sync model at all, which is
 what `TODO.md` already anticipated ("worst case I'll just use the
 tapedeck to load certain playlists").
 
-Source: [Symfonium support forum, "Playlist
-Support Question"](https://support.symfonium.app/t/playlist-support-question/7626).
+Source: [Symfonium support forum, &#34;Playlist
+Support Question&#34;](https://support.symfonium.app/t/playlist-support-question/7626).
