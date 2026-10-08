@@ -160,7 +160,7 @@ Support Question&#34;](https://support.symfonium.app/t/playlist-support-question
 
 ## Remaining Items
 
-- [ ] Investigate matching/unmatched track issues (user reported comparing uploader username rather than artist name)
+- [X] Improved SoundCloud matching: enhanced row_access.py to parse artist from track_name when artist_names is empty, and to clean title by removing artist suffixes, reducing unmatched tracks.
 - [ ] Verify bitrate parameter error resolution (could not reproduce error in current code)
 - [X] Consider if `_process_soundcloud_crate_check` should be moved to a more appropriate location
   - [X] removed crate checking from download cli
