@@ -59,11 +59,11 @@ def _check_existing(urls, metadata, output_dir, fmt):
     return existing, new + no_meta, no_meta, library_root, library_index
 
 
-def download_soundcloud(url_file, output_dir=None, format='mp3',
+def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
                         overwrite_errors=False, skip_existing=False,
                         validate_only=False, batch_size=1, pre_skip_existing=False,
                         retries=3, retry_delay=3, cookies_from_browser=None, cookie_file=None,
-                        debug=False):
+                        debug=False, soundcloud_fallback=False):
     print(f"processing soundcloud source: {url_file}")
 
     if not os.path.exists(url_file):
@@ -235,7 +235,7 @@ def download_soundcloud(url_file, output_dir=None, format='mp3',
                     url,
                     output_dir=resolved_output_dir,
                     audio_format=format,
-                    audio_quality='0',  # best VBR
+                    audio_quality=bitrate,
                     embed_thumbnail=True,
                     overwrite=overwrite_errors,
                     verbose=False,

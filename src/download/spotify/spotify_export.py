@@ -47,11 +47,16 @@ def export_specific_playlist(sp, playlist_identifier, export_dir):
 
         safe_name = "".join(c for c in playlist_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
         safe_name = safe_name.replace(' ', '_')
+
+        # Create spotify subdirectory for service-specific organization
+        spotify_dir = os.path.join(export_dir, 'spotify')
+        os.makedirs(spotify_dir, exist_ok=True)
+
         filename = f"playlist_{safe_name}.csv"
-        export_to_csv(tracks, filename, export_dir)
+        export_to_csv(tracks, filename, spotify_dir)
 
         txt_filename = f"playlist_{safe_name}_urls.txt"
-        txt_filepath = os.path.join(export_dir, txt_filename)
+        txt_filepath = os.path.join(spotify_dir, txt_filename)
         with open(txt_filepath, 'w', encoding='utf-8') as f:
             for track in tracks:
                 f.write(track.get('spotify_url', '') + '\n')
@@ -100,8 +105,12 @@ def export_playlists(sp, playlist_identifiers, export_dir):
     manifest_tracks = merge_and_deduplicate(all_tracks, [])
     print(f"created playlists manifest with {len(manifest_tracks)} unique tracks")
 
-    export_to_csv(manifest_tracks, 'playlists_manifest.csv', export_dir)
-    export_manifest_as_txt(manifest_tracks, export_dir, filename='playlists_manifest_urls.txt')
+    # Create spotify subdirectory for service-specific organization
+    spotify_dir = os.path.join(export_dir, 'spotify')
+    os.makedirs(spotify_dir, exist_ok=True)
+
+    export_to_csv(manifest_tracks, 'playlists_manifest.csv', spotify_dir)
+    export_manifest_as_txt(manifest_tracks, spotify_dir, filename='playlists_manifest_urls.txt')
 
     return manifest_tracks
 
@@ -112,13 +121,17 @@ def export_all_data(sp, export_dir, my_playlists_only=False):
     user = sp.current_user()
     print(f"authenticated as: {user.get('display_name', 'Unknown User')} ({user.get('id', 'Unknown ID')})")
 
+    # Create spotify subdirectory for service-specific organization
+    spotify_dir = os.path.join(export_dir, 'spotify')
+    os.makedirs(spotify_dir, exist_ok=True)
+
     playlists = get_user_playlists(sp, my_playlists_only=my_playlists_only)
     if my_playlists_only:
         print(f"found {len(playlists)} of your playlists")
     else:
         print(f"found {len(playlists)} playlists")
 
-    export_to_csv(playlists, 'playlists.csv', export_dir)
+    export_to_csv(playlists, 'playlists.csv', spotify_dir)
 
     all_playlist_tracks = []
     for playlist in playlists:
@@ -126,20 +139,20 @@ def export_all_data(sp, export_dir, my_playlists_only=False):
         all_playlist_tracks.extend(tracks)
     print(f"found {len(all_playlist_tracks)} tracks in playlists")
 
-    export_to_csv(all_playlist_tracks, 'playlist_tracks.csv', export_dir)
+    export_to_csv(all_playlist_tracks, 'playlist_tracks.csv', spotify_dir)
 
     liked_songs = get_liked_songs(sp)
     print(f"found {len(liked_songs)} liked songs")
-    export_to_csv(liked_songs, 'liked_songs.csv', export_dir)
+    export_to_csv(liked_songs, 'liked_songs.csv', spotify_dir)
 
     manifest_tracks = merge_and_deduplicate(all_playlist_tracks, liked_songs)
     print(f"created manifest with {len(manifest_tracks)} unique tracks")
 
-    export_to_csv(manifest_tracks, 'spotify_manifest.csv', export_dir)
+    export_to_csv(manifest_tracks, 'spotify_manifest.csv', spotify_dir)
 
-    export_manifest_as_txt(manifest_tracks, export_dir)
+    export_manifest_as_txt(manifest_tracks, spotify_dir)
 
-    print("\nexport complete! files saved in:", export_dir)
+    print("\nexport complete! files saved in:", spotify_dir)
     print("- playlists.csv: playlist metadata")
     print("- playlist_tracks.csv: all tracks from playlists (with duplicates)")
     print("- liked_songs.csv: all liked/saved tracks")

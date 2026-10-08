@@ -170,11 +170,16 @@ def export_specific_set(sp, set_identifier, export_dir, cookies_from_browser=Non
     # Create safe filename
     safe_name = "".join(c for c in set_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
     safe_name = safe_name.replace(' ', '_')
+
+    # Create soundcloud subdirectory for service-specific organization
+    soundcloud_dir = os.path.join(export_dir, 'soundcloud')
+    os.makedirs(soundcloud_dir, exist_ok=True)
+
+    # Write CSV and TXT files to the soundcloud subdirectory
     filename = f"set_{safe_name}.csv"
-    # We'll need to write CSV with columns: title, uploader, track_url, position
-    _write_csv(tracks, filename, export_dir, fields=('title', 'uploader', 'track_url', 'position'))
+    _write_csv(tracks, filename, soundcloud_dir, fields=('title', 'uploader', 'track_url', 'position'))
     txt_filename = f"set_{safe_name}_urls.txt"
-    txt_filepath = os.path.join(export_dir, txt_filename)
+    txt_filepath = os.path.join(soundcloud_dir, txt_filename)
     with open(txt_filepath, 'w', encoding='utf-8') as f:
         for track in tracks:
             f.write(track.get('track_url', '') + '\n')
@@ -208,9 +213,14 @@ def export_sets(sp, set_identifiers, export_dir, cookies_from_browser=None, incl
     manifest_tracks = merge_and_deduplicate([all_tracks])
     print(f"created soundcloud manifest with {len(manifest_tracks)} unique tracks")
 
-    _write_csv(manifest_tracks, 'soundcloud_manifest.csv', export_dir,
+    # Create soundcloud subdirectory for service-specific organization
+    soundcloud_dir = os.path.join(export_dir, 'soundcloud')
+    os.makedirs(soundcloud_dir, exist_ok=True)
+
+    # Write manifest files to the soundcloud subdirectory
+    _write_csv(manifest_tracks, 'soundcloud_manifest.csv', soundcloud_dir,
                fields=('title', 'uploader', 'track_url', 'position'))
-    _write_manifest_as_txt(manifest_tracks, export_dir, filename='soundcloud_manifest_urls.txt')
+    _write_manifest_as_txt(manifest_tracks, soundcloud_dir, filename='soundcloud_manifest_urls.txt')
 
     # Create playlist-format files for playlists command
     create_playlist_format_files(tracks_by_set, export_dir)
@@ -218,16 +228,125 @@ def export_sets(sp, set_identifiers, export_dir, cookies_from_browser=None, incl
     return manifest_tracks
 
 
+def export_likes(sp, export_dir, cookies_from_browser=None):
+    """Export soundcloud likes for a user to CSV and TXT files.
+    """
+    print("fetching soundcloud likes...")
+
+    # Get likes for the user
+    likes = list_user_likes('me', cookies_from_browser)  # 'me' refers to the authenticated user
+    if not likes:
+        print("warning: no likes found for user")
+        return []
+
+    print(f"found {len(likes)} liked tracks")
+
+    # Create soundcloud subdirectory for service-specific organization
+    soundcloud_dir = os.path.join(export_dir, 'soundcloud')
+    os.makedirs(soundcloud_dir, exist_ok=True)
+
+    # Write likes to CSV file
+    likes_csv_path = os.path.join(soundcloud_dir, 'likes.csv')
+    try:
+        with open(likes_csv_path + '.tmp', 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.DictWriter(f, fieldnames=['title', 'uploader', 'track_url'])
+            writer.writeheader()
+            for track in likes:
+                writer.writerow({
+                    'title': track.get('name', ''),
+                    'uploader': track.get('uploader', ''),
+                    'track_url': track.get('url', '')
+                })
+        os.replace(likes_csv_path + '.tmp', likes_csv_path)
+        print(f"exported {len(likes)} likes to {likes_csv_path}")
+    except Exception as e:
+        print(f"warning: could not write {likes_csv_path}: {e}")
+        return likes  # Still return the data even if file write failed
+
+    # Also create URL manifest for download
+    likes_txt_path = os.path.join(soundcloud_dir, 'likes_urls.txt')
+    try:
+        with open(likes_txt_path + '.tmp', 'w', encoding='utf-8') as f:
+            for track in likes:
+                url = track.get('url', '')
+                if url:
+                    f.write(url + '\n')
+        os.replace(likes_txt_path + '.tmp', likes_txt_path)
+        print(f"created url manifest: {likes_txt_path}")
+    except Exception as e:
+        print(f"warning: could not write {likes_txt_path}: {e}")
+
+    return likes
+
+
 def export_all_data(sp, export_dir, cookies_from_browser=None, include_likes=False, my_sets_only=True):
     """Export all sets (and optionally likes) for a user.
     Similar to export_all_data in spotify_export.
     """
     # For SoundCloud, we need a username to fetch sets/likes.
-    # We'll assume the username is derived from SPOTIFY_USER_ID? Not correct.
-    # We'll need to add a SOUNDCLOUD_USERNAME env var or similar.
-    # For now, we'll stub and print a warning.
-    print("warning: SoundCloud export_all_data not fully implemented; need username.")
-    return []
+    # We'll use the provided cookies_from_browser or default to fetching for the authenticated user.
+    # If we need to specify a particular user, we would need additional parameters.
+    print("fetching all soundcloud sets...")
+
+    # Get all sets for the user
+    sets = list_user_sets('me', cookies_from_browser)  # 'me' refers to the authenticated user
+    if not sets:
+        print("warning: no sets found for user")
+        sets = []
+
+    print(f"found {len(sets)} sets")
+
+    # Extract set identifiers (URLs) for export
+    set_identifiers = [s['url'] for s in sets if s.get('url')]
+
+    # Export all sets and get the manifest tracks
+    manifest_tracks = []
+    if set_identifiers:
+        manifest_tracks = export_sets(sp, set_identifiers, export_dir, cookies_from_browser, include_likes=False)
+        print(f"created manifest from sets with {len(manifest_tracks)} unique tracks")
+
+    # Optionally include likes
+    if include_likes:
+        print("fetching soundcloud likes...")
+        likes = list_user_likes('me', cookies_from_browser)
+        if likes:
+            print(f"found {len(likes)} liked tracks")
+            # Convert likes to the format expected by merge_and_deduplicate
+            like_tracks = []
+            for like in likes:
+                like_tracks.append({
+                    'title': like.get('name', ''),
+                    'uploader': like.get('uploader', ''),
+                    'track_url': like.get('url', '')
+                })
+
+            # Merge manifest tracks with likes
+            if manifest_tracks:
+                manifest_tracks = merge_and_deduplicate([manifest_tracks, like_tracks])
+                print(f"created manifest with likes: {len(manifest_tracks)} unique tracks")
+            else:
+                manifest_tracks = like_tracks
+                print(f"manifest consists only of likes: {len(manifest_tracks)} tracks")
+
+    # If we have no tracks at all, return empty list
+    if not manifest_tracks:
+        print("warning: no tracks found to export")
+        return []
+
+    # Create soundcloud subdirectory for service-specific organization
+    soundcloud_dir = os.path.join(export_dir, 'soundcloud')
+    os.makedirs(soundcloud_dir, exist_ok=True)
+
+    # Write manifest files to the soundcloud subdirectory
+    _write_csv(manifest_tracks, 'soundcloud_manifest.csv', soundcloud_dir,
+               fields=('title', 'uploader', 'track_url', 'position'))
+    _write_manifest_as_txt(manifest_tracks, soundcloud_dir, filename='soundcloud_manifest_urls.txt')
+
+    print(f"export complete! files saved in: {soundcloud_dir}")
+    print("- soundcloud_manifest.csv: deduplicated master manifest")
+    print("- soundcloud_manifest_urls.txt: soundcloud urls for download")
+
+    return manifest_tracks
 
 
 def _write_csv(rows, filename, export_dir, fields):
