@@ -81,12 +81,12 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
                 with open(manifest, 'r', encoding='utf-8') as f:
                     reader = csv.DictReader(f)
                     for row in reader:
-                        url = row.get('track_url')
+                        url = row.get('spotify_url') or row.get('track_url')
                         if url and url.strip():
                             urls.append(url.strip())
                             metadata[url.strip()] = {
-                                'uploader': row.get('uploader', ''),
-                                'title': row.get('title', ''),
+                                'uploader': row.get('uploader') or row.get('artist_names', ''),
+                                'title': row.get('title') or row.get('track_name', ''),
                                 'set_name': row.get('set_name', None),
                                 'set_position': row.get('set_position', None),
                             }
@@ -100,12 +100,12 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
                     with open(csv_file, 'r', encoding='utf-8') as f:
                         reader = csv.DictReader(f)
                         for row in reader:
-                            url = row.get('track_url')
+                            url = row.get('spotify_url') or row.get('track_url')
                             if url and url.strip():
                                 urls.append(url.strip())
                                 metadata[url.strip()] = {
-                                    'uploader': row.get('uploader', ''),
-                                    'title': row.get('title', ''),
+                                    'uploader': row.get('uploader') or row.get('artist_names', ''),
+                                    'title': row.get('title') or row.get('track_name', ''),
                                     'set_name': row.get('set_name', None),
                                     'set_position': row.get('set_position', None),
                                 }
@@ -114,12 +114,12 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
             with open(url_file, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    url = row.get('track_url')
+                    url = row.get('spotify_url') or row.get('track_url')
                     if url and url.strip():
                         urls.append(url.strip())
                         metadata[url.strip()] = {
-                            'uploader': row.get('uploader', ''),
-                            'title': row.get('title', ''),
+                            'uploader': row.get('uploader') or row.get('artist_names', ''),
+                            'title': row.get('title') or row.get('track_name', ''),
                             'set_name': row.get('set_name', None),
                             'set_position': row.get('set_position', None),
                         }

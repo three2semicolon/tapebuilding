@@ -46,16 +46,25 @@ def list_user_sets(profile_url_or_username, cookies_from_browser=None):
     # Normalize to URL
     if not profile_url_or_username.startswith('http'):
         profile_url_or_username = f'https://soundcloud.com/{profile_url_or_username}/sets'
-    info = _extract_info(profile_url_or_username, cookies_from_browser)
+    try:
+        info = _extract_info(profile_url_or_username, cookies_from_browser)
+    except Exception as e:
+        print(f"warning: failed to fetch sets for user {profile_url_or_username}: {e}")
+        return []
     if not info or 'entries' not in info:
         return []
     sets = []
     for entry in info.get('entries', []):
-        sets.append({
-            'name': entry.get('title', ''),
-            'url': entry.get('url', ''),
-            'track_count': entry.get('track_count', 0) or entry.get('playlist_count', 0),
-        })
+        try:
+            sets.append({
+                'name': entry.get('title', ''),
+                'url': entry.get('url', ''),
+                'track_count': entry.get('track_count', 0) or entry.get('playlist_count', 0),
+            })
+        except Exception as e:
+            # Log the error and skip this set
+            print(f"warning: failed to process set for user {profile_url_or_username}: {e}")
+            continue
     return sets
 
 
@@ -63,57 +72,101 @@ def list_user_likes(profile_url_or_username, cookies_from_browser=None):
     """Return list of dicts for each liked track: analogous to a set of one track."""
     if not profile_url_or_username.startswith('http'):
         profile_url_or_username = f'https://soundcloud.com/{profile_url_or_username}/likes'
-    info = _extract_info(profile_url_or_username, cookies_from_browser)
+    try:
+        info = _extract_info(profile_url_or_username, cookies_from_browser)
+    except Exception as e:
+        print(f"warning: failed to fetch likes for user {profile_url_or_username}: {e}")
+        return []
     if not info or 'entries' not in info:
         return []
     likes = []
     for entry in info.get('entries', []):
-        name = entry.get('title', '')
-        uploader = entry.get('uploader', '')
-        url = entry.get('url', '')
+        try:
+            name = entry.get('title', '')
+            uploader = entry.get('uploader', '')
+            url = entry.get('url', '')
 
-        # Fallback: extract artist and title from URL if not provided by yt-dlp
-        if url:
-            fallback_artist, fallback_title = _extract_artist_title_from_url(url)
-            if not name and fallback_title:
-                name = fallback_title
-            if not uploader and fallback_artist:
-                uploader = fallback_artist
+            # Fallback: extract artist and title from URL if not provided by yt-dlp
+            if url:
+                fallback_artist, fallback_title = _extract_artist_title_from_url(url)
+                if not name and fallback_title:
+                    name = fallback_title
+                if not uploader and fallback_artist:
+                    uploader = fallback_artist
 
-        likes.append({
-            'name': name,
-            'uploader': uploader,
-            'url': url,
-            'track_count': 1,  # each like is a single track
-        })
+            # If we have an API URL and are missing title or uploader, fetch metadata
+            if url and url.startswith('https://api-v2.soundcloud.com/tracks/'):
+                if not name or not uploader:
+                    meta = _extract_info(url, cookies_from_browser)
+                    if meta:
+                        if not name:
+                            name = meta.get('title', '')
+                        if not uploader:
+                            uploader = meta.get('uploader', '')
+
+            # Prefer explicit artist field (display name) if available, else use uploader (username)
+            artist_name = entry.get('artist', uploader)
+
+            likes.append({
+                'name': name,
+                'uploader': artist_name,
+                'url': url,
+                'track_count': 1,  # each like is a single track
+            })
+        except Exception as e:
+            # Log the error and skip this track
+            print(f"warning: failed to process like for user {profile_url_or_username}: {e}")
+            continue
     return likes
 
 
 def export_set(set_url, cookies_from_browser=None):
     """Export one set to track rows: each dict with 'title', 'uploader', 'track_url', 'position'."""
-    info = _extract_info(set_url, cookies_from_browser)
+    try:
+        info = _extract_info(set_url, cookies_from_browser)
+    except Exception as e:
+        print(f"warning: failed to fetch set info for {set_url}: {e}")
+        return []
     if not info or 'entries' not in info:
         return []
     tracks = []
     for i, entry in enumerate(info.get('entries', []), start=1):
-        title = entry.get('title', '')
-        uploader = entry.get('uploader', '')
-        track_url = entry.get('url', '')
+        try:
+            title = entry.get('title', '')
+            uploader = entry.get('uploader', '')
+            track_url = entry.get('url', '')
 
-        # Fallback: extract artist and title from URL if not provided by yt-dlp
-        if track_url:
-            fallback_artist, fallback_title = _extract_artist_title_from_url(track_url)
-            if not title and fallback_title:
-                title = fallback_title
-            if not uploader and fallback_artist:
-                uploader = fallback_artist
+            # Fallback: extract artist and title from URL if not provided by yt-dlp
+            if track_url:
+                fallback_artist, fallback_title = _extract_artist_title_from_url(track_url)
+                if not title and fallback_title:
+                    title = fallback_title
+                if not uploader and fallback_artist:
+                    uploader = fallback_artist
 
-        tracks.append({
-            'title': title,
-            'uploader': uploader,
-            'track_url': track_url,
-            'position': i,
-        })
+            # If we have an API URL and are missing title or uploader, fetch metadata
+            if track_url and track_url.startswith('https://api-v2.soundcloud.com/tracks/'):
+                if not title or not uploader:
+                    meta = _extract_info(track_url, cookies_from_browser)
+                    if meta:
+                        if not title:
+                            title = meta.get('title', '')
+                        if not uploader:
+                            uploader = meta.get('uploader', '')
+
+            # Prefer explicit artist field (display name) if available, else use uploader (username)
+            artist_name = entry.get('artist', uploader)
+
+            tracks.append({
+                'title': title,
+                'uploader': artist_name,
+                'track_url': track_url,
+                'position': i,
+            })
+        except Exception as e:
+            # Log the error and skip this track
+            print(f"warning: failed to process track in set {set_url}: {e}")
+            continue
     return tracks
 
 
