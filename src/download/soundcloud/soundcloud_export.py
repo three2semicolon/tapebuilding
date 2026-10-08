@@ -203,11 +203,18 @@ def export_sets(sp, set_identifiers, export_dir, cookies_from_browser=None, incl
     all_tracks = []
     # Data for playlist-format files: map set_id to list of tracks
     tracks_by_set = {}
+    # Data for playlist-format files: map set_id to set name
+    set_names = {}
 
     for identifier in deduped:
+        # Get set info to retrieve the actual set name
+        info = _extract_info(identifier, cookies_from_browser)
+        set_name = info.get('title', 'Unknown Set') if info else 'Unknown Set'
+
         tracks = export_specific_set(sp, identifier, export_dir, cookies_from_browser)
         all_tracks.extend(tracks)
         tracks_by_set[identifier] = tracks
+        set_names[identifier] = set_name
 
     # Deduplicate across sets
     manifest_tracks = merge_and_deduplicate([all_tracks])
@@ -223,18 +230,18 @@ def export_sets(sp, set_identifiers, export_dir, cookies_from_browser=None, incl
     _write_manifest_as_txt(manifest_tracks, soundcloud_dir, filename='soundcloud_manifest_urls.txt')
 
     # Create playlist-format files for playlists command
-    create_playlist_format_files(tracks_by_set, export_dir)
+    create_playlist_format_files(tracks_by_set, export_dir, set_names)
 
     return manifest_tracks
 
 
-def export_likes(sp, export_dir, cookies_from_browser=None):
+def export_likes(sp, username, export_dir, cookies_from_browser=None):
     """Export soundcloud likes for a user to CSV and TXT files.
     """
-    print("fetching soundcloud likes...")
+    print(f"fetching soundcloud likes for user: {username}")
 
     # Get likes for the user
-    likes = list_user_likes('me', cookies_from_browser)  # 'me' refers to the authenticated user
+    likes = list_user_likes(username, cookies_from_browser)  # 'me' refers to the authenticated user
     if not likes:
         print("warning: no likes found for user")
         return []
@@ -279,17 +286,17 @@ def export_likes(sp, export_dir, cookies_from_browser=None):
     return likes
 
 
-def export_all_data(sp, export_dir, cookies_from_browser=None, include_likes=False, my_sets_only=True):
+def export_all_data(sp, username, export_dir, cookies_from_browser=None, include_likes=False, my_sets_only=True):
     """Export all sets (and optionally likes) for a user.
     Similar to export_all_data in spotify_export.
     """
     # For SoundCloud, we need a username to fetch sets/likes.
     # We'll use the provided cookies_from_browser or default to fetching for the authenticated user.
     # If we need to specify a particular user, we would need additional parameters.
-    print("fetching all soundcloud sets...")
+    print(f"fetching all soundcloud sets for user: {username}")
 
     # Get all sets for the user
-    sets = list_user_sets('me', cookies_from_browser)  # 'me' refers to the authenticated user
+    sets = list_user_sets(username, cookies_from_browser)  # 'me' refers to the authenticated user
     if not sets:
         print("warning: no sets found for user")
         sets = []
@@ -308,7 +315,7 @@ def export_all_data(sp, export_dir, cookies_from_browser=None, include_likes=Fal
     # Optionally include likes
     if include_likes:
         print("fetching soundcloud likes...")
-        likes = list_user_likes('me', cookies_from_browser)
+        likes = list_user_likes(username, cookies_from_browser)
         if likes:
             print(f"found {len(likes)} liked tracks")
             # Convert likes to the format expected by merge_and_deduplicate
@@ -438,20 +445,24 @@ def _convert_to_playlist_meta(playlist_id, playlist_name, description='',
     }
 
 
-def create_playlist_format_files(tracks_by_set, export_dir):
+def create_playlist_format_files(tracks_by_set, export_dir, set_names=None):
     """Create playlist-format files (playlists.csv and playlist_tracks.csv) for use with playlists command.
 
     Args:
         tracks_by_set: dict mapping set_id to list of tracks in that set
         export_dir: base export directory where soundcloud/ subdirectory will be created
+        set_names: dict mapping set_id to set name (optional)
     """
     # Data for playlist-format files
     playlist_meta_rows = []  # For playlists.csv
     playlist_track_rows = []  # For playlist_tracks.csv
 
+    # Use provided set_names or fallback to set_id
+    set_names = set_names or {}
+
     for set_id, tracks in tracks_by_set.items():
-        # Use set_id as playlist name if we don't have a better name
-        playlist_name = set_id
+        # Use actual set name if available, otherwise fall back to set_id
+        playlist_name = set_names.get(set_id, set_id)
 
         # Add to playlist metadata
         playlist_meta_rows.append(_convert_to_playlist_meta(

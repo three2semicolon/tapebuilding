@@ -317,9 +317,11 @@ def build_playlists(apply=False, all_playlists=False, names=None, exclude_names=
     if service == 'soundcloud':
         playlists_csv = os.path.join(exports_dir_resolved, 'soundcloud', 'playlists.csv')
         tracks_csv = os.path.join(exports_dir_resolved, 'soundcloud', 'playlist_tracks.csv')
+        service_exports_dir = os.path.join(exports_dir_resolved, 'soundcloud')
     else:  # spotify (default)
         playlists_csv = os.path.join(exports_dir_resolved, 'playlists.csv')
         tracks_csv = os.path.join(exports_dir_resolved, 'playlist_tracks.csv')
+        service_exports_dir = os.path.join(exports_dir_resolved, 'spotify')
     selected = _select_playlists(playlists_csv, names, all_playlists, exclude_names=exclude_names, service=service)
     grouped = _group_tracks_by_playlist(_read_csv(tracks_csv))
 
@@ -379,12 +381,14 @@ def build_playlists(apply=False, all_playlists=False, names=None, exclude_names=
                 if got:
                     print(f"  wrote {cover}")
 
-    _write_unmatched(exports_dir_resolved, unmatched_rows)
+    # Ensure service-specific exports directory exists
+    os.makedirs(service_exports_dir, exist_ok=True)
+    _write_unmatched(service_exports_dir, unmatched_rows)
 
     print(f"\ndone. {total_written}/{len(selected)} playlists written "
           f"({total_matched} matched / {total_unmatched} unmatched of {total_tracks} tracks)")
-    print(f"unmatched -> {os.path.join(exports_dir_resolved, 'unmatched.csv')}, "
-          f"{os.path.join(exports_dir_resolved, 'unmatched_urls.txt')}")
+    print(f"unmatched -> {os.path.join(service_exports_dir, 'unmatched.csv')}, "
+          f"{os.path.join(service_exports_dir, 'unmatched_urls.txt')}")
     return True
 
 

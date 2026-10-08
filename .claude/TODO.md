@@ -2,11 +2,7 @@
 
 ## Next steps
 
-
-
 ---
-
-
 
 ## Enhancements
 
@@ -145,16 +141,19 @@ Source: [Symfonium support forum, &#34;Playlist
 Support Question&#34;](https://support.symfonium.app/t/playlist-support-question/7626).
 
 ## SoundCloud Export Improvements (Completed)
+
 - [X] Added `export_likes` function to export SoundCloud likes to CSV/TXT files
 - [X] Updated `export_all_data` function to properly export all sets and optionally likes
 - [X] Updated `export_specific_set` and `export_sets` functions to use service-specific subdirectories
 - [X] Simplified CLI soundcloud export command to delegate to module functions
 
 ## Spotify Export Improvements (Completed)
+
 - [X] Updated `export_specific_playlist`, `export_playlists`, and `export_all_data` functions to use service-specific subdirectories
 - [X] All spotify export functions now write to `export_dir/spotify/` instead of `export_dir/`
 
 ## Export Organization (Completed)
+
 - [X] SoundCloud exports now organized in `export_dir/soundcloud/`
 - [X] Spotify exports now organized in `export_dir/spotify/`
 - [X] Consistent service-specific organization throughout the project
@@ -163,4 +162,5 @@ Support Question&#34;](https://support.symfonium.app/t/playlist-support-question
 
 - [ ] Investigate matching/unmatched track issues (user reported comparing uploader username rather than artist name)
 - [ ] Verify bitrate parameter error resolution (could not reproduce error in current code)
-- [ ] Consider if `_process_soundcloud_crate_check` should be moved to a more appropriate location
+- [X] Consider if `_process_soundcloud_crate_check` should be moved to a more appropriate location
+  - [X] removed crate checking from download cli

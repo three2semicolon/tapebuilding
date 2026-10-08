@@ -243,8 +243,8 @@ class TestExportSpecificPlaylist:
         tracks = export_specific_playlist(sp, 'pid1', str(tmp_path))
 
         assert len(tracks) == 1
-        assert (tmp_path / 'playlist_My_Cool_Mix.csv').exists()
-        assert (tmp_path / 'playlist_My_Cool_Mix_urls.txt').exists()
+        assert (tmp_path / 'spotify' / 'playlist_My_Cool_Mix.csv').exists()
+        assert (tmp_path / 'spotify' / 'playlist_My_Cool_Mix_urls.txt').exists()
 
     def test_sanitizes_playlist_name_for_filename(self, tmp_path):
         sp = FakeSpotify(
@@ -253,7 +253,7 @@ class TestExportSpecificPlaylist:
         )
         export_specific_playlist(sp, 'pid1', str(tmp_path))
         # ':' and '!' are stripped (not alnum/space/-/_), spaces -> underscores
-        assert (tmp_path / 'playlist_Chill_Vibes_2024.csv').exists()
+        assert (tmp_path / 'spotify' / 'playlist_Chill_Vibes_2024.csv').exists()
 
     def test_per_playlist_txt_includes_a_blank_line_for_tracks_without_a_url(self, tmp_path):
         """Unlike export_manifest_as_txt() (which filters out blank
@@ -268,7 +268,7 @@ class TestExportSpecificPlaylist:
         )
         export_specific_playlist(sp, 'pid1', str(tmp_path))
 
-        lines = (tmp_path / 'playlist_Local_Mix_urls.txt').read_text(encoding='utf-8').splitlines(keepends=True)
+        lines = (tmp_path / 'spotify' / 'playlist_Local_Mix_urls.txt').read_text(encoding='utf-8').splitlines(keepends=True)
         assert lines == ['\n']
 
     def test_returns_empty_list_and_does_not_raise_on_api_error(self, tmp_path):
@@ -294,14 +294,17 @@ class TestExportPlaylists:
         )
         export_playlists(sp, ['pid1', 'pid2'], str(tmp_path))
 
-        assert (tmp_path / 'playlists_manifest.csv').exists()
-        assert (tmp_path / 'playlists_manifest_urls.txt').exists()
+        assert (tmp_path / 'spotify' / 'playlists_manifest.csv').exists()
+        assert (tmp_path / 'spotify' / 'playlists_manifest_urls.txt').exists()
         assert not (tmp_path / 'spotify_manifest.csv').exists()
         assert not (tmp_path / 'spotify_manifest_urls.txt').exists()
 
     def test_does_not_clobber_a_pre_existing_full_library_export(self, tmp_path):
-        (tmp_path / 'spotify_manifest.csv').write_text('untouched\n', encoding='utf-8')
-        (tmp_path / 'spotify_manifest_urls.txt').write_text('untouched\n', encoding='utf-8')
+        # Create spotify subdirectory first
+        spotify_dir = tmp_path / 'spotify'
+        spotify_dir.mkdir()
+        (spotify_dir / 'spotify_manifest.csv').write_text('untouched\n', encoding='utf-8')
+        (spotify_dir / 'spotify_manifest_urls.txt').write_text('untouched\n', encoding='utf-8')
 
         sp = FakeSpotify(
             tracks_by_playlist={'pid1': [_track_item('t1')]},
@@ -309,8 +312,10 @@ class TestExportPlaylists:
         )
         export_playlists(sp, ['pid1'], str(tmp_path))
 
-        assert (tmp_path / 'spotify_manifest.csv').read_text(encoding='utf-8') == 'untouched\n'
-        assert (tmp_path / 'spotify_manifest_urls.txt').read_text(encoding='utf-8') == 'untouched\n'
+        assert (spotify_dir / 'spotify_manifest.csv').read_text(encoding='utf-8') == 'untouched\n'
+        assert (spotify_dir / 'spotify_manifest_urls.txt').read_text(encoding='utf-8') == 'untouched\n'
+        assert (spotify_dir / 'playlists_manifest.csv').exists()
+        assert (spotify_dir / 'playlists_manifest_urls.txt').exists()
 
     def test_duplicate_identifiers_are_fetched_only_once(self, tmp_path):
         sp = FakeSpotify(
@@ -333,7 +338,7 @@ class TestExportPlaylists:
         )
         export_playlists(sp, ['pid1', 'pid2'], str(tmp_path))
 
-        with open(tmp_path / 'playlists_manifest.csv', newline='', encoding='utf-8-sig') as f:
+        with open(tmp_path / 'spotify' / 'playlists_manifest.csv', newline='', encoding='utf-8-sig') as f:
             rows = list(csv.DictReader(f))
         assert len(rows) == 1
 
@@ -349,8 +354,8 @@ class TestExportAllData:
 
         for name in ('playlists.csv', 'playlist_tracks.csv', 'liked_songs.csv',
                      'spotify_manifest.csv', 'spotify_manifest_urls.txt'):
-            assert (tmp_path / name).exists(), name
-        assert not (tmp_path / 'playlists_manifest.csv').exists()
+            assert (tmp_path / 'spotify' / name).exists(), name
+        assert not (tmp_path / 'spotify' / 'playlists_manifest.csv').exists()
 
     def test_my_playlists_only_filters_by_current_user_id(self, tmp_path):
         sp = FakeSpotify(
@@ -364,6 +369,6 @@ class TestExportAllData:
         )
         export_all_data(sp, str(tmp_path), my_playlists_only=True)
 
-        with open(tmp_path / 'playlists.csv', newline='', encoding='utf-8-sig') as f:
+        with open(tmp_path / 'spotify' / 'playlists.csv', newline='', encoding='utf-8-sig') as f:
             rows = list(csv.DictReader(f))
         assert [r['id'] for r in rows] == ['mine']

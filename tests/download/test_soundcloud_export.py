@@ -218,9 +218,9 @@ class TestExportSpecificSet:
             assert len(result) == 1
             assert result[0]['title'] == 'Track 1'
 
-            # Should have created the CSV and TXT files
-            csv_file = tmp_path / 'set_Test_Set.csv'  # Filename is derived from set name
-            txt_file = tmp_path / 'set_Test_Set_urls.txt'
+            # Should have created the CSV and TXT files in the soundcloud subdirectory
+            csv_file = tmp_path / 'soundcloud' / 'set_Test_Set.csv'  # Filename is derived from set name
+            txt_file = tmp_path / 'soundcloud' / 'set_Test_Set_urls.txt'
             assert csv_file.exists()
             assert txt_file.exists()
 
@@ -240,7 +240,8 @@ class TestExportSpecificSet:
 
 class TestExportSets:
     def test_exports_multiple_sets_and_creates_manifest(self, tmp_path):
-        with mock.patch('download.soundcloud.soundcloud_export.export_specific_set') as mock_export_specific:
+        with mock.patch('download.soundcloud.soundcloud_export.export_specific_set') as mock_export_specific, \
+             mock.patch('download.soundcloud.soundcloud_export._extract_info') as mock_extract_info:
             # Mock return values for two different sets
             mock_export_specific.side_effect = [
                 [  # First set
@@ -251,6 +252,16 @@ class TestExportSets:
                     {'title': 'Track A', 'uploader': 'Artist A', 'track_url': 'https://soundcloud.com/artist/tracka', 'position': 2}  # Duplicate track
                 ]
             ]
+
+            # Mock the _extract_info function to return set names
+            def mock_extract_info_side_effect(url, cookies_from_browser=None):
+                if 'set1' in url:
+                    return {'title': 'Set One'}
+                elif 'set2' in url:
+                    return {'title': 'Set Two'}
+                return {'title': 'Unknown Set'}
+
+            mock_extract_info.side_effect = mock_extract_info_side_effect
 
             result = export_sets(
                 sp=None,
@@ -266,9 +277,9 @@ class TestExportSets:
                 'https://soundcloud.com/artist/trackb'
             }
 
-            # Should have created manifest files
-            manifest_csv = tmp_path / 'soundcloud_manifest.csv'
-            manifest_txt = tmp_path / 'soundcloud_manifest_urls.txt'
+            # Should have created manifest files in the soundcloud subdirectory
+            manifest_csv = tmp_path / 'soundcloud' / 'soundcloud_manifest.csv'
+            manifest_txt = tmp_path / 'soundcloud' / 'soundcloud_manifest_urls.txt'
             assert manifest_csv.exists()
             assert manifest_txt.exists()
 

@@ -23,8 +23,8 @@ mount into a top-level multi-package cli (once one exists) with
 """
 
 import sys
-
 import click
+import os
 from dotenv import load_dotenv
 
 from lib.spotify_auth import authenticate_user
@@ -129,21 +129,28 @@ def export_cmd(playlists, playlists_file, output, mine, service, export_type, se
 
         elif service == 'soundcloud':
             export_dir = get_export_dir(base_dir=output)
-            soundcloud_user = user if user else 'me'  # default to current user
+            soundcloud_user = user if user else os.getenv('SOUNDCLOUD_USER', 'me')  # default to current user
             if export_type == 'likes':
                 click.echo(f"exporting soundcloud likes for user: {soundcloud_user}")
-                likes = export_likes(None, export_dir)  # sp=None for soundcloud
+                likes = export_likes(None, soundcloud_user, export_dir)  # sp=None for soundcloud
                 click.echo(f"exported {len(likes)} likes")
             elif export_type == 'sets':
-                if not set_ids:
-                    click.echo("error: --set-ids required for --type sets", err=True)
+                identifiers = list(set_ids)
+                if playlists_file:
+                    with open(playlists_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith('#'):
+                                identifiers.append(line)
+                if not identifiers:
+                    click.echo("error: --set-ids or --playlists-file required for --type sets", err=True)
                     sys.exit(1)
-                click.echo(f"exporting {len(set_ids)} specific soundcloud set(s) for user: {soundcloud_user}")
-                unique_tracks = export_sets(None, list(set_ids), export_dir)  # sp=None for soundcloud
-                click.echo(f"exported {len(unique_tracks)} unique tracks from {len(set_ids)} set(s)")
+                click.echo(f"exporting {len(identifiers)} specific soundcloud set(s) for user: {soundcloud_user}")
+                unique_tracks = export_sets(None, identifiers, export_dir)  # sp=None for soundcloud
+                click.echo(f"exported {len(unique_tracks)} unique tracks from {len(identifiers)} set(s)")
             elif export_type == 'all-sets':
                 click.echo(f"exporting all soundcloud sets for user: {soundcloud_user}")
-                unique_tracks = export_all_data(None, export_dir)  # sp=None for soundcloud
+                unique_tracks = export_all_data(None, soundcloud_user, export_dir)  # sp=None for soundcloud
                 click.echo(f"exported {len(unique_tracks)} unique tracks")
     except Exception as e:
         click.echo(f"error: {e}", err=True)
