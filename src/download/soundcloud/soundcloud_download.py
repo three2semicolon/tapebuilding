@@ -17,6 +17,7 @@ from lib.paths import archive_path, ffmpeg_path
 from lib.text import normalize_key
 from download.existing import build_library_index, scan_existing_fuzzy, resolve_output_dir
 from download.ytdl import download_ytdl
+from download import fallback
 
 
 def _predict_soundcloud_filename(artist, track, set_name=None, set_position=None, fmt='mp3'):
@@ -63,7 +64,7 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
                         overwrite_errors=False, skip_existing=False,
                         validate_only=False, batch_size=1, pre_skip_existing=False,
                         retries=3, retry_delay=3, cookies_from_browser=None, cookie_file=None,
-                        debug=False, soundcloud_fallback=False):
+                        debug=False, soundcloud_fallback=False, manual=False):
     print(f"processing soundcloud source: {url_file}")
 
     if not os.path.exists(url_file):
@@ -195,6 +196,50 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
         print("use without --validate-only to download.")
         return True
 
+    # If manual, process via fallback and return
+    if manual:
+        # Process URLs in batches via fallback
+        overall_success = True
+        num_batches = (url_count + batch_size - 1) // batch_size
+        print(f"\nprocessing {url_count} urls in {num_batches} batch(es) of up to {batch_size}")
+        print(f"output directory: {resolve_output_dir(output_dir)}")
+
+        resolved_output_dir = resolve_output_dir(output_dir)
+        resolved_ffmpeg = ffmpeg_path()
+
+        for batch_idx in range(num_batches):
+            start = batch_idx * batch_size
+            end = min(start + batch_size, url_count)
+            batch = urls[start:end]
+            batch_num = batch_idx + 1
+            print(f"\n--- batch {batch_num}/{num_batches} ({len(batch)} urls) ---")
+
+            fallback_succeeded, fallback_failed, batch_succeeded = fallback.process_fallback(
+                batch=batch,
+                metadata=metadata,
+                output_dir=resolved_output_dir,
+                format=format,
+                overwrite_errors=overwrite_errors,
+                cookies_from_browser=cookies_from_browser,
+                resolved_ffmpeg=resolved_ffmpeg,
+                library_index=library_index,
+                is_spotify=False
+            )
+
+            if not batch_succeeded:
+                overall_success = False
+                # Log the failed URLs from fallback
+                fallback._log_urls('soft_failures.txt', fallback_failed, reason='manual_fallback_failed')
+            else:
+                print(f"  Batch {batch_num} succeeded via fallback.")
+
+        if overall_success:
+            print(f"\nall batches processed. total: {url_count}")
+        else:
+            print(f"\ncompleted with some failures. check soft_failures.txt")
+        return overall_success
+
+    # Otherwise, proceed with ytdl processing (original logic)
     # Resolve output directory
     resolved_output_dir = resolve_output_dir(output_dir)
 
@@ -262,6 +307,7 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
             print(f"  Batch {batch_num} failed after all retries.")
             # Log the batch to soft_failures.txt? We'll create a helper later.
             # For now, we'll just note.
+            fallback._log_urls('soft_failures.txt', batch, reason='ytdl_exhausted_retries')
         else:
             print(f"  Batch {batch_num} downloaded successfully")
 

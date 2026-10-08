@@ -55,7 +55,7 @@ def process_fallback(
     Returns:
         Tuple of (successful_urls, failed_urls, batch_succeeded_via_fallback)
     """
-    print(f"\nPrimary download failed for batch. Initiating fallback...")
+    print(f"\nInitiating fallback for batch...")
     fallback_succeeded = []
     fallback_failed = []
 
@@ -98,8 +98,7 @@ def process_fallback(
         # Prompt user for fallback source
         try:
             user_input = click.prompt(
-                f"Primary download failed to find '{artist} - {track}'. "
-                f"Enter a YouTube URL or local file path to download instead (or press Enter to skip)",
+                f"Enter a URL or local file path to download '{artist} - {track}' instead (or press Enter to skip)",
                 default='', show_default=False
             )
         except (EOFError, click.exceptions.Abort):

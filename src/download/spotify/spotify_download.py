@@ -54,7 +54,7 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
                    overwrite_errors=False, skip_existing=False,
                    validate_only=False, batch_size=1, pre_skip_existing=False,
                    retries=3, retry_delay=3, cookies_from_browser=None, cookie_file=None,
-                   debug=False, spotdl_fallback=False):
+                   debug=False, spotdl_fallback=False, manual=False):
     print(f"processing spotify source: {url_file}")
 
     if not os.path.exists(url_file):
@@ -104,45 +104,93 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
 
     metadata = None
     library_index = {}
-    if pre_skip_existing:
+    # We need metadata for fallback (if manual) and for pre-skip existence check
+    if manual or pre_skip_existing:
         metadata = read_csv_metadata(url_file)
         if not metadata:
-            print("warning: no csvs with track_name/artist_names columns found - skipping existence check.")
-        else:
-            existing, new, no_meta, library_root, library_index = _check_existing(urls, metadata, output_dir, format)
-            print(f"\nexistence check against: {library_root}")
-            print(f"  already downloaded : {existing}")
-            print(f"  new (to download)  : {new - no_meta}")
-            if no_meta:
-                print(f"  no metadata        : {no_meta} (will attempt download)")
-            print(f"  total unique urls  : {url_count}")
+            print("warning: no csVs with track_name/artist_names columns found - skipping existence check and fallback metadata.")
+            metadata = {}
 
-            if validate_only:
-                print("\nuse without --validate-only to download.")
-                return True
+    # Pre-skip existence check
+    if pre_skip_existing and metadata:
+        existing, new, no_meta, library_root, library_index = _check_existing(urls, metadata, output_dir, format)
+        print(f"\nexistence check against: {library_root}")
+        print(f"  already downloaded : {existing}")
+        print(f"  new (to download)  : {new - no_meta}")
+        if no_meta:
+            print(f"  no metadata        : {no_meta} (will attempt download)")
+        print(f"  total unique urls  : {url_count}")
 
-            new_urls = []
-            for url in urls:
-                meta = metadata.get(url) or {}
-                a, t = meta.get('artist', ''), meta.get('track', '')
-                if not a or not t:
+        if validate_only:
+            print("\nuse without --validate-only to download.")
+            return True
+
+        new_urls = []
+        for url in urls:
+            meta = metadata.get(url) or {}
+            a, t = meta.get('artist', ''), meta.get('track', '')
+            if not a or not t:
+                new_urls.append(url)
+            else:
+                predicted = predict_output_filename(a, t, format)
+                stem = os.path.splitext(predicted)[0]
+                if normalize_key(stem) not in library_index:
                     new_urls.append(url)
-                else:
-                    predicted = predict_output_filename(a, t, format)
-                    stem = os.path.splitext(predicted)[0]
-                    if normalize_key(stem) not in library_index:
-                        new_urls.append(url)
-            skipped = len(urls) - len(new_urls)
-            print(f"\npre-skip: skipping {skipped} existing files, {len(new_urls)} to download.")
-            urls = new_urls
-            url_count = len(urls)
-            if url_count == 0:
-                print("all files already exist - nothing to download.")
-                return True
+        skipped = len(urls) - len(new_urls)
+        print(f"\npre-skip: skipping {skipped} existing files, {len(new_urls)} to download.")
+        urls = new_urls
+        url_count = len(urls)
+        if url_count == 0:
+            print("all files already exist - nothing to download.")
+            return True
     elif validate_only:
         print("use without --validate-only to download.")
         return True
 
+    # If manual, process via fallback and return
+    if manual:
+        # Process URLs in batches via fallback
+        overall_success = True
+        num_batches = (url_count + batch_size - 1) // batch_size
+        print(f"\nprocessing {url_count} urls in {num_batches} batch(es) of up to {batch_size}")
+        print(f"output directory: {resolve_output_dir(output_dir)}")
+
+        resolved_output_dir = resolve_output_dir(output_dir)
+        resolved_ffmpeg = ffmpeg_path()
+
+        for batch_idx in range(num_batches):
+            start = batch_idx * batch_size
+            end = min(start + batch_size, url_count)
+            batch = urls[start:end]
+            batch_num = batch_idx + 1
+            print(f"\n--- batch {batch_num}/{num_batches} ({len(batch)} urls) ---")
+
+            fallback_succeeded, fallback_failed, batch_succeeded = fallback.process_fallback(
+                batch=batch,
+                metadata=metadata,
+                output_dir=resolved_output_dir,
+                format=format,
+                overwrite_errors=overwrite_errors,
+                cookies_from_browser=cookies_from_browser,
+                resolved_ffmpeg=resolved_ffmpeg,
+                library_index=library_index,
+                is_spotify=True
+            )
+
+            if not batch_succeeded:
+                overall_success = False
+                # Log the failed URLs from fallback
+                fallback._log_urls('soft_failures.txt', fallback_failed, reason='manual_fallback_failed')
+            else:
+                print(f"  Batch {batch_num} succeeded via fallback.")
+
+        if overall_success:
+            print(f"\nall batches processed. total: {url_count}")
+        else:
+            print(f"\ncompleted with some failures. check soft_failures.txt")
+        return overall_success
+
+    # Otherwise, proceed with spotdl processing (original logic)
     # spotdl exits 0 even when nothing downloads - scan output for these markers
     SOFT_FAILURE_PATTERNS = [
         'AudioProviderError',
