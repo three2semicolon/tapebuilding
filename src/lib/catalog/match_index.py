@@ -18,6 +18,8 @@ from .normalization import (
     primary_artist, split_artists, strip_feat_clause, fold_key
 )
 from .soundcloud_helpers import _soundcloud_title_variations, _is_soundcloud_like_title
+from .soundcloud_loose import SoundcloudLooseIndex
+from .row_access import _row_get
 
 
 class MatchIndex:
@@ -36,6 +38,7 @@ class MatchIndex:
         self.by_u_title = collections.defaultdict(list)      # group_key(title) -> [entry]
         self.by_u_prefix = collections.defaultdict(list)     # group_key(title)[:4] -> [entry]
         self.by_u_album_track = collections.defaultdict(list)  # (group_key(album), track_int) -> [entry]
+        self._loose = None   # SoundcloudLooseIndex, built lazily on first soundcloud miss
         self._build()
 
     def _build(self):
@@ -185,7 +188,7 @@ class MatchIndex:
             return bool(row_artists & _entry_artist_set(entry)) or (row_primary and row_primary == _entry_primary(entry))
 
         # Get candidates - for Spotify: exact core title match only; for SoundCloud: also try variations
-        candidates = self.by_core_title.get(core_q, [])
+        candidates = list(self.by_core_title.get(core_q, []))
         # For SoundCloud: also try title variations
         if _is_soundcloud_like_title(_row_title(row)):
             soundcloud_title = _row_title(row)
@@ -198,7 +201,7 @@ class MatchIndex:
         reverse_candidates = []
         if core_q != title_key:
             # Also check the reverse direction
-            reverse_candidates = self.by_title.get(core_q, [])
+            reverse_candidates = list(self.by_title.get(core_q, []))
             # Apply same artist predicate to reverse candidates
             def reverse_pred(entry):
                 return bool(row_artists & _entry_artist_set(entry)) or (row_primary and row_primary == _entry_primary(entry))
@@ -262,7 +265,7 @@ class MatchIndex:
         best, best_ratio = None, 0.0
         # For Spotify: ASCII index only
         # For SoundCloud: also consider title variations for prefix matching
-        ascii_entries = self.by_prefix.get(title_key[:FUZZY_PREFIX_LEN], [])
+        ascii_entries = list(self.by_prefix.get(title_key[:FUZZY_PREFIX_LEN], []))
 
         # For SoundCloud: also consider variations and Unicode-aware matches
         if _is_soundcloud_like_title(_row_title(row)):
@@ -371,7 +374,21 @@ class MatchIndex:
             entry = tier_fn(row, title_key, want_dur)
             if entry is not None:
                 return entry, tier_number
+        # tiers 7-9: SoundCloud-only, only reached after 1-6 all missed, so they
+        # can never change an existing (spotify or soundcloud) match.
+        if self._is_soundcloud(row):
+            if self._loose is None:
+                self._loose = SoundcloudLooseIndex(self.catalog)
+            entry, tier_number = self._loose.match(row)
+            if entry is not None:
+                return entry, tier_number
         return None, None
+
+    @staticmethod
+    def _is_soundcloud(row):
+        # row_access._is_soundcloud_row only recognises https://soundcloud.com/...,
+        # which misses the api-v2.soundcloud.com/tracks/<id> rows.
+        return 'soundcloud.com/' in str(_row_get(row, 'spotify_url', default='') or '')
 
 
 def tier_name(tier_number):

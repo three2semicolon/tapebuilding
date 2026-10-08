@@ -25,6 +25,9 @@ _TIER_NAMES = {
     4: 'core_title_artist_overlap',
     5: 'fuzzy_title_duration',
     6: 'symbol_title',
+    7: 'soundcloud_artist_title',
+    8: 'soundcloud_fuzzy_title',
+    9: 'soundcloud_title_only',
 }
 
 
