@@ -5,10 +5,51 @@ and build a deduplicated manifest of track urls for `download soundcloud`.
 
 import os
 import re
+import json
 
 import yt_dlp
-
 from lib.text import normalize_key
+
+# Cache for SoundCloud display names to avoid repeated requests
+_soundcloud_display_name_cache = {}
+
+def _get_soundcloud_display_name(username):
+    """Fetch the display name for a SoundCloud username via the oEmbed endpoint.
+    Returns the display name if found, otherwise None.
+    """
+    if not username:
+        return None
+    if username in _soundcloud_display_name_cache:
+        return _soundcloud_display_name_cache[username]
+    # Try to fetch from SoundCloud oEmbed endpoint
+    # Format: https://soundcloud.com/oembed?format=json&url=https://soundcloud.com/{username}
+    url = f"https://soundcloud.com/oembed?format=json&url=https://soundcloud.com/{username}"
+    try:
+        # Try to use requests if available, otherwise fallback to urllib
+        try:
+            import requests
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                display_name = data.get('author_name')
+                if display_name:
+                    _soundcloud_display_name_cache[username] = display_name
+                    return display_name
+        except ImportError:
+            # Fallback to urllib
+            from urllib.request import urlopen
+            from urllib.error import URLError, HTTPError
+            with urlopen(url, timeout=5) as response:
+                if response.status == 200:
+                    data = json.load(response)
+                    display_name = data.get('author_name')
+                    if display_name:
+                        _soundcloud_display_name_cache[username] = display_name
+                        return display_name
+    except Exception as e:
+        # Log the error but don't fail; we'll fall back to username
+        pass
+    return None
 
 
 def _extract_artist_title_from_url(url):
@@ -104,8 +145,12 @@ def list_user_likes(profile_url_or_username, cookies_from_browser=None):
                         if not uploader:
                             uploader = meta.get('uploader', '')
 
-            # Prefer explicit artist field (display name) if available, else use uploader (username)
-            artist_name = entry.get('artist', uploader)
+            # Get artist name: prefer explicit artist field, then try to get display name from username, else fallback to username
+            artist_name = entry.get('artist', '')
+            if not artist_name and uploader:
+                artist_name = _get_soundcloud_display_name(uploader)
+            if not artist_name:
+                artist_name = uploader
 
             likes.append({
                 'name': name,
@@ -154,8 +199,12 @@ def export_set(set_url, cookies_from_browser=None):
                         if not uploader:
                             uploader = meta.get('uploader', '')
 
-            # Prefer explicit artist field (display name) if available, else use uploader (username)
-            artist_name = entry.get('artist', uploader)
+            # Get artist name: prefer explicit artist field, then try to get display name from username, else fallback to username
+            artist_name = entry.get('artist', '')
+            if not artist_name and uploader:
+                artist_name = _get_soundcloud_display_name(uploader)
+            if not artist_name:
+                artist_name = uploader
 
             tracks.append({
                 'title': title,
