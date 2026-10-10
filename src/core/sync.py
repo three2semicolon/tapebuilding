@@ -12,7 +12,7 @@ no logic was extracted or changed, this is a thin promotion.
 from playlists.build import build_playlists
 
 
-def run_sync(names=None, covers=False, verbose=False, playlists_path=None,
+def run_sync(names=None, exclude_names=None, covers=False, verbose=False, playlists_path=None,
             archive_path=None, exports_dir=None):
     """rescrape spotify + rebuild every (or named) playlist's .m3u8, in one
     call. plain, import-safe entry point - mirrors
@@ -26,6 +26,7 @@ def run_sync(names=None, covers=False, verbose=False, playlists_path=None,
         apply=True,
         rescrape=True,
         names=names or [],
+        exclude_names=exclude_names or [],
         covers=covers,
         verbose=verbose,
         playlists_path=playlists_path,

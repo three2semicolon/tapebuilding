@@ -191,7 +191,8 @@ def run_import(input_dir, output_dir=None, dry_run=False, only_pass=None,
                verbose=False):
     """the two-pass import orchestration that used to live in main() - plain
     function so cli.py (and anything else) can call it directly without
-    going through argparse. returns True/False on overall success.
+    going through argparse. returns a structured result with success status
+    and detailed information including import leftovers.
 
     output_dir resolution is required, no fallback - deliberately calls
     lib.paths.resolve('ARCHIVE_PATH', required=True) directly instead of
@@ -206,7 +207,7 @@ def run_import(input_dir, output_dir=None, dry_run=False, only_pass=None,
 
     if not os.path.exists(input_dir):
         print(f"error: input directory not found: {input_dir}")
-        return False
+        return {'ok': False, 'error': 'Input directory not found'}
 
     if dry_run:
         print("dry run - no files will be moved")
@@ -218,6 +219,7 @@ def run_import(input_dir, output_dir=None, dry_run=False, only_pass=None,
     # otherwise be singleton-imported by the very sweep that follows).
     merged_folders = []
     staged_folders = []
+    import_report = None
     preimport_ran = (not no_preimport and input_dir and only_pass != 'singles')
     if preimport_ran:
         if os.path.abspath(input_dir) == os.path.abspath(output_dir):
@@ -227,12 +229,12 @@ def run_import(input_dir, output_dir=None, dry_run=False, only_pass=None,
         else:
             from organize.preimport import stage as stage_drop
             print("\n=== pre-import staging ===")
-            report = stage_drop(input_dir, output_dir,
-                                apply=not dry_run,
-                                merge_existing=not no_merge_existing,
-                                verbose=verbose)
-            merged_folders = list(report.get('merged_folders', []))
-            staged_folders = list(report.get('staged_folders', []))
+            import_report = stage_drop(input_dir, output_dir,
+                                       apply=not dry_run,
+                                       merge_existing=not no_merge_existing,
+                                       verbose=verbose)
+            merged_folders = list(import_report.get('merged_folders', []))
+            staged_folders = list(import_report.get('staged_folders', []))
 
     success = True
     if only_pass == 'albums':
@@ -267,4 +269,8 @@ def run_import(input_dir, output_dir=None, dry_run=False, only_pass=None,
                   "but not in beets.db yet (beets skipped them as duplicates). "
                   "index them with:\n  uv run organize cleanup --rebuild-db")
 
-    return success
+    # Return structured result including import report if available
+    result = {'ok': success}
+    if import_report is not None:
+        result['import_report'] = import_report
+    return result

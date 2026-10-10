@@ -43,7 +43,7 @@ from collections import OrderedDict
 from lib.paths import archive_path
 from lib.text import normalize_key
 from download.existing import build_library_index
-from download.spotify_api import get_export_dir
+from download.spotify.spotify_api import get_export_dir
 from download.manifest import predict_output_filename, read_csv_metadata
 
 # reasons logged to failed_downloads.txt with this marker are tracks spotdl said

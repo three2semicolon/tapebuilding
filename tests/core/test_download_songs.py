@@ -71,7 +71,7 @@ def test_resolve_source_returns_none_for_bad_input():
 @pytest.fixture
 def mocks(monkeypatch):
     download_mock = MagicMock(return_value=True)
-    import_mock = MagicMock(return_value=True)
+    import_mock = MagicMock(return_value={'ok': True})
     playlists_mock = MagicMock(return_value=True)
     monkeypatch.setattr(ds_mod, "download_spotify", download_mock)
     monkeypatch.setattr(ds_mod, "run_import", import_mock)

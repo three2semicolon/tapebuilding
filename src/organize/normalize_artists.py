@@ -1,20 +1,40 @@
 import re
-from beets.plugins import BeetsPlugin
+
 # organize/normalize_artists.py
 #
 # beets plugin: normalizes artist strings before they're used in path templates.
 # install: add 'normalize_artists' to plugins in config.yaml and set pluginpath
 #          to the organize/ directory.
 #
-# featuring aliases → normalized to "feat."
+# the pure function normalize_artist() is importable (and unit-testable)
+# without beets installed - only the BeetsPlugin subclass needs beets.
+try:
+    from beets.plugins import BeetsPlugin
+except ImportError:  # pragma: no cover - lets tests import normalize_artist()
+    class BeetsPlugin:  # minimal stand-in
+        def __init__(self, *a, **k):
+            pass
+
+        def register_listener(self, *a, **k):
+            pass
+
+# featuring aliases -> normalized to "feat."
+#
+# BUGFIX_PLAN.md Bug 13: the old pattern had no word boundaries and was
+# applied with .search(), so it matched "ft"/"f."/"feat" INSIDE words -
+# "Daft Punk" -> "Da feat. Punk", "Soft Cell" -> "So feat. Cell". The marker
+# must now be a whole token: (?<!\w) before it, and \b after the word forms
+# ("f." keeps its dot as the terminator). An optional opening bracket and
+# surrounding whitespace are still consumed, as before.
 _FEAT_RE = re.compile(
-    r'\s*[\(\[]?\s*(?:feat(?:uring)?\.?|ft\.?|f\.)\s*',
-    re.IGNORECASE
+    r'\s*[\(\[]?\s*(?<!\w)(?:feat(?:uring)?\b\.?|ft\b\.?|f\.)\s*',
+    re.IGNORECASE,
 )
 
-# collab "x" between artists - word boundaries so " x " matches but "xx"/"xo" don't
-# also match lone 'x' as a separator
-_COLLAB_X_RE = re.compile(r'\b[xX]\b')
+# collab "x" between artists - whitespace-delimited only. (Old pattern was a
+# bare \b[xX]\b applied to the featuring part, which turned a lone "X" in a
+# name - "Malcolm X" - into a separator.)
+_COLLAB_X_RE = re.compile(r'\s+[xX]\s+')
 
 # " and " as an artist separator
 _AND_WORD_RE = re.compile(r'\s+and\s+', re.IGNORECASE)
@@ -24,15 +44,10 @@ _EDGE_PUNCT_RE = re.compile(r'^[\s,&]+|[\s,&]+$')
 
 
 def _normalize_list(artists):
-    """single → "Artist"; two → "A & B"; three+ → "A, B & C"."""
+    """join a list of artists with ", " (D8 - was "A & B" / "A, B & C").
+    a single artist is returned as-is."""
     artists = [a.strip() for a in artists if a.strip()]
-    if not artists:
-        return ''
-    if len(artists) == 1:
-        return artists[0]
-    if len(artists) == 2:
-        return f"{artists[0]} & {artists[1]}"
-    return ', '.join(artists[:-1]) + ' & ' + artists[-1]
+    return ', '.join(artists)
 
 
 def normalize_artist(raw):
@@ -41,11 +56,13 @@ def normalize_artist(raw):
     if not raw or not raw.strip():
         return ''
 
-    # Split off a featuring clause first – it is handled separately below
+    # Split off a featuring clause first - it is handled separately below.
+    # A match at the very start of the string (nothing before it) isn't a
+    # featuring credit, it's the artist's name ("Ft. Lauderdale") - leave it.
     feat_match = _FEAT_RE.search(raw)
-    if feat_match:
+    if feat_match and raw[:feat_match.start()].strip():
         main_part = raw[:feat_match.start()].strip()
-        feat_part = raw[feat_match.end():].strip().strip('()')
+        feat_part = raw[feat_match.end():].strip().strip('()[] ')
         # If the featuring part only contained punctuation, treat it as a plain "feat."
         if not feat_part:
             feat_part = 'feat.'
@@ -53,8 +70,8 @@ def normalize_artist(raw):
         main_part = raw
         feat_part = None
 
-    # Normalise "x" collaborations to use "&"
-    main_part = re.sub(r'\s+x\s+', ' & ', main_part)
+    # Normalise "x" / "and" collaborations to a comma list
+    main_part = _COLLAB_X_RE.sub(', ', main_part)
     main_part = _AND_WORD_RE.sub(', ', main_part)
 
     # Split on commas, strip each piece, drop empties

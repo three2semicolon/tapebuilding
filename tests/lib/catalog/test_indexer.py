@@ -9,9 +9,20 @@ lib.tags.read_tags().
 
 get_index()'s caching behavior is the highest-value coverage here per
 TEST_PLANS.md - "stale-cache bugs are the classic failure mode" - so those
-tests assert both on content (does a cache hit pick up a new file it
-shouldn't?) and on the sidecar's own mtime (does a rebuild actually touch
-it, does a cache hit leave it alone?).
+tests assert both on content (does a cache hit pick up a change it should,
+and skip a rebuild when nothing changed?) and on the sidecar's own mtime
+(does a rebuild actually touch it, does an unchanged-crate hit leave it
+alone?), plus a direct assertion that build_index() itself is/isn't called,
+not just that the observable output looks right either way.
+
+NOTE: get_index() used to trust an existing sidecar unconditionally unless
+--reindex was passed - see BUGFIX_PLAN.md's Bug 1 for the real-library
+symptom that caused (~300 tracks silently missing from unmatched.csv
+resolution because the cache was never invalidated after new downloads).
+It now does a cheap stat-only mtime check (_is_stale()) before trusting the
+cache, so a file added or removed from the crate is picked up on the next
+call without needing --reindex. The tests below assert the current
+(fixed) behavior, not the original one.
 """
 import os
 import time
@@ -46,6 +57,20 @@ class TestBuildIndex:
         titles = {e["title"] for e in build_index(str(tmp_path))}
         assert "Skipped" not in titles
         assert "Kept" in titles
+
+    def test_skips_duplicates_and_unorganized_dirs_at_top_level_only(self, tmp_path, make_tagged_file):
+        # Bug 12: top-level "duplicates" and "unorganized" dirs should never be scanned
+        make_tagged_file(filename="duplicates/should_be_skipped.mp3", title="Skipped Dup")
+        make_tagged_file(filename="unorganized/should_be_skipped.mp3", title="Skipped Unorg")
+        # a legitimately-named directory nested deeper is not the same thing and should still be indexed
+        make_tagged_file(filename="Artist/duplicates/track.mp3", title="Kept Dup")
+        make_tagged_file(filename="Artist/unorganized/track.mp3", title="Kept Unorg")
+
+        titles = {e["title"] for e in build_index(str(tmp_path))}
+        assert "Skipped Dup" not in titles
+        assert "Skipped Unorg" not in titles
+        assert "Kept Dup" in titles
+        assert "Kept Unorg" in titles
 
     def test_empty_root_returns_empty_list(self, tmp_path):
         assert build_index(str(tmp_path)) == []
@@ -88,15 +113,64 @@ class TestGetIndex:
         assert len(index) == 1
         assert (exports / INDEX_NAME).exists()
 
-    def test_cache_hit_does_not_pick_up_a_file_added_after_indexing(self, tmp_path, make_tagged_file):
+    def test_cache_hit_auto_rebuilds_when_a_file_is_added(self, tmp_path, make_tagged_file):
+        """Was test_cache_hit_does_not_pick_up_a_file_added_after_indexing,
+        asserting the opposite (len == 1, 'stale on purpose'). That was the
+        pre-fix behavior - get_index() trusted the sidecar unconditionally
+        unless --reindex was passed. See BUGFIX_PLAN.md's Bug 1: that gap is
+        exactly what let ~300 real tracks sit invisible in unmatched.csv.
+        get_index() now auto-detects the change via a cheap mtime check and
+        rebuilds without needing --reindex - this is the regression test for
+        that fix."""
         make_tagged_file(filename="Artist/Album/Track.mp3", title="Track")
         exports = tmp_path / "exports"
         exports.mkdir()
         get_index(library_root=str(tmp_path), exports_dir_value=str(exports))
 
+        time.sleep(0.01)  # ensure the new file's mtime strictly exceeds the sidecar's
         make_tagged_file(filename="Artist/Album/Track Two.mp3", title="Track Two")
         index = get_index(library_root=str(tmp_path), exports_dir_value=str(exports))
-        assert len(index) == 1  # stale on purpose - this is the cache-hit path
+        assert len(index) == 2  # auto-invalidated, no --reindex needed
+
+    def test_auto_invalidation_calls_build_index_when_crate_changed(
+        self, tmp_path, make_tagged_file, monkeypatch
+    ):
+        """Direct complement to test_cache_hit_does_not_call_build_index_again:
+        confirms the rebuild is actually triggered (not just that the
+        eventual output happens to contain 2 entries some other way)."""
+        import lib.catalog.indexer as indexer_module
+
+        make_tagged_file(filename="Artist/Album/Track.mp3", title="Track")
+        exports = tmp_path / "exports"
+        exports.mkdir()
+        get_index(library_root=str(tmp_path), exports_dir_value=str(exports))
+
+        time.sleep(0.01)
+        make_tagged_file(filename="Artist/Album/Track Two.mp3", title="Track Two")
+
+        real_build_index = indexer_module.build_index
+        calls = []
+        monkeypatch.setattr(
+            indexer_module, "build_index",
+            lambda *a, **k: calls.append(1) or real_build_index(*a, **k)
+        )
+        get_index(library_root=str(tmp_path), exports_dir_value=str(exports))
+        assert calls == [1]
+
+    def test_cache_hit_auto_rebuilds_when_a_file_is_deleted(self, tmp_path, make_tagged_file):
+        """Deletion leaves no mtime of its own to compare, but it does bump
+        the containing directory's mtime - _newest_mtime() stats directories
+        as well as files specifically to catch this case."""
+        make_tagged_file(filename="Artist/Album/Track.mp3", title="Track")
+        two = make_tagged_file(filename="Artist/Album/Track Two.mp3", title="Track Two")
+        exports = tmp_path / "exports"
+        exports.mkdir()
+        get_index(library_root=str(tmp_path), exports_dir_value=str(exports))
+
+        time.sleep(0.01)
+        os.remove(two)
+        index = get_index(library_root=str(tmp_path), exports_dir_value=str(exports))
+        assert len(index) == 1  # auto-invalidated on deletion too
 
     def test_reindex_forces_rebuild_and_picks_up_new_file(self, tmp_path, make_tagged_file):
         make_tagged_file(filename="Artist/Album/Track.mp3", title="Track")

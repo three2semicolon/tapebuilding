@@ -31,6 +31,7 @@ def test_run_sync_forwards_to_build_playlists_with_apply_and_rescrape_true(build
         apply=True,
         rescrape=True,
         names=['My Playlist'],
+        exclude_names=[],
         covers=True,
         verbose=True,
         playlists_path='/playlists',
@@ -57,6 +58,16 @@ def test_covers_flag_forwards_to_build_playlists(build_playlists_mock):
 def test_names_param_scopes_to_specific_playlists(build_playlists_mock):
     run_sync(names=['Road Trip', 'spotify:playlist:xyz'])
     assert build_playlists_mock.call_args.kwargs['names'] == ['Road Trip', 'spotify:playlist:xyz']
+
+
+def test_exclude_names_forwards_to_build_playlists(build_playlists_mock):
+    run_sync(exclude_names=['Playlist A', 'spotify:playlist:xyz'])
+    assert build_playlists_mock.call_args.kwargs['exclude_names'] == ['Playlist A', 'spotify:playlist:xyz']
+
+
+def test_exclude_names_defaults_to_empty_list_not_none(build_playlists_mock):
+    run_sync()
+    assert build_playlists_mock.call_args.kwargs['exclude_names'] == []
 
 
 def test_no_dry_run_mode_of_its_own():

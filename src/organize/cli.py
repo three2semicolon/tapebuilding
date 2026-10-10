@@ -2,9 +2,9 @@
 
 same split as download.cli: this file owns option parsing and exit codes;
 the actual logic lives in plain, import-safe functions in the sibling
-modules (cleanup.py's run_cleanup(), preimport.py's stage(),
-beets_import.py's run_import()/export_library_csv()) that never call
-sys.exit() themselves.
+modules (cleanup/'s run_cleanup(), preimport/'s stage(),
+beets_import.py's run_import()/export_library_csv(), journal.py's
+undo_run()) that never call sys.exit() themselves.
 
 pyproject.toml entry point:
     organize = "organize.cli:organize"
@@ -17,9 +17,10 @@ import click
 from dotenv import load_dotenv
 
 from lib.paths import archive_path
-from organize.cleanup import resolve_crate, run_cleanup
+from organize.cleanup import resolve_crate, run_cleanup, check_tags
 from organize.preimport import stage
 from organize.beets_import import run_import, export_library_csv
+from organize.journal import list_runs, undo_run
 
 load_dotenv()
 
@@ -38,12 +39,49 @@ def organize():
 @click.option('--no-tag-write', is_flag=True, help='with --apply: do not rewrite albumartist tags.')
 @click.option('--rebuild-db', 'rebuild_db_flag', is_flag=True,
               help='with --apply: rebuild beets.db from the reorganized crate.')
+@click.option('--check-tags', 'check_tags_flag', is_flag=True,
+              help='scan singles/ and albums/ for corrupted albumartist tags (from '
+                   'past wrong merges) instead of running the regular regroup pass. '
+                   'dry-run unless combined with --apply. cannot combine with --rebuild-db.')
 @click.option('--verbose', is_flag=True, help='print every planned move.')
-def cleanup_cmd(crate, apply, no_tag_write, rebuild_db_flag, verbose):
+def cleanup_cmd(crate, apply, no_tag_write, rebuild_db_flag, check_tags_flag, verbose):
     """reorganize the beets crate into proper albums and singles."""
     try:
-        run_cleanup(crate=crate, apply=apply, no_tag_write=no_tag_write,
-                    rebuild_db_flag=rebuild_db_flag, verbose=verbose)
+        if check_tags_flag:
+            if rebuild_db_flag:
+                click.echo("error: --check-tags and --rebuild-db are mutually exclusive",
+                            err=True)
+                sys.exit(2)
+            check_tags(crate=crate, apply=apply, verbose=verbose)
+        else:
+            run_cleanup(crate=crate, apply=apply, no_tag_write=no_tag_write,
+                        rebuild_db_flag=rebuild_db_flag, verbose=verbose)
+    except Exception as e:
+        click.echo(f"error: {e}", err=True)
+        sys.exit(1)
+
+
+# --- undo (journal) -------------------------------------------------------
+
+@organize.command('undo')
+@click.option('--crate', type=click.Path(), help='crate root (default: ARCHIVE_PATH in .env).')
+@click.option('--run', 'run_id', help='run id to revert (default: the most recent run not already undone).')
+@click.option('--list', 'list_flag', is_flag=True, help='list journaled runs and exit.')
+@click.option('--apply', is_flag=True, help='actually revert (default: dry-run).')
+def undo_cmd(crate, run_id, list_flag, apply):
+    """revert a journaled cleanup/preimport/check-tags run (moves + tag writes)."""
+    try:
+        crate_root = resolve_crate(crate)
+        if list_flag:
+            runs = list_runs(crate_root)
+            if not runs:
+                click.echo('no journaled runs.')
+            for r in runs:
+                state = 'undone' if r['undone'] else ('ok' if r['ok'] else ('interrupted' if not r['ended'] else 'failed'))
+                click.echo(f"{r['run']}  {r['label']:<10} {state:<11} "
+                           f"moves={r['moves']} tags={r['tags']} skipped_tags={r['skipped_tags']} failed={r['failed']}")
+            return
+        undo_run(crate_root, run_id=run_id, apply=apply)
     except Exception as e:
         click.echo(f"error: {e}", err=True)
         sys.exit(1)

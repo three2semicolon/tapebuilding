@@ -22,6 +22,9 @@ src/
       indexer.py
       matcher.py
   download/              acquisition: spotify export/download, ytdl, retry, soundbyte
+    spotify/             spotify-specific: api, download, export
+    soundcloud/          soundcloud-specific: download, export
+    other/               cross-service: soundbyte
   organize/              raw downloads -> beets-managed crate
   playlists/             spotify playlist -> local .m3u8, with crate matching
   tapedeck/               mirror a rotation subset of the crate to a sync target
@@ -80,6 +83,28 @@ pre-refactor copies.
   from `organize/normalize_artists.py`'s beets plugin, which does handle
   `and`, and that inconsistency is intentional (separate subsystem,
   pinned down with an assertion so it doesn't get "fixed" later).
+- `strip_edition_suffix(s)` / `normalize_album(s)` — **new**: album-name
+  normalization for matching/grouping (closes the `TODO.md` "album-name
+  normalization / edition collapsing" item, merge-on-ingest half).
+  `strip_edition_suffix()` removes only a trailing, *delimited* edition/
+  remaster/anniversary clause — `(Deluxe)`, `(Deluxe Edition)`,
+  `[Remastered]`, `(2009 Remaster)`, `(Remastered 2009)`, `(25th
+  Anniversary Edition)`, a trailing `` - Remastered``/`` : Remastered``
+  dash/colon clause — conservative like `strip_feat_clause()`: a
+  parenthetical that doesn't match the edition-keyword pattern (`(Ohia)`,
+  `(Original Soundtrack)`) is never touched, since it's anchored to the
+  end of the string and requires a delimiter, never firing bare
+  mid-title. `normalize_album(s)` feeds the result through
+  `normalize_key()` for an actual lookup/grouping key. Consumed by
+  `lib.catalog.matcher`'s tiers 3/6b (the only two tiers that compare
+  album strings at all) and by `organize`'s two grouping keys
+  (`organize.cleanup.grouping.group_files()`,
+  `organize.preimport.plan.index_existing_albums()`/`build_plan()`), so
+  an edition variant of an album matches/merges against the plain
+  release instead of forking into a separate group. Deliberately does
+  **not** write any canonical string back to tags or rename existing
+  folders — see "Cross-cutting notes" below for what's still open on
+  that half.
 
 ### `lib/tags.py`
 - `EXTENSIONS` — supported audio extensions.
@@ -117,11 +142,40 @@ Doesn't call `load_dotenv()` itself — relies on the calling `cli.py`.
 The crate-catalog primitive — build/cache a searchable tag index of the
 crate, and match an external Spotify row against it. Promoted out of
 `playlists/` since `tapedeck/` needed both directly too.
-- `catalog/indexer.py` — `build_index()`, `get_index()` (cached, rebuilds
-  the `.playlist_index.jsonl` sidecar under the exports dir on miss or
-  `--reindex`), `save_index()`/`load_index()`. Behavior unchanged from
-  `playlists/indexer.py`; calls `lib.tags.read_tags()` and `lib.paths`
-  instead of its own copies.
+- `catalog/indexer.py` — `build_index()`, `get_index()`, `save_index()`/
+  `load_index()`. Calls `lib.tags.read_tags()` and `lib.paths` instead of
+  its own copies.
+  - `get_index()` **auto-invalidates the cache** — no longer the old
+    unconditional "trust the sidecar if it exists" behavior. Before
+    serving `.playlist_index.jsonl`, it runs `_is_stale()`, a cheap
+    stat-only walk (`_newest_mtime()` — mtimes only, no tag reads) over
+    the same tree `build_index()` covers, and rebuilds automatically if
+    anything under the crate is newer than the sidecar. `--reindex`
+    still works as an explicit manual override on top of this.
+  - `_is_stale()` fails safe in both directions: a sidecar that's
+    missing or unreadable counts as stale (forces a rebuild rather than
+    serving a cache it can't actually confirm is current), while a
+    `library_root` that can't be stat'd at all (permissions, a removable
+    drive that dropped) counts as **not** stale — a transient
+    filesystem hiccup just serves the existing cache for that run
+    instead of forcing an unwanted multi-minute reindex.
+  - `_newest_mtime()` stats directories as well as files, so a
+    *deletion* still invalidates the cache even though a removed file
+    leaves no mtime of its own to compare — removing a file bumps its
+    parent directory's mtime, which the walk catches.
+  - **Fixes Bug 1** (`BUGFIX_PLAN.md`): the previous version trusted the
+    sidecar unconditionally once it existed, so tracks added to the
+    crate after the last index build were invisible to every matcher
+    tier until someone remembered to pass `--reindex` by hand — this is
+    what silently produced "I Admit with Isaiah Kaleo" (and ~300 other
+    tracks) landing in `unmatched.csv` despite already being in the
+    crate. Confirmed fixed by re-running `playlists --apply --rescrape`
+    without `--reindex` after the crate had changed.
+  - Regression-tested: `tests/lib/catalog/test_indexer.py` covers add/
+    delete/unchanged-crate cases against the real `get_index()`, plus a
+    direct assertion (via monkeypatching `build_index`) that a rebuild
+    is/isn't actually triggered, not just that the returned index looks
+    right.
 - `catalog/matcher.py` — `MatchIndex`, `match_rows()` (cached by Spotify
   track ID). Six-tier matching, preserved exactly: (1) exact title +
   primary-artist token, (2) exact title + any artist overlap, (3) exact
@@ -131,6 +185,16 @@ crate, and match an external Spotify row against it. Promoted out of
   then `(album, track-number)` position. Calls `lib.text.normalize_key`/
   `normalize_title`/`primary_artist`/`split_artists` instead of its own
   regex.
+  - **Album-name normalization (new):** tier 3's exact-album comparison
+    and tier 6b's `by_album_track` index/lookup key both now use
+    `lib.text.normalize_album()` instead of plain `normalize_key()`, so a
+    Spotify row's `Album` matches a local file tagged `Album (Deluxe)`/
+    `Album (2009 Remaster)` without the literal strings needing to
+    agree. Tiers 1/2/4/5 never compared album at all and are unaffected.
+    Verified against fixtures (not just diffed): a title+album-exact
+    match where artists share no token resolves on tier 3 against an
+    edition-suffixed local album tag; a symbol-only title anchored by
+    `(album, track-number)` resolves on tier 6 the same way.
 
 ---
 
@@ -307,11 +371,61 @@ tags, independent of beets/beets.db.
   `~/music/tapebuilding` default, since this command moves files and
   rewrites tags.
 - `group_files()`, `build_plan()`, `prune_empty_dirs()`, `rebuild_db()`,
-  `run_cleanup()` (the plain entry point `cli.py` calls).
+  `run_cleanup()` (the plain entry point `cli.py` calls). (Current source
+  location is `organize/cleanup/grouping.py` post-split — see the "still
+  needs updating" note under Cross-cutting notes; this section is
+  otherwise describing the pre-split `cleanup.py` layout.)
+- **Album-name normalization (new):** `group_files()`'s grouping key is
+  now `(normalize_album(album),)` instead of `(normalize_key(album),)` —
+  see `lib/text.py`'s new `normalize_album()`/`strip_edition_suffix()`.
+  A track tagged `Album` and one tagged `Album (Deluxe)`/`Album (2009
+  Remaster)` now land in the same group; `canonical_albumartist()`/
+  `dominant_album()` then pick the folder name/tag from whichever raw
+  string is more common across the merged group, same majority-vote
+  behavior as any other tag disagreement — no new canonical string is
+  invented at grouping time. Verified against a fixture (not just
+  diffed): two tracks tagged `Title`/`Title (Deluxe)` merge into one
+  `Artist - Title` destination folder. Deliberately *not* extended to
+  `resplit_plan.py`'s naming or to writing a canonical album string back
+  to existing folders/tags — see `TODO.md`'s open items for both.
 - `--rebuild-db` deletes and rebuilds `beets.db` via an as-is (no
   MusicBrainz) reimport. Flags plausible wrong-merges (unusually large
   album groups) and VA-filed albums in the dry-run summary.
 - Idempotent.
+- **Fixes Bug 2** (`BUGFIX_PLAN.md`): grouping is now artist-aware, not
+  just album-title-based. `build_plan()` calls the new
+  `is_unrelated_va_collision(aa, members)` right after computing
+  `canonical_albumartist()` — true only when that call resolved to
+  `'Various Artists'` by fallback (no majority/dominant collaborator),
+  no member's own `albumartist` tag actually says Various Artists/VA
+  (checked via `_is_explicit_va()`), and the group is exactly two
+  tracks whose artist tokens (`shares_artist_token()`, unioning
+  `artist`+`albumartist` per file, split/normalized via
+  `lib.text.split_artists`/`normalize_key`) share nothing in common.
+  That combination — e.g. `Anysia Kym - Automatic` and `Spencer. -
+  Automatic`, two unrelated singles that happen to share a title — is
+  now filed as two singletons instead of merged into one `Various
+  Artists - Automatic` folder. Deliberately scoped to exactly two
+  members: a 3+ track group with no full overlap still falls through
+  to the existing ambiguous-VA flagging (now reported separately from
+  the new `split_groups` count) rather than being auto-split, since
+  that broader case hasn't been confirmed as the same pattern. A
+  genuine collab album (any shared artist token) or an explicitly
+  VA-tagged compilation still merges exactly as before.
+  `organize.preimport.stage()`'s `build_plan()` imports and applies the
+  same `is_unrelated_va_collision()` check (before its existing-folder
+  merge lookup, so a confirmed collision can't merge into an unrelated
+  real VA folder either) — one shared decision, not a second copy.
+- **Resplit mode (Bug 2's other half)**: *Retired as of Phase 4*.
+  This opt-in repair mode for fixing pre-existing wrong merges was
+  superseded by the improved grouping logic in `cleanup --apply` runs.
+  The forward-looking `is_unrelated_va_collision()` check now prevents
+  new wrong merges, making resplit unnecessary for ongoing maintenance.
+  See `BUGFIX_PLAN.md` for the Phase 4 completion details.
+- **Phase 6 (tests + documentation)**: *Completed*.
+  Comprehensive idempotency test updated and verified, covering all
+  edge cases from TODO.md. All organize tests passing. Documentation
+  updated to reflect current system state post-refactor.
 
 ### `preimport.py`
 Runs the same regrouping logic **before** beets ever sees the drop.
@@ -325,9 +439,22 @@ Runs the same regrouping logic **before** beets ever sees the drop.
 - Returns a `report` dict (`staged_folders`, `merged_folders`,
   `merged_tracks`, `duplicates`, `ambiguous`, `singletons`, `tag_writes`)
   that `beets_import.py` consumes.
-- Only `group_files`/`resolve_crate` still come from `organize.cleanup`
-  (deliberately organize-specific policy); everything else imports
-  directly from `lib.tags`/`lib.text`.
+- Only `group_files`/`resolve_crate`/`is_unrelated_va_collision` still
+  come from `organize.cleanup` (deliberately organize-specific policy,
+  shared with `cleanup.py`'s own regroup-in-place pass rather than
+  duplicated); everything else imports directly from `lib.tags`/
+  `lib.text`. (Current source location is `organize/preimport/plan.py`
+  post-split, same caveat as `cleanup.py` above.)
+- **Album-name normalization (new):** `index_existing_albums()`'s key
+  and `build_plan()`'s merge-target lookup key both now use
+  `lib.text.normalize_album()` for the album half instead of plain
+  `normalize_key()`, so an incoming download tagged `Album (Deluxe)`
+  merges straight into an existing crate folder for the plain `Album`
+  release rather than staging a sibling folder that resplit would later
+  have to untangle. Verified against a fixture (not just diffed): an
+  existing `Artist - Title` crate folder correctly absorbs an incoming
+  track tagged `Title (Deluxe)` via `merged_moves` with zero
+  `staged_moves`.
 
 ### `beets_import.py`
 Two-pass beets importer: pass 1 groups multi-track albums and matches
@@ -515,7 +642,12 @@ translates `ok: False` / raised exceptions into exit codes.
   replaces four independent copies; **one tag reader** (`lib.tags.read_tags`)
   replaces two; **one m3u8 reader** (`lib.m3u.read_m3u8`) replaces two;
   **one pair of Spotify auth flows** (`lib.spotify_auth`) replaces two
-  independent implementations.
+  independent implementations. **One album-identity function**
+  (`lib.text.normalize_album`/`strip_edition_suffix`, new) is now the
+  single place edition-suffix collapsing happens — `lib.catalog.matcher`
+  (tiers 3/6b), `organize.cleanup.grouping.group_files()`, and
+  `organize.preimport.plan.index_existing_albums()`/`build_plan()` all
+  call it rather than each growing its own suffix-stripping regex.
 - **Dependency graph**, now: every domain package may depend on `lib/`;
   `core/` may depend on any domain package; the one remaining
   domain-to-domain dependency is `playlists → download` (auth + export),
@@ -529,6 +661,11 @@ translates `ok: False` / raised exceptions into exit codes.
   both require `ARCHIVE_PATH` with no fallback, unlike `lib.paths.archive_path()`'s
   convenience default used elsewhere (read-mostly contexts like
   `download/`'s existence checks).
+- **Organize-matcher key relationship**: `organize`'s grouping keys and
+  `lib.catalog.matcher`'s album-keyed tiers (3, 6b) both use
+  `lib.text.normalize_album()` for album identity, ensuring that
+  "Title" and "Title (Deluxe)"/"Title (2009 Remaster)" resolve to the
+  same identity in both systems without requiring literal string matches.
 - **Documented-as-done is not the same as actually-done.** Post-refactor
   smoke testing found three import-breaking gaps between this document
   and the real source (`download.existing.resolve_output_dir()` missing,

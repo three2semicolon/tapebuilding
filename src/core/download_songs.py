@@ -49,7 +49,7 @@ import os
 import tempfile
 
 from lib.paths import archive_path
-from download.spotify_download import download_spotify
+from download.spotify.spotify_download import download_spotify
 from organize.beets_import import run_import
 from playlists.build import build_playlists
 
@@ -141,9 +141,22 @@ def run_download_songs(source=None, apply=False, archive_path_opt=None, drop=Non
             record('import', True, skipped=True)
         else:
             try:
-                ok = run_import(input_dir=resolved_drop, output_dir=crate,
-                               dry_run=not apply, verbose=verbose)
+                import_result = run_import(input_dir=resolved_drop, output_dir=crate,
+                                          dry_run=not apply, verbose=verbose)
+                ok = import_result.get('ok', False)
                 record('import', ok)
+
+                # Report import leftovers if available in the structured result
+                if 'import_report' in import_result:
+                    report = import_result['import_report']
+                    leftover_count = report.get('leftover_count', 0)
+                    if leftover_count > 0:
+                        print(f"  import leftovers: {leftover_count} files")
+                        if verbose and 'leftover_paths' in report:
+                            for path in report['leftover_paths'][:5]:  # Limit to 5 paths in output
+                                print(f"    {os.path.relpath(path, resolved_drop)}")
+                        elif not verbose:
+                            print(f"    (use --verbose to see paths)")
             except Exception as e:
                 print(f"  error: {e}")
                 record('import', False, error=str(e))

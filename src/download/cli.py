@@ -23,14 +23,24 @@ mount into a top-level multi-package cli (once one exists) with
 """
 
 import sys
-
 import click
+import os
 from dotenv import load_dotenv
 
 from lib.spotify_auth import authenticate_user
-from download.spotify_api import get_export_dir
-from download.spotify_export import export_all_data, export_specific_playlist, export_playlists
-from download.spotify_download import download_spotify
+from download.spotify.spotify_api import get_export_dir
+from download.spotify.spotify_export import export_all_data, export_specific_playlist, export_playlists
+from download.spotify.spotify_download import download_spotify
+from download.soundcloud.soundcloud_download import download_soundcloud
+from download.soundcloud.soundcloud_export import (
+    export_all_data,
+    export_likes,
+    export_sets,
+    export_specific_set,
+    list_user_likes,
+    list_user_sets,
+    merge_and_deduplicate,
+)
 from download.ytdl import download_ytdl, AUDIO_FORMATS
 from download.retry import (
     run_retry,
@@ -38,14 +48,21 @@ from download.retry import (
     DEFAULT_SOFT,
     DEFAULT_OUT,
 )
-from download.soundbyte import run_soundbyte, DEFAULT_LIMIT
+from download.other.soundbyte import run_soundbyte, DEFAULT_LIMIT
+from lib.paths import (
+    archive_path as resolve_archive_path,
+    playlists_path as resolve_playlists_path,
+    exports_dir as resolve_exports_dir,
+)
+from lib.catalog.indexer import get_index
+from lib.catalog.matcher import MatchIndex, match_rows
 
 load_dotenv()
 
 
 @click.group()
 def download():
-    """spotify export/download, generic ytdl, failure retry, and soundbyte
+    """spotify/soundcloud export/download, generic ytdl, failure retry, and soundbyte
     album pulls for the tapebuilding project."""
 
 
@@ -69,32 +86,72 @@ def download():
 @click.option('--mine', is_flag=True,
               help='export only your own playlists (not followed/shared). '
                    'ignored with --playlist/--playlists-file.')
-def export_cmd(playlists, playlists_file, output, mine):
-    """export spotify playlists + liked songs to csv.
+@click.option('--service', type=click.Choice(['spotify', 'soundcloud']), default='spotify', show_default=True,
+              help='service to export from (spotify or soundcloud)')
+@click.option('--type', 'export_type', type=click.Choice(['likes', 'sets', 'all-sets']), default='likes', show_default=True,
+              help='type of data to export (likes, sets, or all-sets for soundcloud)')
+@click.option('--set-ids', multiple=True,
+              help='specific set ids to export (for soundcloud --type sets), repeatable')
+@click.option('--user', help='soundcloud username or url (defaults to current user)')
+def export_cmd(playlists, playlists_file, output, mine, service, export_type, set_ids, user):
+    """export spotify playlists + liked songs to csv, or soundcloud likes/sets to csv.
 
+    SPOTIFY (default):
     with no --playlist/--playlists-file, exports the full library (all
     playlists + liked songs). with one or more, exports + merges just
     those playlists into a scoped 'playlists_manifest.csv' - useful for
     keeping a subset of playlists in sync without re-pulling everything.
+
+    SOUNDCLOUD:
+    --type likes: exports liked tracks
+    --type sets: exports specific sets (--set-ids required) or all sets
+    --type all-sets: exports all sets for a user
     """
-    identifiers = list(playlists)
-    if playlists_file:
-        with open(playlists_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    identifiers.append(line)
-
     try:
-        sp = authenticate_user()
-        export_dir = get_export_dir(base_dir=output)
+        if service == 'spotify':
+            identifiers = list(playlists)
+            if playlists_file:
+                with open(playlists_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            identifiers.append(line)
 
-        if len(identifiers) == 1:
-            export_specific_playlist(sp, identifiers[0], export_dir)
-        elif identifiers:
-            export_playlists(sp, identifiers, export_dir)
-        else:
-            export_all_data(sp, export_dir, my_playlists_only=mine)
+            sp = authenticate_user()
+            export_dir = get_export_dir(base_dir=output)
+
+            if len(identifiers) == 1:
+                export_specific_playlist(sp, identifiers[0], export_dir)
+            elif identifiers:
+                export_playlists(sp, identifiers, export_dir)
+            else:
+                export_all_data(sp, export_dir, my_playlists_only=mine)
+
+        elif service == 'soundcloud':
+            export_dir = get_export_dir(base_dir=output)
+            soundcloud_user = user if user else os.getenv('SOUNDCLOUD_USER', 'me')  # default to current user
+            if export_type == 'likes':
+                click.echo(f"exporting soundcloud likes for user: {soundcloud_user}")
+                likes = export_likes(None, soundcloud_user, export_dir)  # sp=None for soundcloud
+                click.echo(f"exported {len(likes)} likes")
+            elif export_type == 'sets':
+                identifiers = list(set_ids)
+                if playlists_file:
+                    with open(playlists_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith('#'):
+                                identifiers.append(line)
+                if not identifiers:
+                    click.echo("error: --set-ids or --playlists-file required for --type sets", err=True)
+                    sys.exit(1)
+                click.echo(f"exporting {len(identifiers)} specific soundcloud set(s) for user: {soundcloud_user}")
+                unique_tracks = export_sets(None, identifiers, export_dir)  # sp=None for soundcloud
+                click.echo(f"exported {len(unique_tracks)} unique tracks from {len(identifiers)} set(s)")
+            elif export_type == 'all-sets':
+                click.echo(f"exporting all soundcloud sets for user: {soundcloud_user}")
+                unique_tracks = export_all_data(None, soundcloud_user, export_dir)  # sp=None for soundcloud
+                click.echo(f"exported {len(unique_tracks)} unique tracks")
     except Exception as e:
         click.echo(f"error: {e}", err=True)
         sys.exit(1)
@@ -128,10 +185,12 @@ def export_cmd(playlists, playlists_file, output, mine):
                    '--cookies-from-browser (avoids the browser file-lock issue).')
 @click.option('--debug', is_flag=True,
               help='use DEBUG log level for spotdl/yt-dlp instead of INFO.')
+@click.option('--manual', is_flag=True, help='skip primary download and only prompt for fallback sources.')
+@click.option('--spotdl-fallback/--no-spotdl-fallback', 'spotdl_fallback', default=False, show_default=True, help='prompt for YouTube URL or local file when spotdl fails to find a track.')
 def spotify_cmd(url_file, output, fmt, bitrate, overwrite_errors,
                  skip_existing, validate_only, batch_size, retries,
                  retry_delay, pre_skip_existing, cookies_from_browser,
-                 cookie_file, debug):
+                 cookie_file, spotdl_fallback, manual, debug):
     """download audio from spotify urls via spotdl."""
     if not url_file:
         export_dir = get_export_dir()
@@ -154,6 +213,8 @@ def spotify_cmd(url_file, output, fmt, bitrate, overwrite_errors,
             cookies_from_browser=cookies_from_browser,
             cookie_file=cookie_file,
             debug=debug,
+            spotdl_fallback=spotdl_fallback,
+            manual=manual,
         )
         if not success:
             sys.exit(1)
@@ -199,6 +260,71 @@ def ytdl_cmd(url, output, audio_format, audio_quality, no_thumbnail,
             metadata_only=metadata_only,
             cookies_from_browser=cookies_from_browser,
             ffmpeg_path=ffmpeg_path,
+        )
+        if not success:
+            sys.exit(1)
+    except Exception as e:
+        click.echo(f"error: {e}", err=True)
+        sys.exit(1)
+
+# --- soundcloud ---------------------------------------------------------
+
+@download.command('soundcloud')
+@click.option('--url-file', '-u', 'url_file', type=click.Path(),
+              help='file or directory of urls/csvs to download (defaults '
+                   'to <exports>/soundcloud_manifest_urls.txt).')
+@click.option('--output', '-o', 'output', type=click.Path(file_okay=False),
+              help='output directory for downloaded audio.')
+@click.option('--format', '-f', 'fmt', default='mp3', show_default=True)
+@click.option('--bitrate', '-b', default='320k', show_default=True)
+@click.option('--overwrite-errors', is_flag=True)
+@click.option('--skip-existing', is_flag=True)
+@click.option('--validate-only', is_flag=True,
+              help="report what would download without downloading.")
+@click.option('--batch-size', type=int, default=1, show_default=True)
+@click.option('--retries', type=int, default=3, show_default=True)
+@click.option('--retry-delay', type=float, default=3, show_default=True,
+              help='delay between retries, in seconds.')
+@click.option('--pre-skip-existing', is_flag=True,
+              help='check the crate for predicted filenames before '
+                   'downloading and skip urls already on disk.')
+@click.option('--cookies-from-browser', 'cookies_from_browser',
+              help='browser name to pull cookies from (e.g. chrome, firefox).')
+@click.option('--cookie-file', 'cookie_file', type=click.Path(exists=True),
+              help='path to a Netscape-format cookies.txt; preferred over '
+                   '--cookies-from-browser (avoids the browser file-lock issue).')
+@click.option('--debug', is_flag=True,
+              help='use DEBUG log level for spotdl/yt-dlp instead of INFO.')
+@click.option('--manual', is_flag=True, help='skip primary download and only prompt for fallback sources.')
+@click.option('--soundcloud-fallback/--no-soundcloud-fallback', 'soundcloud_fallback', default=False, show_default=True, help='prompt for YouTube URL or local file when soundcloud fails to find a track.')
+def soundcloud_cmd(url_file, output, fmt, bitrate, overwrite_errors,
+                    skip_existing, validate_only, batch_size, retries,
+                    retry_delay, pre_skip_existing, cookies_from_browser,
+                    cookie_file, soundcloud_fallback, manual, debug):
+    """download audio from soundcloud urls via ytdl."""
+    if not url_file:
+        export_dir = get_export_dir()
+        url_file = f"{export_dir}/soundcloud_manifest_urls.txt"
+        click.echo(f"using default url file: {url_file}")
+
+    try:
+        success = download_soundcloud(
+            url_file=url_file,
+            output_dir=output,
+            format=fmt,
+            bitrate=bitrate,
+            overwrite_errors=overwrite_errors,
+            skip_existing=skip_existing,
+            validate_only=validate_only,
+            batch_size=batch_size,
+            pre_skip_existing=pre_skip_existing,
+            retries=retries,
+            retry_delay=retry_delay,
+            cookies_from_browser=cookies_from_browser,
+            cookie_file=cookie_file,
+            debug=debug,
+            soundcloud_fallback=soundcloud_fallback,
+            manual=manual,
         )
         if not success:
             sys.exit(1)
@@ -293,7 +419,6 @@ def soundbyte_cmd(limit, output, delay):
         f"\nfeed the track csv to `download spotify --pre-skip-existing "
         f"-u {result['track_csv_path']}` to download."
     )
-
 
 if __name__ == '__main__':
     download()

@@ -37,8 +37,8 @@ import os
 import sys
 
 from lib.spotify_auth import authenticate_user
-from download.spotify_api import get_playlist_tracks
-from download.spotify_export import export_all_data, extract_playlist_id_from_url
+from download.spotify.spotify_api import get_playlist_tracks
+from download.spotify.spotify_export import export_all_data, extract_playlist_id_from_url
 
 from lib.paths import (
     archive_path as resolve_archive_path,
@@ -104,10 +104,13 @@ def _group_tracks_by_playlist(rows):
     return groups
 
 
-def _select_playlists(playlists_csv, names, all_playlists):
+def _select_playlists(playlists_csv, names, all_playlists, exclude_names=None, service='spotify'):
     """apply scope (names over all_playlists over the 'mine' default) ->
-    [(meta_row), ...]. mostly unchanged from the pre-lib/ version - takes
-    the two scope values directly instead of an argparse Namespace.
+    [(meta_row), ...], then filter out any playlist whose name or id
+    matches an exclude_names token.
+
+    mostly unchanged from the pre-lib/ version - takes the two scope values
+    directly instead of an argparse Namespace.
 
     the default "mine" scope filters on 'owner_id' (a real Spotify user
     id, same shape as SPOTIFY_USER_ID), not 'owner' (a display name) -
@@ -116,7 +119,10 @@ def _select_playlists(playlists_csv, names, all_playlists):
     'owner_id' existed won't have it; those rows just won't match the
     default scope until re-exported (same as any other never-null'd new
     column - not attempting to backfill it here, since we'd need to
-    re-hit Spotify's API to learn each row's real owner id anyway)."""
+    re-hit Spotify's API to learn each row's real owner id anyway).
+
+    For soundcloud service, the 'mine' filter is disabled since SoundCloud
+    doesn't use Spotify user IDs."""
     rows = _read_csv(playlists_csv)
     if not rows:
         raise ValueError(f"no playlists.csv found at {playlists_csv} - run `export` or --rescrape first")
@@ -134,17 +140,50 @@ def _select_playlists(playlists_csv, names, all_playlists):
                     selected.append(meta); break
                 if not is_id and meta.get('name') == token:
                     selected.append(meta); break
-        return selected
+    elif all_playlists:
+        selected = rows
+    else:
+        # default: only your own playlists (for spotify) or all (for soundcloud)
+        if service == 'soundcloud':
+            # For SoundCloud, we don't have Spotify user IDs, so show all playlists
+            selected = rows
+        else:
+            # default: only your own playlists
+            user_id = os.getenv('SPOTIFY_USER_ID')
+            if not user_id:
+                print("warning: SPOTIFY_USER_ID not set - can't filter to your playlists; building all.")
+                selected = rows
+            else:
+                selected = [r for r in rows if (r.get('owner_id') or '') == user_id]
 
-    if all_playlists:
-        return rows
+    # apply exclude filter after scope resolution
+    if exclude_names:
+        exclude_tokens = []
+        for token in exclude_names:
+            as_id = extract_playlist_id_from_url(token)
+            is_id = len(as_id) >= 16
+            exclude_tokens.append((token, as_id, is_id))
+        matched_tokens = set()
+        filtered = []
+        for meta in selected:
+            excluded = False
+            for token, as_id, is_id in exclude_tokens:
+                if is_id and meta.get('id') == as_id:
+                    excluded = True
+                    matched_tokens.add(token)
+                    break
+                if not is_id and meta.get('name') == token:
+                    excluded = True
+                    matched_tokens.add(token)
+                    break
+            if not excluded:
+                filtered.append(meta)
+        for token, as_id, is_id in exclude_tokens:
+            if token not in matched_tokens:
+                print(f"warning: --exclude '{token}' did not match any playlist (skipped).")
+        selected = filtered
 
-    # default: only your own playlists
-    user_id = os.getenv('SPOTIFY_USER_ID')
-    if not user_id:
-        print("warning: SPOTIFY_USER_ID not set - can't filter to your playlists; building all.")
-        return rows
-    return [r for r in rows if (r.get('owner_id') or '') == user_id]
+    return selected
 
 
 def _read_existing_index(archive_path, exports_dir, reindex, verbose):
@@ -176,6 +215,18 @@ def _download_cover(sp, playlist_id, dest_path):
     return True
 
 
+def _spotify_exports_dir(exports_dir):
+    """spotify's csvs live in <exports>/spotify/ (export_* writes them there, same as
+    soundcloud's <exports>/soundcloud/). falls back to the old flat <exports>/ layout
+    only when that's where a playlists.csv actually is and the new one isn't."""
+    new = os.path.join(exports_dir, 'spotify')
+    if os.path.isfile(os.path.join(new, 'playlists.csv')):
+        return new
+    if os.path.isfile(os.path.join(exports_dir, 'playlists.csv')):
+        return exports_dir
+    return new
+
+
 def _scope_rescrape(sp, names, exports_dir):
     """--rescrape with -p: fetch only the named playlist(s) from spotify and
     patch their rows into playlists.csv + playlist_tracks.csv, instead of the
@@ -183,6 +234,8 @@ def _scope_rescrape(sp, names, exports_dir):
     an id via the existing playlists.csv (one we don't already know can't be
     scraped by name - pass its url or id, or run a full --rescrape first to
     learn it); a url or bare id fetches directly."""
+    exports_dir = _spotify_exports_dir(exports_dir)
+    os.makedirs(exports_dir, exist_ok=True)
     playlists_csv = os.path.join(exports_dir, 'playlists.csv')
     tracks_csv = os.path.join(exports_dir, 'playlist_tracks.csv')
     metas = _read_csv(playlists_csv)          # [] on a first run
@@ -242,10 +295,11 @@ def _scope_rescrape(sp, names, exports_dir):
     _write_csv(tracks_csv, out_tracks, PLAYLIST_TRACKS_FIELDS)
 
 
-def build_playlists(apply=False, all_playlists=False, names=None, rescrape=False,
+def build_playlists(apply=False, all_playlists=False, names=None, exclude_names=None, rescrape=False,
                      covers=False, reindex=False, verbose=False,
-                     playlists_path=None, archive_path=None, exports_dir=None):
-    """build/refresh local .m3u8s from current spotify playlist membership.
+                     playlists_path=None, archive_path=None, exports_dir=None,
+                     service='spotify'):
+    """build/refresh local .m3u8s from current playlist membership (spotify or soundcloud).
 
     plain, import-safe entry point - cli.py resolves click options into
     these kwargs and turns exceptions into exit codes; nothing in here
@@ -253,6 +307,10 @@ def build_playlists(apply=False, all_playlists=False, names=None, rescrape=False
     a parameter here on purpose: it was always a no-op in the original too
     (argparse only used it for the --all/--mine mutual-exclusion error,
     never inspected past that) - that check now lives in cli.py.
+
+    `exclude_names` filters out playlists after scope resolution but
+    before matching: an excluded playlist never generates unmatched rows
+    or triggers a cover download. Same id/name resolution as `names`.
     """
     names = names or []
     playlists_path_resolved = resolve_playlists_path(playlists_path)
@@ -269,9 +327,16 @@ def build_playlists(apply=False, all_playlists=False, names=None, rescrape=False
             print("rescraping spotify (--rescrape) into " + exports_dir_resolved)
             export_all_data(sp, exports_dir_resolved, my_playlists_only=True)
 
-    playlists_csv = os.path.join(exports_dir_resolved, 'playlists.csv')
-    tracks_csv = os.path.join(exports_dir_resolved, 'playlist_tracks.csv')
-    selected = _select_playlists(playlists_csv, names, all_playlists)
+    # Determine file paths based on service
+    if service == 'soundcloud':
+        playlists_csv = os.path.join(exports_dir_resolved, 'soundcloud', 'playlists.csv')
+        tracks_csv = os.path.join(exports_dir_resolved, 'soundcloud', 'playlist_tracks.csv')
+        service_exports_dir = os.path.join(exports_dir_resolved, 'soundcloud')
+    else:  # spotify (default)
+        service_exports_dir = _spotify_exports_dir(exports_dir_resolved)
+        playlists_csv = os.path.join(service_exports_dir, 'playlists.csv')
+        tracks_csv = os.path.join(service_exports_dir, 'playlist_tracks.csv')
+    selected = _select_playlists(playlists_csv, names, all_playlists, exclude_names=exclude_names, service=service)
     grouped = _group_tracks_by_playlist(_read_csv(tracks_csv))
 
     print(f"\nbuilding {len(selected)} playlist(s) from {tracks_csv}")
@@ -330,12 +395,14 @@ def build_playlists(apply=False, all_playlists=False, names=None, rescrape=False
                 if got:
                     print(f"  wrote {cover}")
 
-    _write_unmatched(exports_dir_resolved, unmatched_rows)
+    # Ensure service-specific exports directory exists
+    os.makedirs(service_exports_dir, exist_ok=True)
+    _write_unmatched(service_exports_dir, unmatched_rows)
 
     print(f"\ndone. {total_written}/{len(selected)} playlists written "
           f"({total_matched} matched / {total_unmatched} unmatched of {total_tracks} tracks)")
-    print(f"unmatched -> {os.path.join(exports_dir_resolved, 'unmatched.csv')}, "
-          f"{os.path.join(exports_dir_resolved, 'unmatched_urls.txt')}")
+    print(f"unmatched -> {os.path.join(service_exports_dir, 'unmatched.csv')}, "
+          f"{os.path.join(service_exports_dir, 'unmatched_urls.txt')}")
     return True
 
 

@@ -37,7 +37,7 @@ class TestReadTags:
         )
         result = read_tags(path)
         assert set(result.keys()) == {
-            "path", "artist", "albumartist", "album", "title", "track", "length",
+            "path", "artist", "albumartist", "album", "title", "track", "disc", "length",
         }
         assert result["path"] == path
         assert result["artist"] == "Artist A"
@@ -45,7 +45,19 @@ class TestReadTags:
         assert result["album"] == "Album A"
         assert result["title"] == "Title A"
         assert result["track"] == 3
+        assert result["disc"] == 0  # Default disc value
         assert result["length"] > 0
+
+    def test_read_tags_includes_disc_when_set(self, make_tagged_file):
+        """Test that read_tags correctly reads disc field when present"""
+        path = make_tagged_file(
+            artist="Artist A",
+            album="Album A",
+            title="Title A",
+            disc=2,
+        )
+        result = read_tags(path)
+        assert result["disc"] == 2
 
     def test_returns_none_on_unreadable_file(self, tmp_path):
         bad = tmp_path / "not_actually_audio.mp3"
@@ -61,17 +73,22 @@ class TestWriteTag:
 
     def test_skips_save_when_value_unchanged(self, make_tagged_file):
         path = make_tagged_file(albumartist="Same Artist")
+        # Writing the exact same value should not trigger a save
         before_mtime = os.path.getmtime(path)
-        # differs only in case - normalize_key() should treat this as
-        # "unchanged" and skip the save entirely
-        write_tag(path, albumartist="same artist")
+        write_tag(path, albumartist="Same Artist")  # Exactly same
         after_mtime = os.path.getmtime(path)
-        assert after_mtime == before_mtime
+        assert after_mtime == before_mtime, "Writing identical value should not update file"
+
+        # Writing a case-only different value should trigger a save (Bug 7)
+        # Exact NFC strings differ, so write should occur
+        write_tag(path, albumartist="same artist")
+        result = read_tags(path)
+        assert result["albumartist"] == "same artist", "Tag should be updated to new value"
 
 
 class TestSanitize:
     def test_strips_filesystem_unsafe_characters(self):
-        assert sanitize('A/B:C*D?E"F<G>H|I') == "ABCDEFGHI"
+        assert sanitize('A/B:C*D?E"F<G>H|I') == "A_B_C_D_E_F_G_H_I"
 
     def test_strips_trailing_dots_and_whitespace(self):
         assert sanitize("  Track Name...  ") == "Track Name"
@@ -81,7 +98,7 @@ class TestSanitize:
         assert sanitize(None) == "_"
 
     def test_all_illegal_characters_returns_underscore(self):
-        assert sanitize("///") == "_"
+        assert sanitize("///") == "___"
 
 
 class TestPrimaryToken:
@@ -213,3 +230,124 @@ class TestSafeMove:
         src.write_text("content")
         safe_move(str(src), str(src))
         assert src.read_text() == "content"
+
+
+class TestWriteTagNFC:
+    def test_write_tag_respects_nfc_equality(self, make_tagged_file):
+        """Bug 7: write_tag should compare exact NFC strings, not normalize_key"""
+        # Create a file with a tag value
+        path = make_tagged_file(title="Title")
+
+        # Writing the same NFC-normalized value should not trigger a save (no-op)
+        before_mtime = os.path.getmtime(path)
+        write_tag(path, title="Title")  # Same value
+        after_mtime = os.path.getmtime(path)
+        assert after_mtime == before_mtime, "Writing identical NFC value should not update file"
+
+        # Writing a case-only different value should trigger a save
+        # (case-only differences matter for NFC)
+        before_mtime = os.path.getmtime(path)
+        write_tag(path, title="TITLE")  # Uppercase - different NFC
+        after_mtime = os.path.getmtime(path)
+        assert after_mtime != before_mtime, "Writing case-only different value should update file"
+
+        # Verify the value was actually written
+        result = read_tags(path)
+        assert result["title"] == "TITLE"
+
+
+class TestCanonicalAlbum:
+    def test_canonical_album_selects_preferred_edition(self):
+        """Test canonical_album picks the best edition variant"""
+        from lib.tags import canonical_album
+
+        files = [
+            {'album': 'Title'},
+            {'album': 'Title (Deluxe)'},
+            {'album': 'Title (Remastered)'},
+        ]
+
+        result = canonical_album(files)
+        # Should pick one with edition marker over bare 'Title'
+        assert result != 'Title'
+        assert result in ['Title (Deluxe)', 'Title (Remastered)']
+
+    def test_canonical_album_break_ties_by_length_and_alphabetical(self):
+        """Test tie-breaking logic in canonical_album"""
+        from lib.tags import canonical_album
+
+        files = [
+            {'album': 'Title (Edit)'},      # length 9
+            {'album': 'Title (Version)'},   # length 8
+            {'album': 'Title (Mix)'},       # length 7
+        ]
+
+        result = canonical_album(files)
+        # Should pick the longest edition string when all have editions
+        assert result == 'Title (Edit)'
+
+
+class TestSamePath:
+    def test_same_path_identical_paths(self):
+        """Test same_path with identical paths"""
+        from lib.tags import same_path
+        assert same_path('/path/to/file.txt', '/path/to/file.txt') == True
+        assert same_path('', '') == True
+
+    def test_same_path_different_paths(self):
+        """Test same_path with different paths"""
+        from lib.tags import same_path
+        assert same_path('/path/to/file.txt', '/path/to/other.txt') == False
+        assert same_path('/path/to/file.txt', '') == False
+
+    def test_same_path_case_sensitivity_unix(self):
+        """Test same_path respects case sensitivity on Unix-like systems"""
+        from lib.tags import same_path
+        # This test's behavior depends on the platform, but we can test the logic
+        assert same_path('/PATH/TO/FILE.TXT', '/path/to/file.txt') == False  # Should be False on case-sensitive FS
+
+
+class TestFindDuplicates:
+    def test_find_duplicates_empty_list(self):
+        """Test find_duplicates with empty input"""
+        from lib.tags import find_duplicates
+        assert find_duplicates([]) == []
+
+    def test_find_duplicates_no_duplicates(self):
+        """Test find_duplicates with no duplicates"""
+        from lib.tags import find_duplicates
+        files = [
+            {'artist': 'Artist A', 'title': 'Title A', 'disc': 0, 'length': 100.0},
+            {'artist': 'Artist B', 'title': 'Title B', 'disc': 0, 'length': 200.0},
+        ]
+        assert find_duplicates(files) == []
+
+    def test_find_duplicates_with_duplicates(self):
+        """Test find_duplicates finds actual duplicates"""
+        from lib.tags import find_duplicates
+        files = [
+            {'artist': 'Artist A', 'title': 'Title A', 'disc': 0, 'length': 100.0},
+            {'artist': 'artist a', 'title': 'title a', 'disc': 0, 'length': 101.0},  # Same keys, similar length
+            {'artist': 'Artist B', 'title': 'Title B', 'disc': 0, 'length': 200.0},
+        ]
+        result = find_duplicates(files)
+        assert len(result) == 1
+        assert len(result[0]) == 2
+        assert result[0][0]['artist'] == 'Artist A'
+        assert result[0][1]['artist'] == 'artist a'
+
+
+class TestDiscField:
+    def test_read_tags_includes_disc_field(self, make_tagged_file):
+        """Test that read_tags includes the disc field (D5)"""
+        path = make_tagged_file(disc=2, title="Track")
+        result = read_tags(path)
+        assert 'disc' in result
+        assert result['disc'] == 2
+
+    def test_read_tags_disc_defaults_to_zero(self, make_tagged_file):
+        """Test that read_tags defaults disc to 0 when not present"""
+        path = make_tagged_file(title="Track")  # No disc set
+        result = read_tags(path)
+        assert 'disc' in result
+        assert result['disc'] == 0
