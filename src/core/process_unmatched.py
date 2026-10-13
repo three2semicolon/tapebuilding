@@ -4,6 +4,7 @@ Workflow:
 1. Refresh playlists with rescrape/reindex to generate unmatched CSV
 2. Download tracks listed in the unmatched CSV
 3. Import the downloaded tracks into the library
+4. Refresh playlists (reindex only) to sync with updated library
 """
 
 import os
@@ -145,6 +146,36 @@ def run_process_unmatched(
             print(f"  error: {e}")
     else:
         record('import', True, skipped=True)  # Skip if download failed/skipped
+    print()
+
+    # Step 4: Refresh playlists (reindex only) to sync with updated library
+    import_success = any(r['step'] == 'import' and r['ok'] and not r['skipped'] for r in results)
+    if import_success:
+        print("=== step 4: refresh playlists (reindex only) ===")
+        try:
+            # Note: We don't rescrape here as we just want to sync local playlists with current library
+            build_playlists(
+                apply=apply,
+                rescrape=False,  # Don't rescrape Spotify - use existing export data
+                reindex=True,    # Rebuild local playlists to match current library
+                names=[],        # No specific names - use scope (owned playlists)
+                exclude_names=exclude_names or [],
+                service=service,
+                archive_path=crate,
+                playlists_path=playlists_path_resolved,
+                exports_dir=exports_dir_opt,
+                verbose=verbose
+            )
+            # Check if this step succeeded by verifying no error was recorded
+            # build_playlists doesn't return success/failure, so we assume it worked
+            # unless an exception was thrown
+            record('refresh-playlists-sync', True)
+            print("  synced playlists with library")
+        except Exception as e:
+            record('refresh-playlists-sync', False, error=str(e))
+            print(f"  error: {e}")
+    else:
+        record('refresh-playlists-sync', True, skipped=True)  # Skip if import failed/skipped
     print()
 
     # Overall result

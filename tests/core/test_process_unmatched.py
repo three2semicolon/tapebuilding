@@ -63,12 +63,21 @@ def test_dry_run_calls_each_step_in_its_own_no_op_mode_not_skipped(tmp_path, moc
         )
 
     # Step 1: build_playlists should be called with apply=False, rescrape=True, reindex=True
-    mocks.build_playlists.assert_called_once()
-    build_playlists_call = mocks.build_playlists.call_args.kwargs
-    assert build_playlists_call['apply'] is False
-    assert build_playlists_call['rescrape'] is True
-    assert build_playlists_call['reindex'] is True
-    assert build_playlists_call['names'] == []  # No specific names - use scope (owned playlists))
+    # Step 4: build_playlists should be called with apply=False, rescrape=False, reindex=True
+    assert mocks.build_playlists.call_count == 2
+    build_playlists_calls = mocks.build_playlists.call_args_list
+    # First call: step 1 (refresh playlists to generate unmatched CSV)
+    build_playlists_call_1 = build_playlists_calls[0].kwargs
+    assert build_playlists_call_1['apply'] is False
+    assert build_playlists_call_1['rescrape'] is True
+    assert build_playlists_call_1['reindex'] is True
+    assert build_playlists_call_1['names'] == []  # No specific names - use scope (owned playlists))
+    # Second call: step 4 (sync playlists with library)
+    build_playlists_call_2 = build_playlists_calls[1].kwargs
+    assert build_playlists_call_2['apply'] is False
+    assert build_playlists_call_2['rescrape'] is False  # No rescrape - just reindex
+    assert build_playlists_call_2['reindex'] is True
+    assert build_playlists_call_2['names'] == []  # No specific names - use scope (owned playlists))
 
     # Step 2: download_spotify should be called with validate_only=True (dry run mode)
     mocks.download_spotify.assert_called_once()
@@ -82,7 +91,7 @@ def test_dry_run_calls_each_step_in_its_own_no_op_mode_not_skipped(tmp_path, moc
     assert import_call['dry_run'] is True
     assert import_call['verbose'] is False
 
-    # none of the three steps were skipped just because this was a dry run
+    # none of the four steps were skipped just because this was a dry run
     assert all(not s['skipped'] for s in result['steps'])
     assert result['ok'] is True
 
@@ -113,12 +122,20 @@ def test_apply_mode_calls_each_step_in_real_mode(tmp_path, mocks):
             apply=True,
         )
 
-    # Step 1: build_playlists should be called with apply=True
-    mocks.build_playlists.assert_called_once()
-    build_playlists_call = mocks.build_playlists.call_args.kwargs
-    assert build_playlists_call['apply'] is True
-    assert build_playlists_call['rescrape'] is True
-    assert build_playlists_call['reindex'] is True
+    # Step 1: build_playlists should be called with apply=True, rescrape=True, reindex=True
+    # Step 4: build_playlists should be called with apply=True, rescrape=False, reindex=True
+    assert mocks.build_playlists.call_count == 2
+    build_playlists_calls = mocks.build_playlists.call_args_list
+    # First call: step 1 (refresh playlists to generate unmatched CSV)
+    build_playlists_call_1 = build_playlists_calls[0].kwargs
+    assert build_playlists_call_1['apply'] is True
+    assert build_playlists_call_1['rescrape'] is True
+    assert build_playlists_call_1['reindex'] is True
+    # Second call: step 4 (sync playlists with library)
+    build_playlists_call_2 = build_playlists_calls[1].kwargs
+    assert build_playlists_call_2['apply'] is True
+    assert build_playlists_call_2['rescrape'] is False  # No rescrape - just reindex
+    assert build_playlists_call_2['reindex'] is True
 
     # Step 2: download_spotify should be called with validate_only=False (real mode)
     mocks.download_spotify.assert_called_once()
@@ -162,7 +179,7 @@ def test_download_step_skipped_when_build_playlists_fails(tmp_path, mocks):
             apply=True,
         )
 
-    # build_playlists should have been called
+    # build_playlists should have been called once (initial attempt that failed)
     mocks.build_playlists.assert_called_once()
     # download_spotify should NOT have been called (step skipped)
     mocks.download_spotify.assert_not_called()
@@ -170,10 +187,11 @@ def test_download_step_skipped_when_build_playlists_fails(tmp_path, mocks):
     mocks.run_import.assert_not_called()
 
     # First step should show as failed, others as skipped
-    assert len(result['steps']) == 3
+    assert len(result['steps']) == 4
     assert result['steps'][0] == {'step': 'refresh-playlists', 'ok': False, 'error': 'Simulated failure', 'skipped': False}
     assert result['steps'][1] == {'step': 'download', 'ok': True, 'error': None, 'skipped': True}
     assert result['steps'][2] == {'step': 'import', 'ok': True, 'error': None, 'skipped': True}
+    assert result['steps'][3] == {'step': 'refresh-playlists-sync', 'ok': True, 'error': None, 'skipped': True}
     assert result['ok'] is False  # Overall not ok because first step failed
 
 
@@ -209,7 +227,7 @@ def test_import_step_skipped_when_download_fails(tmp_path, mocks):
     mocks.run_import.assert_not_called()  # Should be skipped
 
     # Check step results
-    assert len(result['steps']) == 3
+    assert len(result['steps']) == 4
     assert result['steps'][0]['step'] == 'refresh-playlists'
     assert result['steps'][0]['ok'] is True
     assert result['steps'][0]['skipped'] is False
@@ -221,6 +239,10 @@ def test_import_step_skipped_when_download_fails(tmp_path, mocks):
     assert result['steps'][2]['step'] == 'import'
     assert result['steps'][2]['ok'] is True  # Skipped steps show as ok=True
     assert result['steps'][2]['skipped'] is True
+
+    assert result['steps'][3]['step'] == 'refresh-playlists-sync'
+    assert result['steps'][3]['ok'] is True  # Skipped steps show as ok=True
+    assert result['steps'][3]['skipped'] is True
 
     assert result['ok'] is False  # Overall not ok because download step failed
 
@@ -475,9 +497,11 @@ def test_verbose_forwards_to_all_steps(tmp_path, mocks):
             apply=False,
         )
 
-    # build_playlists should get verbose=True
-    mocks.build_playlists.assert_called_once()
-    assert mocks.build_playlists.call_args.kwargs['verbose'] is True
+    # build_playlists should get verbose=True in both calls
+    assert mocks.build_playlists.call_count == 2
+    build_playlists_calls = mocks.build_playlists.call_args_list
+    assert build_playlists_calls[0].kwargs['verbose'] is True  # Step 1
+    assert build_playlists_calls[1].kwargs['verbose'] is True  # Step 4
 
     # download_spotify should get debug=True (verbose maps to debug for download)
     mocks.download_spotify.assert_called_once()
@@ -519,6 +543,7 @@ def test_return_shape_on_success(tmp_path, mocks):
             {'step': 'refresh-playlists', 'ok': True, 'error': None, 'skipped': False},
             {'step': 'download', 'ok': True, 'error': None, 'skipped': False},
             {'step': 'import', 'ok': True, 'error': None, 'skipped': False},
+            {'step': 'refresh-playlists-sync', 'ok': True, 'error': None, 'skipped': False},
         ],
         'ok': True,
     }
@@ -551,6 +576,7 @@ def test_return_shape_on_injected_exception_failure(tmp_path, mocks):
             {'step': 'refresh-playlists', 'ok': False, 'error': 'boom', 'skipped': False},
             {'step': 'download', 'ok': True, 'error': None, 'skipped': True},
             {'step': 'import', 'ok': True, 'error': None, 'skipped': True},
+            {'step': 'refresh-playlists-sync', 'ok': True, 'error': None, 'skipped': True},
         ],
         'ok': False,
     }
@@ -587,6 +613,7 @@ def test_return_shape_on_falsy_step_result_without_exception(tmp_path, mocks):
             {'step': 'refresh-playlists', 'ok': True, 'error': None, 'skipped': False},
             {'step': 'download', 'ok': False, 'error': None, 'skipped': False},
             {'step': 'import', 'ok': True, 'error': None, 'skipped': True},
+            {'step': 'refresh-playlists-sync', 'ok': True, 'error': None, 'skipped': True},
         ],
         'ok': False,
     }
@@ -616,22 +643,37 @@ def test_default_parameter_values(tmp_path, mocks):
 
         run_process_unmatched()  # Call with all defaults
 
-    # Check that build_playlists was called with expected defaults
-    mocks.build_playlists.assert_called_once()
-    call_kwargs = mocks.build_playlists.call_args.kwargs
-
-    assert call_kwargs['apply'] is False
-    assert call_kwargs['rescrape'] is True
-    assert call_kwargs['reindex'] is True
-    assert call_kwargs['names'] == []
-    assert call_kwargs['exclude_names'] == []
-    assert call_kwargs['service'] == 'spotify'
+    # Check that build_playlists was called twice (step 1 and step 4)
+    assert mocks.build_playlists.call_count == 2
+    build_playlists_calls = mocks.build_playlists.call_args_list
+    # First call: step 1 (refresh playlists to generate unmatched CSV)
+    call_kwargs_1 = build_playlists_calls[0].kwargs
+    assert call_kwargs_1['apply'] is False
+    assert call_kwargs_1['rescrape'] is True
+    assert call_kwargs_1['reindex'] is True
+    assert call_kwargs_1['names'] == []
+    assert call_kwargs_1['exclude_names'] == []
+    assert call_kwargs_1['service'] == 'spotify'
     # When archive_path_opt is None, it uses archive_path() default (mocked to tmp_path)
-    assert call_kwargs['archive_path'] == str(tmp_path)
+    assert call_kwargs_1['archive_path'] == str(tmp_path)
     # When playlists_path_opt is None, it uses playlists_path() default (mocked to tmp_path/playlists)
-    assert call_kwargs['playlists_path'] == str(tmp_path / "playlists")
+    assert call_kwargs_1['playlists_path'] == str(tmp_path / "playlists")
     # When exports_dir_opt is None, it passes None directly (no fallback in the call)
-    assert call_kwargs['exports_dir'] is None
+    assert call_kwargs_1['exports_dir'] is None
+    # Second call: step 4 (sync playlists with library)
+    call_kwargs_2 = build_playlists_calls[1].kwargs
+    assert call_kwargs_2['apply'] is False
+    assert call_kwargs_2['rescrape'] is False  # No rescrape - just reindex
+    assert call_kwargs_2['reindex'] is True
+    assert call_kwargs_2['names'] == []
+    assert call_kwargs_2['exclude_names'] == []
+    assert call_kwargs_2['service'] == 'spotify'
+    # When archive_path_opt is None, it uses archive_path() default (mocked to tmp_path)
+    assert call_kwargs_2['archive_path'] == str(tmp_path)
+    # When playlists_path_opt is None, it uses playlists_path() default (mocked to tmp_path/playlists)
+    assert call_kwargs_2['playlists_path'] == str(tmp_path / "playlists")
+    # When exports_dir_opt is None, it passes None directly (no fallback in the call)
+    assert call_kwargs_2['exports_dir'] is None
 
     # Check that download_spotify was called with expected defaults
     mocks.download_spotify.assert_called_once()
