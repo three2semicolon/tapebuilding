@@ -65,7 +65,7 @@ def download_songs_cmd(source, apply, archive_path_opt, drop_opt, only_opt,
 @click.option('--exports-dir', 'exports_dir_opt', help='exports dir override.')
 @click.option('--service', type=click.Choice(['spotify', 'soundcloud']), default='spotify', show_default=True,
               help='service to process (spotify or soundcloud)')
-@click.option('--exclude', multiple=True, metavar='NAME|ID',
+@click.option('--exclude', 'exclude_names', multiple=True, metavar='NAME|ID',
               help='skip a specific playlist (repeatable; applied after scope resolution).')
 @click.option('--apply', is_flag=True, help='do it for real (default is a preview).')
 @click.option('--format', 'format_opt', default='mp3', show_default=True,

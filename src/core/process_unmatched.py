@@ -43,6 +43,37 @@ def run_process_unmatched(
         else:
             exclude_names = env_exclude_list
 
+    # Handle DOWNLOAD_PRE_SKIP_EXISTING environment variable as default for --pre-skip-existing
+    env_pre_skip = os.environ.get('DOWNLOAD_PRE_SKIP_EXISTING', '')
+    if env_pre_skip:
+        # Convert to boolean - common true values
+        if env_pre_skip.lower() in ('true', '1', 'yes', 'on'):
+            env_pre_skip_bool = True
+        elif env_pre_skip.lower() in ('false', '0', 'no', 'off'):
+            env_pre_skip_bool = False
+        else:
+            # Default to False if unrecognized value
+            env_pre_skip_bool = False
+        if pre_skip_existing is False:  # Only apply env var if still at default (not explicitly set via command line)
+            pre_skip_existing = env_pre_skip_bool
+
+    # Handle DOWNLOAD_COOKIES_FILE environment variable as default for --cookies-file
+    env_cookies_file = os.environ.get('DOWNLOAD_COOKIES_FILE', '')
+    if env_cookies_file:
+        if cookies_file is None:  # Only apply env var if not explicitly set via command line
+            cookies_file = env_cookies_file
+
+    # Handle DOWNLOAD_RETRIES environment variable as default for --retries
+    env_retries = os.environ.get('DOWNLOAD_RETRIES', '')
+    if env_retries:
+        try:
+            env_retries_int = int(env_retries)
+            if retries == 0:  # Only apply env var if still at default (not explicitly set via command line)
+                retries = env_retries_int
+        except ValueError:
+            # If not a valid integer, ignore the environment variable
+            pass
+
     # Resolve paths (same as in playlists.build)
     playlists_path_resolved = playlists_path_opt or playlists_path()
     exports_dir_resolved = resolve_exports_dir(playlists_path_resolved, exports_dir_opt)
