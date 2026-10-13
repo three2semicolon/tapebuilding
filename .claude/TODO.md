@@ -7,7 +7,7 @@
 ## Enhancements
 
 - [X] spotdl fallback, option to turn on so that each song/album that cant be found (spotdl) asks user to input either the youtube music or path to existing file so it can be matched in the future (implemented via download.fallback module)
-- [ ] `core/` (§6 of `TEST_PLANS.md`) is the only package without a real
+- [X] `core/` (§6 of `TEST_PLANS.md`) is the only package without a real
   test suite yet — the other five are done.
 - [ ] `tapedeck/copy.py`'s `unstage()` prunes empty directories with a
   single bottom-up `os.walk`, so a parent directory that only becomes
@@ -16,6 +16,13 @@
   current behavior in a test, not fixed — decide whether it's worth a
   follow-up (two pruning passes, or a fixed-point loop) or is fine as
   documented behavior.
+- [X] `--exclude` flag verification: ensure it applies after scope resolution (after default-scope/all/mine) and conflicts with `-p` flag produce clear error - VERIFIED WORKING
+- [X] Nice-to-have: `PLAYLISTS_EXCLUDE` env var (comma-separated) as standing default for `--exclude` flag - IMPLEMENTED
+- [X] SoundCloud export/download: implement `download/soundcloud_export.py` with `list_user_sets`, `export_set`, `export_all_data` analog, and new `download soundcloud` CLI command - ALREADY IMPLEMENTED
+- [X] SoundCloud filename predictor: implement SoundCloud-side equivalent of `download.manifest.predict_output_filename()` for use in existence check - HANDLED BY EXISTING CODE
+- [X] SoundCloud-aware download loop: implement batching/retry/`--pre-skip-existing` loop for SoundCloud manifest (similar to spotify_download) - ALREADY IMPLEMENTED
+- [ ] Cross-service "check + autodownload" workflow: implement `core` function (e.g. `run_playlist_sync()`) that chains `build_playlists()` → appropriate download function → `build_playlists()` again
+- [ ] Shared orchestration refactor for playlists/build.py: extract source-agnostic "select rows → match against catalog → write .m3u8/unmatched" middle section to support both Spotify and SoundCloud manifests (recommend doing this after BUGFIX_PLAN.md Bug 1/2 fixes are verified)
 
 ## `app/`
 

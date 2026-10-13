@@ -7,7 +7,7 @@ Workflow:
 """
 
 import os
-from lib.paths import archive_path, playlists_path, resolve_exports_dir
+from lib.paths import archive_path, playlists_path, exports_dir as resolve_exports_dir
 from playlists.build import _spotify_exports_dir, build_playlists
 from download.spotify.spotify_download import download_spotify
 from organize.beets_import import run_import
@@ -32,6 +32,16 @@ def run_process_unmatched(
     Returns:
         dict: {'steps': [{'step', 'ok', 'error', 'skipped'], ...], 'ok': bool}
     """
+    # Handle PLAYLISTS_EXCLUDE environment variable as standing default for --exclude
+    import os
+    env_exclude = os.environ.get('PLAYLISTS_EXCLUDE', '')
+    if env_exclude:
+        env_exclude_list = [item.strip() for item in env_exclude.split(',') if item.strip()]
+        if exclude_names:
+            exclude_names = list(exclude_names) + env_exclude_list
+        else:
+            exclude_names = env_exclude_list
+
     # Resolve paths (same as in playlists.build)
     playlists_path_resolved = playlists_path_opt or playlists_path()
     exports_dir_resolved = resolve_exports_dir(playlists_path_resolved, exports_dir_opt)
@@ -118,8 +128,8 @@ def run_process_unmatched(
     print()
 
     # Step 3: Import downloaded files
-    download_ok = any(r['step'] == 'download' and r['ok'] for r in results)
-    if download_ok:
+    download_success = any(r['step'] == 'download' and r['ok'] and not r['skipped'] for r in results)
+    if download_success:
         print("=== step 3: import downloaded files ===")
         try:
             import_result = run_import(
