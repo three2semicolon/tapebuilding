@@ -55,6 +55,38 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
                    validate_only=False, batch_size=1, pre_skip_existing=False,
                    retries=3, retry_delay=3, cookies_from_browser=None, cookie_file=None,
                    debug=False, spotdl_fallback=False, manual=False):
+    # Handle DOWNLOAD_PRE_SKIP_EXISTING environment variable as default for --pre-skip-existing
+    import os
+    env_pre_skip = os.environ.get('DOWNLOAD_PRE_SKIP_EXISTING', '')
+    if env_pre_skip:
+        # Convert to boolean - common true values
+        if env_pre_skip.lower() in ('true', '1', 'yes', 'on'):
+            env_pre_skip_bool = True
+        elif env_pre_skip.lower() in ('false', '0', 'no', 'off'):
+            env_pre_skip_bool = False
+        else:
+            # Default to False if unrecognized value
+            env_pre_skip_bool = False
+        if pre_skip_existing is False:  # Only apply env var if still at default (not explicitly set via command line)
+            pre_skip_existing = env_pre_skip_bool
+
+    # Handle DOWNLOAD_COOKIES_FILE environment variable as default for --cookies-file
+    env_cookies_file = os.environ.get('DOWNLOAD_COOKIES_FILE', '')
+    if env_cookies_file:
+        if cookie_file is None:  # Only apply env var if not explicitly set via command line
+            cookie_file = env_cookies_file
+
+    # Handle DOWNLOAD_RETRIES environment variable as default for --retries
+    env_retries = os.environ.get('DOWNLOAD_RETRIES', '')
+    if env_retries:
+        try:
+            env_retries_int = int(env_retries)
+            if retries == 3:  # Only apply env var if still at default (not explicitly set via command line)
+                retries = env_retries_int
+        except ValueError:
+            # If not a valid integer, ignore the environment variable
+            pass
+
     print(f"processing spotify source: {url_file}")
 
     if not os.path.exists(url_file):

@@ -115,7 +115,7 @@ def export_playlists(sp, playlist_identifiers, export_dir):
     return manifest_tracks
 
 
-def export_all_data(sp, export_dir, my_playlists_only=False):
+def export_all_data(sp, export_dir, my_playlists_only=False, exclude_names=None):
     print("starting full Spotify export...")
 
     user = sp.current_user()
@@ -133,11 +133,33 @@ def export_all_data(sp, export_dir, my_playlists_only=False):
 
     export_to_csv(playlists, 'playlists.csv', spotify_dir)
 
+    # Process exclusions if provided
+    exclude_tokens = []
+    if exclude_names:
+        for token in exclude_names:
+            as_id = extract_playlist_id_from_url(token)
+            is_id = len(as_id) >= 16
+            exclude_tokens.append((token, as_id, is_id))
+
     all_playlist_tracks = []
     for playlist in playlists:
-        tracks = get_playlist_tracks(sp, playlist.get('id', ''), playlist.get('name', 'Unknown'))
-        all_playlist_tracks.extend(tracks)
-    print(f"found {len(all_playlist_tracks)} tracks in playlists")
+        # Check if this playlist should be excluded
+        excluded = False
+        playlist_id = playlist.get('id', '')
+        playlist_name = playlist.get('name', 'Unknown')
+
+        for token, as_id, is_id in exclude_tokens:
+            if is_id and playlist_id == as_id:
+                excluded = True
+                break
+            if not is_id and playlist_name == token:
+                excluded = True
+                break
+
+        if not excluded:
+            tracks = get_playlist_tracks(sp, playlist.get('id', ''), playlist.get('name', 'Unknown'))
+            all_playlist_tracks.extend(tracks)
+        # else: silently skip excluded playlist
 
     export_to_csv(all_playlist_tracks, 'playlist_tracks.csv', spotify_dir)
 
@@ -154,7 +176,7 @@ def export_all_data(sp, export_dir, my_playlists_only=False):
 
     print("\nexport complete! files saved in:", spotify_dir)
     print("- playlists.csv: playlist metadata")
-    print("- playlist_tracks.csv: all tracks from playlists (with duplicates)")
+    print("- playlist_tracks.csv: all tracks from non-excluded playlists (with duplicates)")
     print("- liked_songs.csv: all liked/saved tracks")
     print("- spotify_manifest.csv: deduplicated master manifest")
     print("- spotify_manifest_urls.txt: spotify urls for spotdl input")

@@ -493,7 +493,7 @@ class TestBuildPlaylistsOrchestration:
         assert [e["track_id"] for e in entries] == ["t1"]
         assert os.path.exists(path)
 
-        unmatched_rows = _read_csv(str(exports / "spotify" / "unmatched.csv"))
+        unmatched_rows = _read_csv(str(exports / "unmatched.csv"))
         assert {r["track_id"] for r in unmatched_rows} == {"t2", "t3"}
 
     def test_preview_mode_writes_no_m3u8_files(self, tmp_path, monkeypatch):
@@ -538,6 +538,8 @@ class TestBuildPlaylistsOrchestration:
                              exports_dir=str(exports))
 
     def test_exclude_names_skips_excluded_playlists(self, tmp_path, monkeypatch):
+        # Ensure PLAYLISTS_EXCLUDE is not set to avoid interference
+        monkeypatch.delenv('PLAYLISTS_EXCLUDE', raising=False)
         exports, playlists_path, crate = self._fixture_dirs(tmp_path, monkeypatch)
         m3u8_calls = []
         match_map = {"t1": self._matched, "t2": self._unmatched, "t3": self._unmatched}
@@ -548,5 +550,5 @@ class TestBuildPlaylistsOrchestration:
                          archive_path=str(crate), exports_dir=str(exports))
 
         # P2's tracks should never appear in unmatched (P2 was excluded entirely)
-        unmatched_rows = _read_csv(str(exports / "spotify" / "unmatched.csv"))
+        unmatched_rows = _read_csv(str(exports / "unmatched.csv"))
         assert {r["track_id"] for r in unmatched_rows} == {"t2"}  # only P1's unmatched track

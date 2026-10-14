@@ -22,6 +22,16 @@ def run_sync(names=None, exclude_names=None, covers=False, verbose=False, playli
     anything, call `playlists.build.build_playlists(apply=False, ...)`
     directly instead (optionally with rescrape=True if you also want a
     fresh export first)."""
+    # Handle PLAYLISTS_EXCLUDE environment variable as standing default for --exclude
+    import os
+    env_exclude = os.environ.get('PLAYLISTS_EXCLUDE', '')
+    if env_exclude:
+        env_exclude_list = [item.strip() for item in env_exclude.split(',') if item.strip()]
+        if exclude_names:
+            exclude_names = list(exclude_names) + env_exclude_list
+        else:
+            exclude_names = env_exclude_list
+
     return build_playlists(
         apply=True,
         rescrape=True,

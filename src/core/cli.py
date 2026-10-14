@@ -18,6 +18,7 @@ import click
 from dotenv import load_dotenv
 
 from core.download_songs import run_download_songs, STEPS
+from core.process_unmatched import run_process_unmatched
 from core.sync import run_sync
 
 load_dotenv()
@@ -53,6 +54,44 @@ def download_songs_cmd(source, apply, archive_path_opt, drop_opt, only_opt,
         source=source, apply=apply, archive_path_opt=archive_path_opt,
         drop=drop_opt, only=list(only_opt) or None, format=format_opt,
         bitrate=bitrate_opt, verbose=verbose,
+    )
+    if not result['ok']:
+        sys.exit(1)
+
+
+@core.command('process-unmatched')
+@click.option('--archive-path', 'archive_path_opt', help='crate root override (default: ARCHIVE_PATH).')
+@click.option('--playlists-path', 'playlists_path_opt', help='PLAYLISTS_PATH override (default: PLAYLISTS_PATH/playlists).')
+@click.option('--exports-dir', 'exports_dir_opt', help='exports dir override.')
+@click.option('--service', type=click.Choice(['spotify', 'soundcloud']), default='spotify', show_default=True,
+              help='service to process (spotify or soundcloud)')
+@click.option('--exclude', 'exclude_names', multiple=True, metavar='NAME|ID',
+              help='skip a specific playlist (repeatable; applied after scope resolution).')
+@click.option('--apply', is_flag=True, help='do it for real (default is a preview).')
+@click.option('--format', 'format_opt', default='mp3', show_default=True,
+              help='audio format for the download step.')
+@click.option('--bitrate', 'bitrate_opt', default='320k', show_default=True, help='audio bitrate.')
+@click.option('--cookies-file', 'cookies_file', help='Netscape format cookie file for Spotify download.')
+@click.option('--pre-skip-existing', is_flag=True, help='skip downloading existing files.')
+@click.option('--retries', 'retries', default=0, show_default=True, type=int, help='number of download retries.')
+@click.option('--verbose', is_flag=True, help='verbose output.')
+def process_unmatched_cmd(archive_path_opt, playlists_path_opt, exports_dir_opt, service,
+                         exclude_names, apply, format_opt, bitrate_opt, cookies_file,
+                         pre_skip_existing, retries, verbose):
+    """process unmatched tracks: refresh playlists → download missing → import."""
+    result = run_process_unmatched(
+        archive_path_opt=archive_path_opt,
+        playlists_path_opt=playlists_path_opt,
+        exports_dir_opt=exports_dir_opt,
+        service=service,
+        exclude_names=list(exclude_names),
+        apply=apply,
+        format=format_opt,
+        bitrate=bitrate_opt,
+        cookies_file=cookies_file,
+        pre_skip_existing=pre_skip_existing,
+        retries=retries,
+        verbose=verbose
     )
     if not result['ok']:
         sys.exit(1)
