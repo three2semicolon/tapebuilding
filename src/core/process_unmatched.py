@@ -25,6 +25,7 @@ def run_process_unmatched(
     cookies_file=None,
     pre_skip_existing=False,
     retries=0,
+    manual=False,
     verbose=False
 ):
     """
@@ -142,7 +143,8 @@ def run_process_unmatched(
                     pre_skip_existing=pre_skip_existing,
                     retries=retries,
                     validate_only=not apply,  # Dry run mode
-                    debug=verbose
+                    debug=verbose,
+                    manual=manual
                 )
                 record('download', ok)
             except Exception as e:

@@ -74,10 +74,11 @@ def download_cmd(source, apply, archive_path_opt, drop_opt, only_opt,
 @click.option('--cookies-file', 'cookies_file', help='Netscape format cookie file for Spotify download.')
 @click.option('--pre-skip-existing', is_flag=True, help='skip downloading existing files.')
 @click.option('--retries', 'retries', default=0, show_default=True, type=int, help='number of download retries.')
+@click.option('--manual', is_flag=True, help='enable manual fallback for failed downloads.')
 @click.option('--verbose', is_flag=True, help='verbose output.')
 def process_unmatched_cmd(archive_path_opt, playlists_path_opt, exports_dir_opt, service,
                          exclude_names, apply, format_opt, bitrate_opt, cookies_file,
-                         pre_skip_existing, retries, verbose):
+                         pre_skip_existing, retries, manual, verbose):
     """process unmatched tracks: refresh playlists → download missing → import."""
     result = run_process_unmatched(
         archive_path_opt=archive_path_opt,
@@ -91,6 +92,7 @@ def process_unmatched_cmd(archive_path_opt, playlists_path_opt, exports_dir_opt,
         cookies_file=cookies_file,
         pre_skip_existing=pre_skip_existing,
         retries=retries,
+        manual=manual,
         verbose=verbose
     )
     if not result['ok']:
