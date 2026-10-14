@@ -14,6 +14,7 @@ from download.existing import resolve_output_dir
 from download.ytdl import OUTTMPL_PLAYLIST, OUTTMPL_SINGLE, is_playlist_url
 from lib.paths import ffmpeg_path as resolve_ffmpeg_path
 from lib.text import normalize_key
+from organize.normalize_artists import normalize_artist
 
 
 def _log_urls(filename: str, urls: List[str], reason: Optional[str] = None) -> None:
@@ -74,6 +75,10 @@ def process_fallback(
             print(f"  Skipping fallback for URL with missing metadata: {url}")
             fallback_failed.append(url)
             continue
+
+        # Normalize artist and track metadata for consistent formatting
+        artist = normalize_artist(artist)
+        track = normalize_artist(track)
 
         # Predict output filename
         if is_spotify:
