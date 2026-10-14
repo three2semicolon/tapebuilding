@@ -36,7 +36,7 @@ def core():
     """opinionated multi-step workflows stitching the domain packages together."""
 
 
-@core.command('download-songs')
+@core.command('download')
 @click.argument('source', required=False)
 @click.option('--apply', is_flag=True, help='do it for real (default: dry run).')
 @click.option('--archive-path', 'archive_path_opt', help='crate root override (default: ARCHIVE_PATH).')
@@ -47,8 +47,8 @@ def core():
               help='audio format for the download step.')
 @click.option('--bitrate', 'bitrate_opt', default='320k', show_default=True, help='audio bitrate.')
 @click.option('--verbose', is_flag=True, help='forward verbose/debug logging to each step.')
-def download_songs_cmd(source, apply, archive_path_opt, drop_opt, only_opt,
-                       format_opt, bitrate_opt, verbose):
+def download_cmd(source, apply, archive_path_opt, drop_opt, only_opt,
+                 format_opt, bitrate_opt, verbose):
     """download -> beets-import -> playlists-refresh, in one pass."""
     result = run_download_songs(
         source=source, apply=apply, archive_path_opt=archive_path_opt,

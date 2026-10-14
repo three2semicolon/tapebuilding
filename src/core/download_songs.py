@@ -7,7 +7,8 @@ semantics as the subprocess version - the only thing that changed is the
 *mechanism*: each step now calls straight into the already-refactored domain
 functions instead of shelling out to `python -m package.module`.
 
-  1. download   - download.spotify_download.download_spotify()
+  1. download   - download.spotify_download.download_spotify() for Spotify URLs,
+                  download.ytdl.download_ytdl() for other URLs
   2. import     - organize.beets_import.run_import()
   3. playlists  - playlists.build.build_playlists()
 
@@ -50,6 +51,7 @@ import tempfile
 
 from lib.paths import archive_path
 from download.spotify.spotify_download import download_spotify
+from download.ytdl import download_ytdl
 from organize.beets_import import run_import
 from playlists.build import build_playlists
 
@@ -58,6 +60,11 @@ STEPS = ('download', 'import', 'playlists')
 
 def _looks_like_url(s):
     return s.startswith(('http://', 'https://', 'spotify:')) or 'open.spotify.com' in s
+
+
+def _is_spotify_url(s):
+    """Return True if s is a Spotify URL or URI."""
+    return s.startswith(('https://open.spotify.com/', 'http://open.spotify.com/', 'spotify:'))
 
 
 def _resolve_source(source):
@@ -102,23 +109,21 @@ def run_download_songs(source=None, apply=False, archive_path_opt=None, drop=Non
     def record(step, ok, error=None, skipped=False):
         results.append({'step': step, 'ok': ok, 'error': error, 'skipped': skipped})
 
-    # step 1: download - spotdl the source urls into <drop>.
+    # step 1: download - spotdl for Spotify URLs, ytdl for others
     if 'download' in ordered:
-        print("=== step 1: download (spotify) ===")
+        print("=== step 1: download ===")
         if not source:
-            msg = "the download step needs a source (url file/dir, or a single spotify url)"
+            msg = "the download step needs a source (url file/dir, or a single url)"
             print(f"  error: {msg}")
             record('download', False, error=msg)
         else:
-            url_file, tmp_path = _resolve_source(source)
-            if url_file is None:
-                msg = f"source not found and not a spotify url: {source}"
-                print(f"  error: {msg}")
-                record('download', False, error=msg)
-            else:
+            # Check if source is an existing file/dir
+            if os.path.exists(source):
+                # Treat existing files as Spotify URL manifest files (preserve existing behavior)
+                print(f"  (using existing file/dir as source: {source})")
                 try:
                     ok = download_spotify(
-                        url_file=url_file, output_dir=resolved_drop,
+                        url_file=source, output_dir=resolved_drop,
                         format=format, bitrate=bitrate,
                         validate_only=not apply, debug=verbose,
                     )
@@ -126,6 +131,44 @@ def run_download_songs(source=None, apply=False, archive_path_opt=None, drop=Non
                 except Exception as e:
                     print(f"  error: {e}")
                     record('download', False, error=str(e))
+            elif _looks_like_url(source):
+                # Handle direct URLs
+                if _is_spotify_url(source):
+                    # Spotify URL: use spotdl (existing behavior)
+                    url_file, tmp_path = _resolve_source(source)
+                    if url_file is None:
+                        msg = f"failed to resolve Spotify URL: {source}"
+                        print(f"  error: {msg}")
+                        record('download', False, error=msg)
+                    else:
+                        try:
+                            ok = download_spotify(
+                                url_file=url_file, output_dir=resolved_drop,
+                                format=format, bitrate=bitrate,
+                                validate_only=not apply, debug=verbose,
+                            )
+                            record('download', ok)
+                        except Exception as e:
+                            print(f"  error: {e}")
+                            record('download', False, error=str(e))
+                else:
+                    # Non-Spotify URL: use ytdl directly
+                    try:
+                        ok = download_ytdl(
+                            url=source, output_dir=resolved_drop,
+                            audio_format=format, audio_quality=bitrate,
+                            embed_thumbnail=True, overwrite=False,
+                            verbose=verbose, metadata_only=not apply,
+                            cookies_from_browser=None, ffmpeg_path=None,
+                        )
+                        record('download', ok)
+                    except Exception as e:
+                        print(f"  error: {e}")
+                        record('download', False, error=str(e))
+            else:
+                msg = f"source not found and not a valid URL: {source}"
+                print(f"  error: {msg}")
+                record('download', False, error=msg)
         print()
 
     # step 2: import - beets_import moves <drop> into albums/ + singles/ and
