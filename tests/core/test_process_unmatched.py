@@ -283,7 +283,10 @@ def test_service_spotify_uses_spotify_download(tmp_path, mocks):
 
 # --- exclude names forwarding ------------------------------------------------------
 
-def test_exclude_names_forwards_to_build_playlists(tmp_path, mocks):
+def test_exclude_names_forwards_to_build_playlists(tmp_path, mocks, monkeypatch):
+    # Ensure PLAYLISTS_EXCLUDE is not set to avoid interference
+    monkeypatch.delenv('PLAYLISTS_EXCLUDE', raising=False)
+
     run_process_unmatched(
         archive_path_opt=str(tmp_path),
         playlists_path_opt=str(tmp_path / "playlists"),
@@ -403,7 +406,7 @@ def test_cookies_file_forwards_to_download_spotify(tmp_path, mocks):
 
     mocks.download_spotify.assert_called_once()
     download_call = mocks.download_spotify.call_args.kwargs
-    assert download_call['cookies_file'] == cookies_file
+    assert download_call['cookie_file'] == cookies_file
 
 
 # --- pre-skip-existing forwarding --------------------------------------------------
@@ -621,8 +624,16 @@ def test_return_shape_on_falsy_step_result_without_exception(tmp_path, mocks):
 
 # --- default parameter values ------------------------------------------------------
 
-def test_default_parameter_values(tmp_path, mocks):
+def test_default_parameter_values(tmp_path, mocks, monkeypatch):
     """Test that default parameter values are correct."""
+    # Ensure PLAYLISTS_EXCLUDE is not set to avoid interference
+    monkeypatch.delenv('PLAYLISTS_EXCLUDE', raising=False)
+    # Ensure DOWNLOAD_COOKIES_FILE is not set to avoid interference
+    monkeypatch.delenv('DOWNLOAD_COOKIES_FILE', raising=False)
+    # Ensure DOWNLOAD_PRE_SKIP_EXISTING is not set to avoid interference
+    monkeypatch.delenv('DOWNLOAD_PRE_SKIP_EXISTING', raising=False)
+    # Ensure DOWNLOAD_RETRIES is not set to avoid interference
+    monkeypatch.delenv('DOWNLOAD_RETRIES', raising=False)
     # Mock the path functions in the core.process_unmatched module where they're imported and used
     with patch('core.process_unmatched.playlists_path', return_value=str(tmp_path / "playlists")) as mock_playlists_path, \
          patch('core.process_unmatched.resolve_exports_dir', return_value=str(tmp_path / "exports")) as mock_resolve_exports_dir, \
@@ -680,7 +691,7 @@ def test_default_parameter_values(tmp_path, mocks):
     download_kwargs = mocks.download_spotify.call_args.kwargs
     assert download_kwargs['format'] == 'mp3'
     assert download_kwargs['bitrate'] == '320k'
-    assert download_kwargs['cookies_file'] is None
+    assert download_kwargs['cookie_file'] is None
     assert download_kwargs['pre_skip_existing'] is False
     assert download_kwargs['retries'] == 0
     assert download_kwargs['validate_only'] is True  # Dry run mode

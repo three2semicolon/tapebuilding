@@ -42,6 +42,7 @@ def run_process_unmatched(
             exclude_names = list(exclude_names) + env_exclude_list
         else:
             exclude_names = env_exclude_list
+    # else: exclude_names remains as passed (could be None)
 
     # Handle DOWNLOAD_PRE_SKIP_EXISTING environment variable as default for --pre-skip-existing
     env_pre_skip = os.environ.get('DOWNLOAD_PRE_SKIP_EXISTING', '')
@@ -95,12 +96,6 @@ def run_process_unmatched(
         results.append({'step': step, 'ok': ok, 'error': error, 'skipped': skipped})
 
     crate = archive_path_opt or archive_path()
-    print(f"crate        : {crate}")
-    print(f"playlists    : {playlists_path_resolved}")
-    print(f"unmatched csv: {os.path.join(service_exports_dir, 'unmatched.csv')}")
-    print(f"unorganized  : {unorganized_dir}")
-    print(f"mode         : {'apply' if apply else 'dry run'}")
-    print()
 
     # Step 1: Refresh playlists to generate unmatched CSV
     print("=== step 1: refresh playlists (rescrape/reindex) ===")
@@ -108,7 +103,7 @@ def run_process_unmatched(
         # Note: build_playlists always returns True, but we check if unmatched CSV is generated
         build_playlists(
             apply=apply,
-            rescrape=True,
+            rescrape=True,  # Rescrape from Spotify to get latest data
             reindex=True,
             names=[],  # No specific names - use scope (owned playlists)
             exclude_names=exclude_names or [],
@@ -123,12 +118,10 @@ def run_process_unmatched(
         unmatched_csv_path = os.path.join(service_exports_dir, 'unmatched.csv')
         if os.path.exists(unmatched_csv_path):
             record('refresh-playlists', True)
-            print(f"  generated: {unmatched_csv_path}")
         else:
             record('refresh-playlists', False, error="unmatched CSV not generated")
     except Exception as e:
         record('refresh-playlists', False, error=str(e))
-        print(f"  error: {e}")
     print()
 
     # Step 2: Download from unmatched CSV (if it exists and we're not in dry-run or it exists)
@@ -145,7 +138,7 @@ def run_process_unmatched(
                     output_dir=unorganized_dir,
                     format=format,
                     bitrate=bitrate,
-                    cookies_file=cookies_file,
+                    cookie_file=cookies_file,
                     pre_skip_existing=pre_skip_existing,
                     retries=retries,
                     validate_only=not apply,  # Dry run mode
@@ -154,7 +147,6 @@ def run_process_unmatched(
                 record('download', ok)
             except Exception as e:
                 record('download', False, error=str(e))
-                print(f"  error: {e}")
     else:
         record('download', True, skipped=True)  # Skip if previous step failed
     print()
@@ -174,7 +166,6 @@ def run_process_unmatched(
             record('import', ok)
         except Exception as e:
             record('import', False, error=str(e))
-            print(f"  error: {e}")
     else:
         record('import', True, skipped=True)  # Skip if download failed/skipped
     print()
@@ -204,7 +195,6 @@ def run_process_unmatched(
             print("  synced playlists with library")
         except Exception as e:
             record('refresh-playlists-sync', False, error=str(e))
-            print(f"  error: {e}")
     else:
         record('refresh-playlists-sync', True, skipped=True)  # Skip if import failed/skipped
     print()

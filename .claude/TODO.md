@@ -21,7 +21,7 @@
 - [X] SoundCloud export/download: implement `download/soundcloud_export.py` with `list_user_sets`, `export_set`, `export_all_data` analog, and new `download soundcloud` CLI command - ALREADY IMPLEMENTED
 - [X] SoundCloud filename predictor: implement SoundCloud-side equivalent of `download.manifest.predict_output_filename()` for use in existence check - HANDLED BY EXISTING CODE
 - [X] SoundCloud-aware download loop: implement batching/retry/`--pre-skip-existing` loop for SoundCloud manifest (similar to spotify_download) - ALREADY IMPLEMENTED
-- [ ] Cross-service "check + autodownload" workflow: implement `core` function (e.g. `run_playlist_sync()`) that chains `build_playlists()` → appropriate download function → `build_playlists()` again
+- [X] Cross-service "check + autodownload" workflow: implement `core` function (e.g. `run_process_unmatched()`) that chains `build_playlists()` → appropriate download function → `build_playlists()` again
 - [ ] Shared orchestration refactor for playlists/build.py: extract source-agnostic "select rows → match against catalog → write .m3u8/unmatched" middle section to support both Spotify and SoundCloud manifests (recommend doing this after BUGFIX_PLAN.md Bug 1/2 fixes are verified)
 
 ## `app/`

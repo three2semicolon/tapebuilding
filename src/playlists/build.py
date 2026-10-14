@@ -325,7 +325,7 @@ def build_playlists(apply=False, all_playlists=False, names=None, exclude_names=
             _scope_rescrape(sp, names, exports_dir_resolved)
         else:
             print("rescraping spotify (--rescrape) into " + exports_dir_resolved)
-            export_all_data(sp, exports_dir_resolved, my_playlists_only=True)
+            export_all_data(sp, exports_dir_resolved, my_playlists_only=True, exclude_names=exclude_names)
 
     # Determine file paths based on service
     if service == 'soundcloud':

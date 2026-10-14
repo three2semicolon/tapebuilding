@@ -21,7 +21,10 @@ def build_playlists_mock(monkeypatch):
     return mock
 
 
-def test_run_sync_forwards_to_build_playlists_with_apply_and_rescrape_true(build_playlists_mock):
+def test_run_sync_forwards_to_build_playlists_with_apply_and_rescrape_true(build_playlists_mock, monkeypatch):
+    # Ensure PLAYLISTS_EXCLUDE is not set to avoid interference
+    monkeypatch.delenv('PLAYLISTS_EXCLUDE', raising=False)
+
     result = run_sync(
         names=['My Playlist'], covers=True, verbose=True,
         playlists_path='/playlists', archive_path='/crate', exports_dir='/exports',
@@ -60,12 +63,18 @@ def test_names_param_scopes_to_specific_playlists(build_playlists_mock):
     assert build_playlists_mock.call_args.kwargs['names'] == ['Road Trip', 'spotify:playlist:xyz']
 
 
-def test_exclude_names_forwards_to_build_playlists(build_playlists_mock):
+def test_exclude_names_forwards_to_build_playlists(build_playlists_mock, monkeypatch):
+    # Ensure PLAYLISTS_EXCLUDE is not set to avoid interference
+    monkeypatch.delenv('PLAYLISTS_EXCLUDE', raising=False)
+
     run_sync(exclude_names=['Playlist A', 'spotify:playlist:xyz'])
     assert build_playlists_mock.call_args.kwargs['exclude_names'] == ['Playlist A', 'spotify:playlist:xyz']
 
 
-def test_exclude_names_defaults_to_empty_list_not_none(build_playlists_mock):
+def test_exclude_names_defaults_to_empty_list_not_none(build_playlists_mock, monkeypatch):
+    # Ensure PLAYLISTS_EXCLUDE is not set to avoid interference
+    monkeypatch.delenv('PLAYLISTS_EXCLUDE', raising=False)
+
     run_sync()
     assert build_playlists_mock.call_args.kwargs['exclude_names'] == []
 
