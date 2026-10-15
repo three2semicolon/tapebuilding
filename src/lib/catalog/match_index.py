@@ -13,9 +13,11 @@ from .row_access import (
 from .normalization import (
     _raw_key, _entry_artist_set, _entry_primary, _row_artist_set,
     _row_primary, _duration_close, _artists_contradict, _pick_best,
-    FUZZY_RATIO_THRESHOLD, FUZZY_PREFIX_LEN, _TIER_NAMES, _TOLERANCE,
-    normalize_key, group_key, group_album_key, normalize_album,
-    split_artists, strip_feat_clause, fold_key
+    FUZZY_RATIO_THRESHOLD, FUZZY_PREFIX_LEN, _TIER_NAMES, _TOLERANCE
+)
+from lib.text import (
+    normalize_key, split_artists, strip_feat_clause, fold_key,
+    group_key, group_album_key, normalize_album
 )
 from .soundcloud_helpers import _soundcloud_title_variations, _is_soundcloud_like_title
 from .soundcloud_loose import SoundcloudLooseIndex

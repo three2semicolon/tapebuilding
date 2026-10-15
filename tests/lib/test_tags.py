@@ -300,11 +300,19 @@ class TestSamePath:
         assert not same_path('/path/to/file.txt', '/path/to/other.txt')
         assert not same_path('/path/to/file.txt', '')
 
-    def test_same_path_case_sensitivity_unix(self):
-        """Test same_path respects case sensitivity on Unix-like systems"""
+    def test_same_path_case_sensitivity(self):
+        """Test same_path respects filesystem case sensitivity"""
         from lib.tags import same_path
-        # This test's behavior depends on the platform, but we can test the logic
-        assert not same_path('/PATH/TO/FILE.TXT', '/path/to/file.txt')  # Should be False on case-sensitive FS
+        import sys
+
+        # On Windows and default macOS, filesystems are case-insensitive
+        # On Linux, filesystems are typically case-sensitive
+        if sys.platform.startswith('win') or sys.platform == 'darwin':
+            # Case-insensitive filesystem: paths differing only in case are the same
+            assert same_path('/PATH/TO/FILE.TXT', '/path/to/file.txt')
+        else:
+            # Case-sensitive filesystem (Linux): paths differing only in case are different
+            assert not same_path('/PATH/TO/FILE.TXT', '/path/to/file.txt')
 
 
 class TestFindDuplicates:
