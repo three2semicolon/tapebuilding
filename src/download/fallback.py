@@ -11,8 +11,7 @@ from typing import List, Dict, Any, Optional
 
 from download.manifest import predict_output_filename
 from download.existing import resolve_output_dir
-from download.ytdl import OUTTMPL_PLAYLIST, OUTTMPL_SINGLE, is_playlist_url, download_ytdl
-from lib.paths import ffmpeg_path as resolve_ffmpeg_path
+from download.ytdl import download_ytdl
 from lib.text import normalize_key
 from organize.normalize_artists import normalize_artist
 
@@ -58,7 +57,7 @@ def process_fallback(
     Returns:
         Tuple of (successful_urls, failed_urls, batch_succeeded_via_fallback)
     """
-    print(f"\nInitiating fallback for batch...")
+    print("\nInitiating fallback for batch...")
     fallback_succeeded = []
     fallback_failed = []
     fallback_skipped = []
@@ -145,10 +144,10 @@ def process_fallback(
             )
 
             if ytdl_success:
-                print(f"  Successfully downloaded via ytdl.")
+                print("  Successfully downloaded via ytdl.")
                 fallback_succeeded.append(url)
             else:
-                print(f"  ytdl download failed.")
+                print("  ytdl download failed.")
                 fallback_failed.append(url)
         else:
             # Treat as local file path
@@ -178,7 +177,7 @@ def process_fallback(
     elif fallback_skipped:
         print(f"  Skipped fallback for {len(fallback_skipped)} URL(s) in batch.")
     else:
-        print(f"  All URLs in batch succeeded via fallback.")
+        print("  All URLs in batch succeeded via fallback.")
 
     # For return value, combine failed and skipped URLs as "failed" to maintain test compatibility
     # but keep logging separate (only actual failures are logged)

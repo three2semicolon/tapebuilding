@@ -9,7 +9,6 @@ itself calls lib.tags.canonical_albumartist()/dominant_album()/sanitize()/
 safe_move()/write_tag(), so a hand-rolled fake tag dict wouldn't exercise the
 actual regrouping decisions the way it matters here.
 """
-import os
 
 import pytest
 

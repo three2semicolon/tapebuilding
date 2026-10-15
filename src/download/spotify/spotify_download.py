@@ -20,9 +20,7 @@ import subprocess
 import csv
 import glob
 import time
-import shutil
 
-import click
 
 from lib.paths import archive_path, ffmpeg_path
 from lib.text import normalize_key
@@ -34,7 +32,7 @@ from download import fallback
 def _check_existing(urls, metadata, output_dir, fmt):
     # returns (existing, new, no_meta, library_root, library_index)
     library_root = output_dir or archive_path()
-    print(f"scanning output folder for existing files...")
+    print("scanning output folder for existing files...")
     library_index = build_library_index(library_root)
     print(f"found {len(library_index)} audio files on disk.")
     candidates = []
@@ -56,7 +54,6 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
                    retries=3, retry_delay=3, cookies_from_browser=None, cookie_file=None,
                    debug=False, spotdl_fallback=False, manual=False, verbose=False, clean=False):
     # Handle DOWNLOAD_PRE_SKIP_EXISTING environment variable as default for --pre-skip-existing
-    import os
     env_pre_skip = os.environ.get('DOWNLOAD_PRE_SKIP_EXISTING', '')
     if env_pre_skip:
         # Convert to boolean - common true values
@@ -102,7 +99,7 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
             manifest = os.path.join(url_file, 'spotify_manifest.csv')
             if os.path.exists(manifest):
                 if verbose:
-                    print(f"  using manifest: spotify_manifest.csv")
+                    print("  using manifest: spotify_manifest.csv")
                 urls.extend(_extract_urls_from_csv(manifest))
             else:
                 csv_files = glob.glob(os.path.join(url_file, '*.csv'))
@@ -226,7 +223,7 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
         if overall_success:
             print(f"\nall batches processed. total: {url_count}")
         else:
-            print(f"\ncompleted with some failures. check soft_failures.txt")
+            print("\ncompleted with some failures. check soft_failures.txt")
         return overall_success
 
     # Otherwise, proceed with spotdl processing (original logic)
@@ -383,7 +380,7 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
             print(f"\nall batches processed. total: {url_count}")
     else:
         if verbose:
-            print(f"\ncompleted with some failures. check failed_downloads.txt and soft_failures.txt")
+            print("\ncompleted with some failures. check failed_downloads.txt and soft_failures.txt")
     return overall_success
 
 

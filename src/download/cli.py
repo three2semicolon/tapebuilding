@@ -36,10 +36,6 @@ from download.soundcloud.soundcloud_export import (
     export_all_data,
     export_likes,
     export_sets,
-    export_specific_set,
-    list_user_likes,
-    list_user_sets,
-    merge_and_deduplicate,
 )
 from download.ytdl import download_ytdl, AUDIO_FORMATS
 from download.retry import (
@@ -49,13 +45,6 @@ from download.retry import (
     DEFAULT_OUT,
 )
 from download.other.soundbyte import run_soundbyte, DEFAULT_LIMIT
-from lib.paths import (
-    archive_path as resolve_archive_path,
-    playlists_path as resolve_playlists_path,
-    exports_dir as resolve_exports_dir,
-)
-from lib.catalog.indexer import get_index
-from lib.catalog.matcher import MatchIndex, match_rows
 from organize.validate import validate
 
 load_dotenv()

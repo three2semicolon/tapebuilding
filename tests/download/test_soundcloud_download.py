@@ -5,10 +5,7 @@ current source.
 subprocess.Popen is mocked throughout - these tests never shell out to a
 real ytdl.
 """
-import os
-from unittest import mock
 
-import pytest
 
 from download.soundcloud.soundcloud_download import download_soundcloud, _predict_soundcloud_filename
 

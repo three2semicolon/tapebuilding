@@ -199,7 +199,7 @@ def run_download_songs(source=None, apply=False, archive_path_opt=None, drop=Non
                             for path in report['leftover_paths'][:5]:  # Limit to 5 paths in output
                                 print(f"    {os.path.relpath(path, resolved_drop)}")
                         elif not verbose:
-                            print(f"    (use --verbose to see paths)")
+                            print("    (use --verbose to see paths)")
             except Exception as e:
                 print(f"  error: {e}")
                 record('import', False, error=str(e))

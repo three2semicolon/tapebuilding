@@ -8,7 +8,7 @@ import os
 import sys
 
 from lib.tags import scan_audio
-from organize.cleanup import group_files, resolve_crate
+from organize.cleanup import group_files
 from organize.journal import Journal
 
 from .plan import build_plan, index_existing_albums
@@ -186,7 +186,7 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
             for path in report['leftover_paths'][:25]:
                 print(f"    {os.path.relpath(path, unorganized)}")
         elif not verbose:
-            print(f"    (use --verbose to see paths)")
+            print("    (use --verbose to see paths)")
 
     if verbose:
         if staged_moves:

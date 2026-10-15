@@ -15,7 +15,7 @@ from .normalization import (
     _row_primary, _duration_close, _artists_contradict, _pick_best,
     FUZZY_RATIO_THRESHOLD, FUZZY_PREFIX_LEN, _TIER_NAMES, _TOLERANCE,
     normalize_key, group_key, group_album_key, normalize_album,
-    primary_artist, split_artists, strip_feat_clause, fold_key
+    split_artists, strip_feat_clause, fold_key
 )
 from .soundcloud_helpers import _soundcloud_title_variations, _is_soundcloud_like_title
 from .soundcloud_loose import SoundcloudLooseIndex

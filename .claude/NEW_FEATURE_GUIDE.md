@@ -182,3 +182,46 @@ file already on disk:
 - Anything documented in `PACKAGE_OVERVIEW.md` as already implemented
   should still be spot-checked by running it once, given this session's
   track record — treat the doc as a map, not a guarantee.
+
+---
+
+## 7. Code quality with ruff
+
+This project uses [ruff](https://docs.astral.sh/ruff/) for linting and formatting checks.
+
+### Configuration
+
+Ruff is configured via the `[tool.ruff]` section in `pyproject.toml`. The current configuration enforces:
+- Line length of 88 characters
+- Selection of error codes E, F, W, and C90
+- Double quotes and space indentation for formatting
+
+### Usage
+
+To run linting checks:
+
+```bash
+uv run ruff check .
+```
+
+To automatically fix linting errors (where possible):
+
+```bash
+uv run ruff check --fix .
+```
+
+To format code using ruff:
+
+```bash
+uv run ruff format .
+```
+
+To check formatting without making changes:
+
+```bash
+uv run ruff format --check .
+```
+
+### Integration
+
+Remember to run ruff as part of your development workflow to ensure code quality before submitting changes.

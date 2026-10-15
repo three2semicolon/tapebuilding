@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import List, Tuple
 
 from lib.tags import artist_tokens, canonical_albumartist, dominant_album, sanitize, split_group
-from lib.text import normalize_album, normalize_key, split_artists, group_key, group_album_key
+from lib.text import normalize_key, group_album_key
 
 
 def _artist_tokens(f):

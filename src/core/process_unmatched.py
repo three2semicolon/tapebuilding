@@ -36,7 +36,6 @@ def run_process_unmatched(
         dict: {'steps': [{'step', 'ok', 'error', 'skipped'], ...], 'ok': bool}
     """
     # Handle PLAYLISTS_EXCLUDE environment variable as standing default for --exclude
-    import os
     env_exclude = os.environ.get('PLAYLISTS_EXCLUDE', '')
     if env_exclude:
         env_exclude_list = [item.strip() for item in env_exclude.split(',') if item.strip()]

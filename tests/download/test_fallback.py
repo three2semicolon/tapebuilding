@@ -1,10 +1,7 @@
 """Tests for download.fallback - fallback logic for when primary download methods fail."""
 
-import os
-import tempfile
 from unittest import mock
 
-import pytest
 
 from download.fallback import _log_urls, process_fallback
 

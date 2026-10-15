@@ -5,10 +5,8 @@ current source.
 subprocess.Popen is mocked throughout - these tests never shell out to a
 real spotdl.
 """
-import os
 from unittest import mock
 
-import pytest
 
 from download.spotify.spotify_download import download_spotify, _extract_urls_from_csv
 from download.fallback import _log_urls

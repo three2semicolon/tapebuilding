@@ -9,7 +9,6 @@ skipped), in the fixed order, with the documented kwargs, and does the
 {'steps': [...], 'ok': ...} summary come out right on success, on a
 falsy step result, and on a raised exception.
 """
-import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 

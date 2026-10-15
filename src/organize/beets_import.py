@@ -181,7 +181,7 @@ def print_library_stats(output_dir):
 
     lines = [l for l in result.stdout.strip().split('\n') if l.strip()]
     albums = set(lines)
-    print(f"\nlibrary summary:")
+    print("\nlibrary summary:")
     print(f"  tracks : {len(lines)}")
     print(f"  albums : {len(albums)}")
 

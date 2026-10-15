@@ -38,7 +38,6 @@ def _get_soundcloud_display_name(username):
         except ImportError:
             # Fallback to urllib
             from urllib.request import urlopen
-            from urllib.error import URLError, HTTPError
             with urlopen(url, timeout=5) as response:
                 if response.status == 200:
                     data = json.load(response)
@@ -46,7 +45,7 @@ def _get_soundcloud_display_name(username):
                     if display_name:
                         _soundcloud_display_name_cache[username] = display_name
                         return display_name
-    except Exception as e:
+    except Exception:
         # Log the error but don't fail; we'll fall back to username
         pass
     return None

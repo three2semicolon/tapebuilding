@@ -4,14 +4,10 @@ Mirrors download_spotify.py but for SoundCloud.
 """
 
 import os
-import sys
-import subprocess
 import csv
 import glob
 import time
-import shutil
 
-import click
 
 from lib.paths import archive_path, ffmpeg_path
 from lib.text import normalize_key
@@ -40,7 +36,7 @@ def _predict_soundcloud_filename(artist, track, set_name=None, set_position=None
 def _check_existing(urls, metadata, output_dir, fmt):
     # returns (existing, new, no_meta, library_root, library_index)
     library_root = output_dir or archive_path()
-    print(f"scanning output folder for existing files...")
+    print("scanning output folder for existing files...")
     library_index = build_library_index(library_root)
     print(f"found {len(library_index)} audio files on disk.")
     candidates = []
@@ -80,7 +76,7 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
             manifest = os.path.join(url_file, 'soundcloud_manifest.csv')
             if os.path.exists(manifest):
                 if verbose:
-                    print(f"  using manifest: soundcloud_manifest.csv")
+                    print("  using manifest: soundcloud_manifest.csv")
                 with open(manifest, 'r', encoding='utf-8') as f:
                     reader = csv.DictReader(f)
                     for row in reader:
@@ -244,7 +240,7 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
         if overall_success:
             print(f"\nall batches processed. total: {url_count}")
         else:
-            print(f"\ncompleted with some failures. check soft_failures.txt")
+            print("\ncompleted with some failures. check soft_failures.txt")
         return overall_success
 
     # Otherwise, proceed with ytdl processing (original logic)
@@ -331,5 +327,5 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
             print(f"\nall batches processed. total: {url_count}")
     else:
         if verbose:
-            print(f"\ncompleted with some failures. check soft_failures.txt")
+            print("\ncompleted with some failures. check soft_failures.txt")
     return overall_success

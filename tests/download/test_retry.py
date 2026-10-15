@@ -7,9 +7,7 @@ inspection, not by running it. Written against the actual current
 source.
 """
 import csv
-import os
 
-import pytest
 
 from download.retry import (
     read_failure_log,

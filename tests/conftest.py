@@ -8,11 +8,9 @@ FFMPEG_PATH per .env.example) and `mediafile` installed (pulled in by
 beets, already a project dependency).
 """
 import os
-import shutil
 import subprocess
 
 import pytest
-from dotenv import load_dotenv
 from mediafile import MediaFile
 
 from lib.paths import ffmpeg_path

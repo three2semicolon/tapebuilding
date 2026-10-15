@@ -6,9 +6,7 @@ this session, not carried forward from a verified original, and the
 Written against the actual current source (reconstructed in this
 session's earlier turns).
 """
-import csv
 
-import pytest
 
 from download.manifest import (
     sanitize_filename,

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import List, Tuple
 
 from lib.tags import EXTENSIONS, canonical_album, canonical_albumartist, dominant_album, find_duplicates, read_tags, sanitize
-from lib.text import normalize_album, normalize_key, split_artists, group_key, group_album_key, render_credit
+from lib.text import normalize_album, normalize_key, render_credit
 from organize.cleanup import is_unrelated_va_collision
 
 

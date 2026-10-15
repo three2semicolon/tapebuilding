@@ -5,10 +5,8 @@ current source.
 No real yt-dlp calls are made - fake implementations are used instead.
 """
 import csv
-import os
 from unittest import mock
 
-import pytest
 
 from download.soundcloud.soundcloud_export import (
     export_set,
