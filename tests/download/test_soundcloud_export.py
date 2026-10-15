@@ -243,11 +243,26 @@ class TestExportSets:
             # Mock return values for two different sets
             mock_export_specific.side_effect = [
                 [  # First set
-                    {'title': 'Track A', 'uploader': 'Artist A', 'track_url': 'https://soundcloud.com/artist/tracka', 'position': 1}
+                    {
+                        'title': 'Track A',
+                        'uploader': 'Artist A',
+                        'track_url': 'https://soundcloud.com/artist/tracka',
+                        'position': 1
+                    }
                 ],
                 [  # Second set
-                    {'title': 'Track B', 'uploader': 'Artist B', 'track_url': 'https://soundcloud.com/artist/trackb', 'position': 1},
-                    {'title': 'Track A', 'uploader': 'Artist A', 'track_url': 'https://soundcloud.com/artist/tracka', 'position': 2}  # Duplicate track
+                    {
+                        'title': 'Track B',
+                        'uploader': 'Artist B',
+                        'track_url': 'https://soundcloud.com/artist/trackb',
+                        'position': 1
+                    },
+                    {
+                        'title': 'Track A',
+                        'uploader': 'Artist A',
+                        'track_url': 'https://soundcloud.com/artist/tracka',
+                        'position': 2
+                    }  # Duplicate track
                 ]
             ]
 

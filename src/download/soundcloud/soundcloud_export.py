@@ -6,6 +6,7 @@ and build a deduplicated manifest of track urls for `download soundcloud`.
 import os
 import re
 import json
+import csv
 
 import yt_dlp
 from lib.text import normalize_key

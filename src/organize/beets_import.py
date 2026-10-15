@@ -160,7 +160,7 @@ def export_library_csv(output_dir, csv_path=None):
         print(f"error exporting library: {result.stderr}")
         return False
 
-    lines = [l for l in result.stdout.strip().split('\n') if l.strip()]
+    lines = [line for line in result.stdout.strip().split('\n') if line.strip()]
     with open(csv_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow(['artist', 'albumartist', 'album', 'track', 'title', 'year', 'path'])
@@ -179,7 +179,7 @@ def print_library_stats(output_dir):
     if result.returncode != 0:
         return
 
-    lines = [l for l in result.stdout.strip().split('\n') if l.strip()]
+    lines = [line for line in result.stdout.strip().split('\n') if line.strip()]
     albums = set(lines)
     print("\nlibrary summary:")
     print(f"  tracks : {len(lines)}")

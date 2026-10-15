@@ -68,15 +68,15 @@ def process_fallback(
     track_key = 'track' if is_spotify else 'title'
 
     for url in batch:
+        meta = metadata.get(url) or {}
+        artist = meta.get(artist_key, '')
+        track = meta.get(track_key, '')
+
         # If user chose to skip all remaining, skip this URL without prompting
         if skip_all_remaining:
             print(f"  Skipping all remaining downloads (including '{artist} - {track}') due to previous skip-all.")
             fallback_skipped.append(url)
             continue
-
-        meta = metadata.get(url) or {}
-        artist = meta.get(artist_key, '')
-        track = meta.get(track_key, '')
 
         if not artist or not track:
             print(f"  Skipping fallback for URL with missing metadata: {url}")

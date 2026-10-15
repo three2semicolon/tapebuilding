@@ -175,7 +175,9 @@ class TestDownloadSpotifyFailureClassification:
 
 
 class TestDownloadSpotifyPreSkipExisting:
-    def test_validate_only_reports_and_returns_without_downloading(self, tmp_path, sample_manifest_csv, fixture_library, monkeypatch):
+    def test_validate_only_reports_and_returns_without_downloading(
+        self, tmp_path, sample_manifest_csv, fixture_library, monkeypatch
+    ):
         popen_mock = mock.Mock()
         monkeypatch.setattr("download.spotify.spotify_download.subprocess.Popen", popen_mock)
 
@@ -220,7 +222,6 @@ class TestDownloadSpotifyPreSkipExisting:
         url_file = tmp_path / "urls.txt"
         url_file.write_text("https://x\n", encoding="utf-8")
 
-        popen_mock = mock.Mock()
         monkeypatch.setattr("download.spotify.spotify_download.subprocess.Popen",
                              lambda cmd, **kw: mock.Mock(
                                  stdout=iter(["batch downloaded successfully\n"]),

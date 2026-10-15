@@ -179,7 +179,9 @@ def unstage(items, crate, tapedeck, kind, dry_run=False, verbose=False):
     summary = {'removed': 0, 'protected': 0, 'missing': 0, 'errors': 0, 'm3u8_removed': 0}
 
     plan = _collect(items, crate)
-    is_m3u8 = lambda rel: os.path.splitext(rel)[1].lower() in M3U_EXT
+
+    def is_m3u8(rel):
+        return os.path.splitext(rel)[1].lower() in M3U_EXT
 
     # playlist refcount: protect audio files a remaining m3u8 still references.
     protected = set()

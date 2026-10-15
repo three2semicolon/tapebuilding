@@ -29,11 +29,11 @@ from dotenv import load_dotenv
 
 from lib.spotify_auth import authenticate_user
 from download.spotify.spotify_api import get_export_dir
-from download.spotify.spotify_export import export_all_data, export_specific_playlist, export_playlists
+from download.spotify.spotify_export import export_all_data as spotify_export_all_data, export_specific_playlist, export_playlists
 from download.spotify.spotify_download import download_spotify
 from download.soundcloud.soundcloud_download import download_soundcloud
 from download.soundcloud.soundcloud_export import (
-    export_all_data,
+    export_all_data as soundcloud_export_all_data,
     export_likes,
     export_sets,
 )
@@ -115,7 +115,7 @@ def export_cmd(playlists, playlists_file, output, mine, service, export_type, se
             elif identifiers:
                 export_playlists(sp, identifiers, export_dir)
             else:
-                export_all_data(sp, export_dir, my_playlists_only=mine)
+                spotify_export_all_data(sp, export_dir, my_playlists_only=mine)
 
         elif service == 'soundcloud':
             export_dir = get_export_dir(base_dir=output)
@@ -140,7 +140,7 @@ def export_cmd(playlists, playlists_file, output, mine, service, export_type, se
                 click.echo(f"exported {len(unique_tracks)} unique tracks from {len(identifiers)} set(s)")
             elif export_type == 'all-sets':
                 click.echo(f"exporting all soundcloud sets for user: {soundcloud_user}")
-                unique_tracks = export_all_data(None, soundcloud_user, export_dir)  # sp=None for soundcloud
+                unique_tracks = soundcloud_export_all_data(None, soundcloud_user, export_dir)  # sp=None for soundcloud
                 click.echo(f"exported {len(unique_tracks)} unique tracks")
     except Exception as e:
         click.echo(f"error: {e}", err=True)
@@ -170,13 +170,23 @@ def export_cmd(playlists, playlists_file, output, mine, service, export_type, se
                    'downloading and skip urls already on disk.')
 @click.option('--cookies-from-browser', 'cookies_from_browser',
               help='browser name to pull cookies from (e.g. chrome, firefox).')
-@click.option('--cookie-file', 'cookie_file', type=click.Path(exists=True),
-              help='path to a Netscape-format cookies.txt; preferred over '
-                   '--cookies-from-browser (avoids the browser file-lock issue).')
+@click.option(
+    '--cookie-file',
+    'cookie_file',
+    type=click.Path(exists=True),
+    help='path to a Netscape-format cookies.txt; preferred over '
+         '--cookies-from-browser (avoids the browser file-lock issue)',
+)
 @click.option('--debug', is_flag=True,
               help='use DEBUG log level for spotdl/yt-dlp instead of INFO.')
 @click.option('--manual', is_flag=True, help='skip primary download and only prompt for fallback sources.')
-@click.option('--spotdl-fallback/--no-spotdl-fallback', 'spotdl_fallback', default=False, show_default=True, help='prompt for YouTube URL or local file when spotdl fails to find a track.')
+@click.option(
+    '--spotdl-fallback/--no-spotdl-fallback',
+    'spotdl_fallback',
+    default=False,
+    show_default=True,
+    help='prompt for YouTube URL or local file when spotdl fails to find a track',
+)
 @click.option('--clean', is_flag=True,
               help='run organize validate --all after successful download to organize the crate.')
 @click.option('--verbose', '-v', is_flag=True)
@@ -325,13 +335,23 @@ def ytdl_cmd(url, output, audio_format, audio_quality, no_thumbnail,
                    'downloading and skip urls already on disk.')
 @click.option('--cookies-from-browser', 'cookies_from_browser',
               help='browser name to pull cookies from (e.g. chrome, firefox).')
-@click.option('--cookie-file', 'cookie_file', type=click.Path(exists=True),
-              help='path to a Netscape-format cookies.txt; preferred over '
-                   '--cookies-from-browser (avoids the browser file-lock issue).')
+@click.option(
+    '--cookie-file',
+    'cookie_file',
+    type=click.Path(exists=True),
+    help='path to a Netscape-format cookies.txt; preferred over '
+         '--cookies-from-browser (avoids the browser file-lock issue)',
+)
 @click.option('--debug', is_flag=True,
               help='use DEBUG log level for spotdl/yt-dlp instead of INFO.')
 @click.option('--manual', is_flag=True, help='skip primary download and only prompt for fallback sources.')
-@click.option('--soundcloud-fallback/--no-soundcloud-fallback', 'soundcloud_fallback', default=False, show_default=True, help='prompt for YouTube URL or local file when soundcloud fails to find a track.')
+@click.option(
+    '--soundcloud-fallback/--no-soundcloud-fallback',
+    'soundcloud_fallback',
+    default=False,
+    show_default=True,
+    help='prompt for YouTube URL or local file when soundcloud fails to find a track',
+)
 @click.option('--clean', is_flag=True,
               help='run organize validate --all after successful download to organize the crate.')
 @click.option('--verbose', '-v', is_flag=True)

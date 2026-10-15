@@ -262,16 +262,21 @@ def resolve_targets(kind, specs, crate, playlists_path=None, index=None, mindex=
     for spec in specs:
         if kind == 'album':
             w, f = _resolve_album(spec, crate, index)
-            warnings += w; folders += f
+            warnings += w
+            folders += f
         elif kind == 'song':
             w, f = _resolve_song(spec, crate, index, mindex)
-            warnings += w; files += f
+            warnings += w
+            files += f
         elif kind == 'soundtrack':
             w, f = _resolve_soundtrack(spec, crate)
-            warnings += w; folders += f
+            warnings += w
+            folders += f
         elif kind == 'playlist':
             w, f, m = _resolve_playlist(spec, crate, playlists_path)
-            warnings += w; files += f; m3u8 += m
+            warnings += w
+            files += f
+            m3u8 += m
         else:
             warnings.append(f"unknown kind {kind!r}")
     # de-dup preserving order (folders handled as set-of-contents in copy.py)

@@ -291,20 +291,20 @@ class TestSamePath:
     def test_same_path_identical_paths(self):
         """Test same_path with identical paths"""
         from lib.tags import same_path
-        assert same_path('/path/to/file.txt', '/path/to/file.txt') == True
-        assert same_path('', '') == True
+        assert same_path('/path/to/file.txt', '/path/to/file.txt')
+        assert same_path('', '')
 
     def test_same_path_different_paths(self):
         """Test same_path with different paths"""
         from lib.tags import same_path
-        assert same_path('/path/to/file.txt', '/path/to/other.txt') == False
-        assert same_path('/path/to/file.txt', '') == False
+        assert not same_path('/path/to/file.txt', '/path/to/other.txt')
+        assert not same_path('/path/to/file.txt', '')
 
     def test_same_path_case_sensitivity_unix(self):
         """Test same_path respects case sensitivity on Unix-like systems"""
         from lib.tags import same_path
         # This test's behavior depends on the platform, but we can test the logic
-        assert same_path('/PATH/TO/FILE.TXT', '/path/to/file.txt') == False  # Should be False on case-sensitive FS
+        assert not same_path('/PATH/TO/FILE.TXT', '/path/to/file.txt')  # Should be False on case-sensitive FS
 
 
 class TestFindDuplicates:

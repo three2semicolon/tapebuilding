@@ -137,9 +137,11 @@ def _select_playlists(playlists_csv, names, all_playlists, exclude_names=None, s
         for meta in rows:
             for token, as_id, is_id in wanted:
                 if is_id and meta.get('id') == as_id:
-                    selected.append(meta); break
+                    selected.append(meta)
+                    break
                 if not is_id and meta.get('name') == token:
-                    selected.append(meta); break
+                    selected.append(meta)
+                    break
     elif all_playlists:
         selected = rows
     else:

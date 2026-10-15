@@ -22,7 +22,6 @@ def _soundcloud_title_variations(title):
         return [title]
 
     variations = []
-    title_lower = title.lower()
 
     # Original title
     variations.append(title)

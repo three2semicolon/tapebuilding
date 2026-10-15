@@ -634,24 +634,29 @@ def test_default_parameter_values(tmp_path, mocks, monkeypatch):
     # Ensure DOWNLOAD_RETRIES is not set to avoid interference
     monkeypatch.delenv('DOWNLOAD_RETRIES', raising=False)
     # Mock the path functions in the core.process_unmatched module where they're imported and used
-    with patch('core.process_unmatched.playlists_path', return_value=str(tmp_path / "playlists")) as mock_playlists_path, \
-         patch('core.process_unmatched.resolve_exports_dir', return_value=str(tmp_path / "exports")) as mock_resolve_exports_dir, \
-         patch('core.process_unmatched.archive_path', return_value=str(tmp_path)) as mock_archive_path, \
-         patch('playlists.build._spotify_exports_dir', return_value=str(tmp_path / "exports" / "spotify")) as mock_spotify_exports_dir:
+    with patch('core.process_unmatched.playlists_path', return_value=str(tmp_path / "playlists")):
+        with patch('core.process_unmatched.resolve_exports_dir', return_value=str(tmp_path / "exports")):
+            with patch('core.process_unmatched.archive_path', return_value=str(tmp_path)):
+                with patch('playlists.build._spotify_exports_dir', return_value=str(tmp_path / "exports" / "spotify")):
 
-        # Create the directory structure so that paths resolve correctly
-        playlists_dir = tmp_path / "playlists"
-        exports_dir = tmp_path / "exports"
-        spotify_exports_dir = exports_dir / "spotify"
-        playlists_dir.mkdir(parents=True, exist_ok=True)
-        exports_dir.mkdir(parents=True, exist_ok=True)
-        spotify_exports_dir.mkdir(parents=True, exist_ok=True)
+                    # Create the directory structure so that paths resolve correctly
+                    playlists_dir = tmp_path / "playlists"
+                    exports_dir = tmp_path / "exports"
+                    spotify_exports_dir = exports_dir / "spotify"
+                    playlists_dir.mkdir(parents=True, exist_ok=True)
+                    exports_dir.mkdir(parents=True, exist_ok=True)
+                    spotify_exports_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create the unmatched CSV file so steps execute (for dry run)
-        unmatched_csv_path = spotify_exports_dir / 'unmatched.csv'
-        unmatched_csv_path.touch()  # Create empty file
+                    # Create the unmatched CSV file so steps execute (for dry run)
+                    unmatched_csv_path = spotify_exports_dir / 'unmatched.csv'
+                    unmatched_csv_path.touch()  # Create empty file
 
-        run_process_unmatched()  # Call with all defaults
+                    run_process_unmatched()  # Call with all defaults
+
+                # Close the with statements
+            # Close the with statements
+        # Close the with statements
+    # Close the with statements
 
     # Check that build_playlists was called twice (step 1 and step 4)
     assert mocks.build_playlists.call_count == 2

@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 from core.download import run_download_songs, STEPS
 from core.process_unmatched import run_process_unmatched
 from core.sync import run_sync
+from organize.cli import cleanup_cmd
 
 load_dotenv()
 

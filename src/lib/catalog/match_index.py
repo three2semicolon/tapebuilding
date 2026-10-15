@@ -31,7 +31,8 @@ class MatchIndex:
         self.catalog = catalog
         self.by_title = collections.defaultdict(list)       # normalize_key(title) -> [entry]  (never '' - see tier6 note)
         self.by_prefix = collections.defaultdict(list)       # normalize_key(title)[:4] -> [entry]
-        self.by_core_title = collections.defaultdict(list)   # normalize_key(strip_feat_clause(title)) -> [entry], only when it differs from the plain key
+        self.by_core_title = collections.defaultdict(list)
+        # normalize_key(strip_feat_clause(title)) -> [entry], only when it differs from the plain key
         self.by_raw_title = collections.defaultdict(list)    # lowercased/whitespace-collapsed raw title -> [entry]
         self.by_album_track = collections.defaultdict(list)  # (normalize_key(album), track_int) -> [entry]
         # Unicode-aware indexes alongside ASCII ones (for V9 > 0)
@@ -147,7 +148,9 @@ class MatchIndex:
         row_artists = _row_artist_set(row)
         if not row_artists:
             return None
-        pred = lambda entry: bool(row_artists & _entry_artist_set(entry))
+
+        def pred(entry):
+            return bool(row_artists & _entry_artist_set(entry))
 
         # Get candidates - for Spotify: exact match only; for SoundCloud: also try variations
         ascii_candidates = self._get_soundcloud_candidates(title_key, _row_title(row))
@@ -323,8 +326,6 @@ class MatchIndex:
         # anchor check doesn't reject an edition-suffixed local album tag.
         row_album_key = normalize_album(_row_album(row))
         u_row_album_key = group_album_key(_row_album(row))  # Unicode-aware album key
-        row_artists = _row_artist_set(row)
-        row_primary = _row_primary(row)
 
         def anchor(entry):
             # Use Unicode-aware artist sets for better matching (V9 > 0)

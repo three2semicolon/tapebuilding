@@ -126,7 +126,7 @@ def validate(file_path: Optional[str], all: bool, apply: bool, verbose: bool):
         if verbose:
             click.echo("\n=== Step 3: Cleanup ===")
         try:
-            cleanup_result = cleanup_apply.run_cleanup(
+            _cleanup_result = cleanup_apply.run_cleanup(
                 crate=crate_path,
                 apply=apply,
                 verbose=verbose

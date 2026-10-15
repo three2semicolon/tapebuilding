@@ -62,7 +62,6 @@ def index_existing_albums(crate):
         # Bug 3b: store raw strings instead of normalized
         # But use normalized key for collision detection
         norm_key = (normalize_album(albumartist or ''), normalize_album(album or ''))
-        raw_key = (albumartist or '', album or '')
         if norm_key in idx:
             idx[norm_key] = None  # ambiguous: >=2 existing folders match -> never merge
         else:
