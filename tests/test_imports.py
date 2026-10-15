@@ -58,7 +58,7 @@ MODULES = [
     "tapedeck.deck",
     # core/
     "core.cli",
-    "core.download_songs",
+    "core.download",
     "core.sync",
 ]
 
@@ -94,7 +94,7 @@ SUBCOMMANDS = {
     "download": ["export", "spotify", "ytdl", "retry", "soundbyte"],
     "organize": ["import", "cleanup"],
     "tapedeck": ["load", "unload", "list"],
-    "core": ["download-songs", "sync"],
+    "core": ["download", "sync"],
 }
 
 

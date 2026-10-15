@@ -56,6 +56,7 @@ from lib.paths import (
 )
 from lib.catalog.indexer import get_index
 from lib.catalog.matcher import MatchIndex, match_rows
+from organize.validate import validate
 
 load_dotenv()
 
@@ -187,10 +188,13 @@ def export_cmd(playlists, playlists_file, output, mine, service, export_type, se
               help='use DEBUG log level for spotdl/yt-dlp instead of INFO.')
 @click.option('--manual', is_flag=True, help='skip primary download and only prompt for fallback sources.')
 @click.option('--spotdl-fallback/--no-spotdl-fallback', 'spotdl_fallback', default=False, show_default=True, help='prompt for YouTube URL or local file when spotdl fails to find a track.')
+@click.option('--clean', is_flag=True,
+              help='run organize validate --all after successful download to organize the crate.')
+@click.option('--verbose', '-v', is_flag=True)
 def spotify_cmd(url_file, output, fmt, bitrate, overwrite_errors,
                  skip_existing, validate_only, batch_size, retries,
                  retry_delay, pre_skip_existing, cookies_from_browser,
-                 cookie_file, spotdl_fallback, manual, debug):
+                 cookie_file, spotdl_fallback, manual, debug, clean, verbose):
     """download audio from spotify urls via spotdl."""
     if not url_file:
         export_dir = get_export_dir()
@@ -215,9 +219,30 @@ def spotify_cmd(url_file, output, fmt, bitrate, overwrite_errors,
             debug=debug,
             spotdl_fallback=spotdl_fallback,
             manual=manual,
+            verbose=verbose,
         )
         if not success:
             sys.exit(1)
+
+        # If --clean flag is used, run organize validate --all after successful download
+        # (for download-only commands like spotify, ytdl, soundcloud)
+        if clean and not validate_only:
+            if verbose:
+                click.echo("Download completed successfully. Running organize validate --all to organize the crate...")
+            # Invoke the validate command with --all flag
+            # We need to invoke it as a function since we're already in a click context
+            try:
+                # Create a context for the validate command
+                ctx = click.get_current_context(silent=True)
+                if ctx:
+                    # We're already in a click context, invoke the validate subcommand
+                    ctx.invoke(validate, file_path=None, all=True, apply=False, verbose=verbose)
+                else:
+                    # Fallback: call validate directly (though this won't work perfectly without click context)
+                    click.echo("warning: Cannot invoke organize validate --all from within another command", err=True)
+            except Exception as e:
+                click.echo(f"warning: Failed to run organize validate --all: {e}", err=True)
+
     except Exception as e:
         click.echo(f"error: {e}", err=True)
         sys.exit(1)
@@ -243,9 +268,11 @@ def spotify_cmd(url_file, output, fmt, bitrate, overwrite_errors,
               help='browser name to pull cookies from (e.g. chrome, firefox).')
 @click.option('--ffmpeg', 'ffmpeg_path', type=click.Path(exists=True),
               help='ffmpeg executable path, overriding FFMPEG_PATH.')
+@click.option('--clean', is_flag=True,
+              help='run organize validate --all after successful download to organize the crate.')
 def ytdl_cmd(url, output, audio_format, audio_quality, no_thumbnail,
              overwrite, verbose, metadata_only, cookies_from_browser,
-             ffmpeg_path):
+             ffmpeg_path, clean):
     """download a track, set/playlist, or album from any yt-dlp-supported
     source (soundcloud, youtube, ...)."""
     try:
@@ -263,6 +290,25 @@ def ytdl_cmd(url, output, audio_format, audio_quality, no_thumbnail,
         )
         if not success:
             sys.exit(1)
+
+        # If --clean flag is used, run organize validate --all after successful download
+        # (for download-only commands like spotify, ytdl, soundcloud)
+        if clean and not metadata_only:
+            if verbose:
+                click.echo("Download completed successfully. Running organize validate --all to organize the crate...")
+            # Invoke the validate command with --all flag
+            try:
+                # Create a context for the validate command
+                ctx = click.get_current_context(silent=True)
+                if ctx:
+                    # We're already in a click context, invoke the validate subcommand
+                    ctx.invoke(validate, file_path=None, all=True, apply=False, verbose=verbose)
+                else:
+                    # Fallback: call validate directly (though this won't work perfectly without click context)
+                    click.echo("warning: Cannot invoke organize validate --all from within another command", err=True)
+            except Exception as e:
+                click.echo(f"warning: Failed to run organize validate --all: {e}", err=True)
+
     except Exception as e:
         click.echo(f"error: {e}", err=True)
         sys.exit(1)
@@ -297,10 +343,13 @@ def ytdl_cmd(url, output, audio_format, audio_quality, no_thumbnail,
               help='use DEBUG log level for spotdl/yt-dlp instead of INFO.')
 @click.option('--manual', is_flag=True, help='skip primary download and only prompt for fallback sources.')
 @click.option('--soundcloud-fallback/--no-soundcloud-fallback', 'soundcloud_fallback', default=False, show_default=True, help='prompt for YouTube URL or local file when soundcloud fails to find a track.')
+@click.option('--clean', is_flag=True,
+              help='run organize validate --all after successful download to organize the crate.')
+@click.option('--verbose', '-v', is_flag=True)
 def soundcloud_cmd(url_file, output, fmt, bitrate, overwrite_errors,
                     skip_existing, validate_only, batch_size, retries,
                     retry_delay, pre_skip_existing, cookies_from_browser,
-                    cookie_file, soundcloud_fallback, manual, debug):
+                    cookie_file, soundcloud_fallback, manual, debug, clean, verbose):
     """download audio from soundcloud urls via ytdl."""
     if not url_file:
         export_dir = get_export_dir()
@@ -325,9 +374,29 @@ def soundcloud_cmd(url_file, output, fmt, bitrate, overwrite_errors,
             debug=debug,
             soundcloud_fallback=soundcloud_fallback,
             manual=manual,
+            verbose=verbose,
         )
         if not success:
             sys.exit(1)
+
+        # If --clean flag is used, run organize validate --all after successful download
+        # (for download-only commands like spotify, ytdl, soundcloud)
+        if clean and not validate_only:
+            if verbose:
+                click.echo("Download completed successfully. Running organize validate --all to organize the crate...")
+            # Invoke the validate command with --all flag
+            try:
+                # Create a context for the validate command
+                ctx = click.get_current_context(silent=True)
+                if ctx:
+                    # We're already in a click context, invoke the validate subcommand
+                    ctx.invoke(validate, file_path=None, all=True, apply=False, verbose=verbose)
+                else:
+                    # Fallback: call validate directly (though this won't work perfectly without click context)
+                    click.echo("warning: Cannot invoke organize validate --all from within another command", err=True)
+            except Exception as e:
+                click.echo(f"warning: Failed to run organize validate --all: {e}", err=True)
+
     except Exception as e:
         click.echo(f"error: {e}", err=True)
         sys.exit(1)

@@ -54,7 +54,7 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
                    overwrite_errors=False, skip_existing=False,
                    validate_only=False, batch_size=1, pre_skip_existing=False,
                    retries=3, retry_delay=3, cookies_from_browser=None, cookie_file=None,
-                   debug=False, spotdl_fallback=False, manual=False):
+                   debug=False, spotdl_fallback=False, manual=False, verbose=False, clean=False):
     # Handle DOWNLOAD_PRE_SKIP_EXISTING environment variable as default for --pre-skip-existing
     import os
     env_pre_skip = os.environ.get('DOWNLOAD_PRE_SKIP_EXISTING', '')
@@ -87,7 +87,8 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
             # If not a valid integer, ignore the environment variable
             pass
 
-    print(f"processing spotify source: {url_file}")
+    if verbose:
+        print(f"processing spotify source: {url_file}")
 
     if not os.path.exists(url_file):
         print(f"error: url file/path not found: {url_file}")
@@ -100,7 +101,8 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
             # using it avoids triple-counting urls
             manifest = os.path.join(url_file, 'spotify_manifest.csv')
             if os.path.exists(manifest):
-                print(f"  using manifest: spotify_manifest.csv")
+                if verbose:
+                    print(f"  using manifest: spotify_manifest.csv")
                 urls.extend(_extract_urls_from_csv(manifest))
             else:
                 csv_files = glob.glob(os.path.join(url_file, '*.csv'))
@@ -108,7 +110,8 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
                     print(f"no csv files found in directory: {url_file}")
                     return False
                 for csv_file in csv_files:
-                    print(f"  reading urls from: {os.path.basename(csv_file)}")
+                    if verbose:
+                        print(f"  reading urls from: {os.path.basename(csv_file)}")
                     urls.extend(_extract_urls_from_csv(csv_file))
         elif url_file.lower().endswith('.csv'):
             urls = _extract_urls_from_csv(url_file)
@@ -146,12 +149,13 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
     # Pre-skip existence check
     if pre_skip_existing and metadata:
         existing, new, no_meta, library_root, library_index = _check_existing(urls, metadata, output_dir, format)
-        print(f"\nexistence check against: {library_root}")
-        print(f"  already downloaded : {existing}")
-        print(f"  new (to download)  : {new - no_meta}")
-        if no_meta:
-            print(f"  no metadata        : {no_meta} (will attempt download)")
-        print(f"  total unique urls  : {url_count}")
+        if verbose:
+            print(f"\nexistence check against: {library_root}")
+            print(f"  already downloaded : {existing}")
+            print(f"  new (to download)  : {new - no_meta}")
+            if no_meta:
+                print(f"  no metadata        : {no_meta} (will attempt download)")
+            print(f"  total unique urls  : {url_count}")
 
         if validate_only:
             print("\nuse without --validate-only to download.")
@@ -169,7 +173,8 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
                 if normalize_key(stem) not in library_index:
                     new_urls.append(url)
         skipped = len(urls) - len(new_urls)
-        print(f"\npre-skip: skipping {skipped} existing files, {len(new_urls)} to download.")
+        if verbose:
+            print(f"\npre-skip: skipping {skipped} existing files, {len(new_urls)} to download.")
         urls = new_urls
         url_count = len(urls)
         if url_count == 0:
@@ -184,8 +189,9 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
         # Process URLs in batches via fallback
         overall_success = True
         num_batches = (url_count + batch_size - 1) // batch_size
-        print(f"\nprocessing {url_count} urls in {num_batches} batch(es) of up to {batch_size}")
-        print(f"output directory: {resolve_output_dir(output_dir)}")
+        if verbose:
+            print(f"\nprocessing {url_count} urls in {num_batches} batch(es) of up to {batch_size}")
+            print(f"output directory: {resolve_output_dir(output_dir)}")
 
         resolved_output_dir = resolve_output_dir(output_dir)
         resolved_ffmpeg = ffmpeg_path()
@@ -195,7 +201,8 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
             end = min(start + batch_size, url_count)
             batch = urls[start:end]
             batch_num = batch_idx + 1
-            print(f"\n--- batch {batch_num}/{num_batches} ({len(batch)} urls) ---")
+            if verbose:
+                print(f"\n--- batch {batch_num}/{num_batches} ({len(batch)} urls) ---")
 
             fallback_succeeded, fallback_failed, batch_succeeded = fallback.process_fallback(
                 batch=batch,
@@ -243,15 +250,17 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
 
     overall_success = True
     num_batches = (url_count + batch_size - 1) // batch_size
-    print(f"\nprocessing {url_count} urls in {num_batches} batch(es) of up to {batch_size}")
-    print(f"output directory: {resolved_output_dir}")
+    if verbose:
+        print(f"\nprocessing {url_count} urls in {num_batches} batch(es) of up to {batch_size}")
+        print(f"output directory: {resolved_output_dir}")
 
     for batch_idx in range(num_batches):
         start = batch_idx * batch_size
         end = min(start + batch_size, url_count)
         batch = urls[start:end]
         batch_num = batch_idx + 1
-        print(f"\n--- batch {batch_num}/{num_batches} ({len(batch)} urls) ---")
+        if verbose:
+            print(f"\n--- batch {batch_num}/{num_batches} ({len(batch)} urls) ---")
 
         cmd = [sys.executable, "-m", "spotdl", "download"] + batch
         cmd.extend(["--format", format, "--bitrate", bitrate])
@@ -300,38 +309,45 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
                 break  # exit while loop to go to fallback
 
             if any(p in combined_output for p in HARD_FAILURE_PATTERNS):
-                print(f"hard failure (track unavailable): {batch}")
+                if verbose:
+                    print(f"hard failure (track unavailable): {batch}")
                 hard_failure_detected = True
                 break  # exit while loop to go to fallback
 
             if returncode != 0:
                 attempt += 1
                 if attempt <= retries:
-                    print(f"exit code {returncode}, retrying ({attempt}/{retries})...")
+                    if verbose:
+                        print(f"exit code {returncode}, retrying ({attempt}/{retries})...")
                     time.sleep(retry_delay)
                     continue
                 else:
-                    print(f"batch failed after {retries} retries")
+                    if verbose:
+                        print(f"batch failed after {retries} retries")
                     break  # exit while loop to go to fallback
 
             if any(p in combined_output for p in SOFT_FAILURE_PATTERNS):
                 attempt += 1
                 if attempt <= retries:
-                    print(f"soft failure detected, retrying ({attempt}/{retries})...")
+                    if verbose:
+                        print(f"soft failure detected, retrying ({attempt}/{retries})...")
                     time.sleep(retry_delay)
                     continue
                 else:
                     reason = next((p for p in SOFT_FAILURE_PATTERNS if p in combined_output), 'soft_failure')
-                    print(f"soft failure after {retries} retries ({reason}): {batch}")
+                    if verbose:
+                        print(f"soft failure after {retries} retries ({reason}): {batch}")
                     break  # exit while loop to go to fallback
 
-            print(f"batch {batch_num} downloaded successfully")
+            if verbose:
+                print(f"batch {batch_num} downloaded successfully")
             batch_succeeded = True
             break  # exit while loop
 
         # Handle hard failures specially - log to failed_downloads.txt and skip fallback
         if hard_failure_detected:
-            print(f"  Batch {batch_num} had hard failure (track unavailable).")
+            if verbose:
+                print(f"  Batch {batch_num} had hard failure (track unavailable).")
             overall_success = False
             # Log the failed URLs to failed_downloads.txt with track_unavailable reason
             fallback._log_urls('failed_downloads.txt', batch, reason='track_unavailable')
@@ -355,17 +371,21 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
                 fallback._log_urls('soft_failures.txt', fallback_failed, reason='spotdl_fallback_failed')
         elif not batch_succeeded:
             # No fallback or fallback not enabled, log failure
-            print(f"  Batch {batch_num} failed after all retries.")
+            if verbose:
+                print(f"  Batch {batch_num} failed after all retries.")
             overall_success = False
             # Determine if it was hard or soft failure? We don't have reason here.
             # For simplicity, log to soft_failures.txt (could be either)
             fallback._log_urls('soft_failures.txt', batch, reason='spotdl_exhausted_retries')
 
     if overall_success:
-        print(f"\nall batches processed. total: {url_count}")
+        if verbose:
+            print(f"\nall batches processed. total: {url_count}")
     else:
-        print(f"\ncompleted with some failures. check failed_downloads.txt and soft_failures.txt")
+        if verbose:
+            print(f"\ncompleted with some failures. check failed_downloads.txt and soft_failures.txt")
     return overall_success
+
 
 
 def _extract_urls_from_csv(csv_path):

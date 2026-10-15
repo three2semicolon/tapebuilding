@@ -1,5 +1,5 @@
 
-"""core.download_songs - download, import, and refresh in one pass, in-process.
+"""core.download - download, import, and refresh in one pass, in-process.
 
 renamed from pipelines/download_songs.py during the lib/ refactor. same
 three-step workflow, same fixed step order, same --apply/dry-run/--only
@@ -82,7 +82,7 @@ def _resolve_source(source):
 
 
 def run_download_songs(source=None, apply=False, archive_path_opt=None, drop=None,
-                       only=None, format='mp3', bitrate='320k', verbose=False):
+                       only=None, format='mp3', bitrate='320k', verbose=False, clean=False):
     """download -> beets-import -> playlists-refresh, in-process. plain,
     import-safe entry point - cli.py resolves click options into these
     kwargs and turns a failed result into an exit code; nothing in here
@@ -113,7 +113,7 @@ def run_download_songs(source=None, apply=False, archive_path_opt=None, drop=Non
     if 'download' in ordered:
         print("=== step 1: download ===")
         if not source:
-            msg = "the download step needs a source (url file/dir, or a single url)"
+            msg = "the download step needs a source (url file/dir, or a single spotify url)"
             print(f"  error: {msg}")
             record('download', False, error=msg)
         else:

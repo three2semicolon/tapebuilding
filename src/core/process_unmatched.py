@@ -26,7 +26,8 @@ def run_process_unmatched(
     pre_skip_existing=False,
     retries=0,
     manual=False,
-    verbose=False
+    verbose=False,
+    skip_initial_playlist_refresh=False
 ):
     """
     Execute the full unmatched tracks processing pipeline.
@@ -99,90 +100,24 @@ def run_process_unmatched(
     crate = archive_path_opt or archive_path()
 
     # Step 1: Refresh playlists to generate unmatched CSV
-    print("=== step 1: refresh playlists (rescrape/reindex) ===")
-    try:
-        # Note: build_playlists always returns True, but we check if unmatched CSV is generated
-        build_playlists(
-            apply=apply,
-            rescrape=True,  # Rescrape from Spotify to get latest data
-            reindex=True,
-            names=[],  # No specific names - use scope (owned playlists)
-            exclude_names=exclude_names or [],
-            service=service,
-            archive_path=crate,
-            playlists_path=playlists_path_resolved,
-            exports_dir=exports_dir_opt,
-            verbose=verbose
-        )
-
-        # Check if unmatched CSV was created
+    if skip_initial_playlist_refresh:
+        print("=== step 1: refresh playlists (rescrape/reindex) [SKIPPED] ===")
+        # When skipping, we still need to check if unmatched CSV exists
         unmatched_csv_path = os.path.join(service_exports_dir, 'unmatched.csv')
         if os.path.exists(unmatched_csv_path):
-            record('refresh-playlists', True)
+            record('refresh-playlists', True, skipped=True)
+            print(f"  using existing unmatched CSV: {unmatched_csv_path}")
         else:
-            record('refresh-playlists', False, error="unmatched CSV not generated")
-    except Exception as e:
-        record('refresh-playlists', False, error=str(e))
-    print()
-
-    # Step 2: Download from unmatched CSV (if it exists and we're not in dry-run or it exists)
-    if 'refresh-playlists' in [r['step'] for r in results if r['ok']]:
-        print("=== step 2: download from unmatched CSV ===")
-        unmatched_csv_path = os.path.join(service_exports_dir, 'unmatched.csv')
-        if not os.path.exists(unmatched_csv_path):
-            record('download', False, error="unmatched CSV not found")
-        else:
-            try:
-                # Configure download options
-                ok = download_spotify(
-                    url_file=unmatched_csv_path,
-                    output_dir=unorganized_dir,
-                    format=format,
-                    bitrate=bitrate,
-                    cookie_file=cookies_file,
-                    pre_skip_existing=pre_skip_existing,
-                    retries=retries,
-                    validate_only=not apply,  # Dry run mode
-                    debug=verbose,
-                    manual=manual
-                )
-                record('download', ok)
-            except Exception as e:
-                record('download', False, error=str(e))
+            record('refresh-playlists', False, error="unmatched CSV not found and initial refresh was skipped")
     else:
-        record('download', True, skipped=True)  # Skip if previous step failed
-    print()
-
-    # Step 3: Import downloaded files
-    download_success = any(r['step'] == 'download' and r['ok'] and not r['skipped'] for r in results)
-    if download_success:
-        print("=== step 3: import downloaded files ===")
+        print("=== step 1: refresh playlists (rescrape/reindex) ===")
         try:
-            import_result = run_import(
-                input_dir=unorganized_dir,
-                output_dir=crate,
-                dry_run=not apply,
-                verbose=verbose
-            )
-            ok = import_result.get('ok', False)
-            record('import', ok)
-        except Exception as e:
-            record('import', False, error=str(e))
-    else:
-        record('import', True, skipped=True)  # Skip if download failed/skipped
-    print()
-
-    # Step 4: Refresh playlists (reindex only) to sync with updated library
-    import_success = any(r['step'] == 'import' and r['ok'] and not r['skipped'] for r in results)
-    if import_success:
-        print("=== step 4: refresh playlists (reindex only) ===")
-        try:
-            # Note: We don't rescrape here as we just want to sync local playlists with current library
+            # Note: build_playlists always returns True, but we check if unmatched CSV is generated
             build_playlists(
                 apply=apply,
-                rescrape=False,  # Don't rescrape Spotify - use existing export data
-                reindex=True,    # Rebuild local playlists to match current library
-                names=[],        # No specific names - use scope (owned playlists)
+                rescrape=True,  # Rescrape from Spotify to get latest data
+                reindex=True,
+                names=[],  # No specific names - use scope (owned playlists)
                 exclude_names=exclude_names or [],
                 service=service,
                 archive_path=crate,
@@ -190,15 +125,135 @@ def run_process_unmatched(
                 exports_dir=exports_dir_opt,
                 verbose=verbose
             )
-            # Check if this step succeeded by verifying no error was recorded
-            # build_playlists doesn't return success/failure, so we assume it worked
-            # unless an exception was thrown
-            record('refresh-playlists-sync', True)
-            print("  synced playlists with library")
+
+            # Check if unmatched CSV was created
+            unmatched_csv_path = os.path.join(service_exports_dir, 'unmatched.csv')
+            if os.path.exists(unmatched_csv_path):
+                record('refresh-playlists', True)
+            else:
+                record('refresh-playlists', False, error="unmatched CSV not generated")
         except Exception as e:
-            record('refresh-playlists-sync', False, error=str(e))
+            record('refresh-playlists', False, error=str(e))
+    print()
+
+    # Step 2: Download from unmatched CSV (if it exists and we're not in dry-run or it exists)
+    # When skip_initial_playlist_refresh is True, we skip download entirely
+    if skip_initial_playlist_refresh:
+        record('download', True, skipped=True)  # Completely skip download step
     else:
-        record('refresh-playlists-sync', True, skipped=True)  # Skip if import failed/skipped
+        # Normal behavior: proceed if previous step was successful
+        if 'refresh-playlists' in [r['step'] for r in results if r['ok']]:
+            print("=== step 2: download from unmatched CSV ===")
+            unmatched_csv_path = os.path.join(service_exports_dir, 'unmatched.csv')
+            if not os.path.exists(unmatched_csv_path):
+                record('download', False, error="unmatched CSV not found")
+            else:
+                try:
+                    # Configure download options
+                    ok = download_spotify(
+                        url_file=unmatched_csv_path,
+                        output_dir=unorganized_dir,
+                        format=format,
+                        bitrate=bitrate,
+                        cookie_file=cookies_file,
+                        pre_skip_existing=pre_skip_existing,
+                        retries=retries,
+                        validate_only=not apply,  # Dry run mode
+                        debug=verbose,
+                        manual=manual
+                    )
+                    record('download', ok)
+                except Exception as e:
+                    record('download', False, error=str(e))
+        else:
+            record('download', True, skipped=True)  # Skip if previous step failed
+    print()
+
+    # Step 3: Import downloaded files
+    # When skip_initial_playlist_refresh is True, we skip import entirely
+    if skip_initial_playlist_refresh:
+        record('import', True, skipped=True)  # Completely skip import step
+    else:
+        # Normal behavior: proceed if download was attempted (not skipped)
+        download_attempted = any(r['step'] == 'download' and not r['skipped'] for r in results)
+        if download_attempted:
+            print("=== step 3: import downloaded files ===")
+            try:
+                import_result = run_import(
+                    input_dir=unorganized_dir,
+                    output_dir=crate,
+                    dry_run=not apply,
+                    verbose=verbose
+                )
+                ok = import_result.get('ok', False)
+                record('import', ok)
+            except Exception as e:
+                record('import', False, error=str(e))
+        else:
+            record('import', True, skipped=True)  # Skip if download failed/skipped
+    print()
+
+    # Step 4: Refresh playlists (reindex only) to sync with updated library
+    # When skip_initial_playlist_refresh is True, we still perform the sync step
+    # but record it as skipped to indicate we didn't do the initial refresh
+    # Only perform sync if we had a CSV to work from (step 1 was successful)
+    if skip_initial_playlist_refresh:
+        # Check if we had a CSV to work from (step 1 was successful)
+        had_csv = any(r['step'] == 'refresh-playlists' and r['ok'] for r in results)
+        if had_csv:
+            print("=== step 4: refresh playlists (reindex only) [SYNC ONLY] ===")
+            try:
+                # Note: We don't rescrape here as we just want to sync local playlists with current library
+                build_playlists(
+                    apply=apply,
+                    rescrape=False,  # Don't rescrape Spotify - use existing export data
+                    reindex=True,    # Rebuild local playlists to match current library
+                    names=[],        # No specific names - use scope (owned playlists)
+                    exclude_names=[],  # When skipping initial refresh, don't apply exclude names to sync
+                    service=service,
+                    archive_path=crate,
+                    playlists_path=playlists_path_resolved,
+                    exports_dir=exports_dir_opt,
+                    verbose=verbose
+                )
+                # Check if this step succeeded by verifying no error was recorded
+                # build_playlists doesn't return success/failure, so we assume it worked
+                # unless an exception was thrown
+                record('refresh-playlists-sync', True, skipped=True)  # Execute but record as skipped
+                print("  synced playlists with library")
+            except Exception as e:
+                record('refresh-playlists-sync', False, error=str(e))
+        else:
+            # No CSV to work from, skip the sync step entirely
+            record('refresh-playlists-sync', True, skipped=True)  # Skip if no CSV to sync from
+    else:
+        # Normal behavior: proceed if import was successful
+        import_success = any(r['step'] == 'import' and r['ok'] and not r['skipped'] for r in results)
+        if import_success:
+            print("=== step 4: refresh playlists (reindex only) ===")
+            try:
+                # Note: We don't rescrape here as we just want to sync local playlists with current library
+                build_playlists(
+                    apply=apply,
+                    rescrape=False,  # Don't rescrape Spotify - use existing export data
+                    reindex=True,    # Rebuild local playlists to match current library
+                    names=[],        # No specific names - use scope (owned playlists)
+                    exclude_names=exclude_names or [],
+                    service=service,
+                    archive_path=crate,
+                    playlists_path=playlists_path_resolved,
+                    exports_dir=exports_dir_opt,
+                    verbose=verbose
+                )
+                # Check if this step succeeded by verifying no error was recorded
+                # build_playlists doesn't return success/failure, so we assume it worked
+                # unless an exception was thrown
+                record('refresh-playlists-sync', True)
+                print("  synced playlists with library")
+            except Exception as e:
+                record('refresh-playlists-sync', False, error=str(e))
+        else:
+            record('refresh-playlists-sync', True, skipped=True)  # Skip if import failed/skipped
     print()
 
     # Overall result

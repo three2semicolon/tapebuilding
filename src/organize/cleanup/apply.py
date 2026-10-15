@@ -302,33 +302,48 @@ def run_cleanup(crate=None, apply=False, no_tag_write=False,
     print(f"  title tags to write     : {0 if no_tag_write else len([])}")  # No title tag writes implemented
     print(f"  'Various Artists' albums  : {len(va_groups)}")
     print(f"  split (false VA collision): {len(split_groups)}")
-
-    if va_groups:
-        print("\n  VA albums (no single majority artist -> filed under 'Various Artists'):")
-        for album, n, srcs in sorted(va_groups, key=lambda x: -x[1])[:25]:
-            print(f"    {n:>4} files  {album!r}  (from {len(srcs)} folder{'s' if len(srcs)!=1 else ''})")
-
     if split_groups:
-        print("\n  split apart (Bug 2 - same-titled but unrelated singles, filed separately"
-              " instead of merged as 'Various Artists'):")
-        for album, n, artists in sorted(split_groups, key=lambda x: -x[1])[:25]:
-            print(f"    {n:>4} files  {album!r}  [{', '.join(artists)}]")
-
-    if ambiguous_groups:
-        print("\n  ambiguous groups (>=4 tracks, unclear structure - kept merged for review):")
-        for album, n, artists in sorted(ambiguous_groups, key=lambda x: -x[1])[:25]:
-            print(f"    {n:>4} files  {album!r}  [{', '.join(artists)}]")
-
-    # suspiciously large groups are a wrong-merge smell - list the biggest
-    big = sorted(((dominant_album(m), len(m), os.path.basename(os.path.dirname(m[0]['path'])))
-                  for k, m in groups.items() if k[0] == 'album' and len(m) > 1),
-                 key=lambda x: -x[1])[:15]
-    if big:
-        print("\n  largest album groups (review for wrong merges - same album name, different real albums):")
-        for album, n, cur in big:
-            print(f"    {n:>5} files  {album!r}  (now in: {cur})")
+        split_albums = sorted({album for album, _, _ in split_groups})
+        print(f"  split albums              : {', '.join(split_albums)}")
+    # Show largest album groups summary (details in verbose)
+    if groups:
+        # Find the largest album group(s)
+        album_group_lengths = [(dominant_album(m), len(m)) for k, m in groups.items() if k[0] == 'album' and len(m) > 1]
+        if album_group_lengths:
+            max_length = max(length for _, length in album_group_lengths)
+            largest_groups = [album for album, length in album_group_lengths if length == max_length]
+            largest_groups_str = ', '.join([f"'{g}'" for g in largest_groups])
+            if len(largest_groups) == 1:
+                print(f"  largest album groups: {largest_groups_str} ({max_length} tracks)")
+            else:
+                print(f"  largest album groups: {largest_groups_str} ({max_length} tracks each)")
 
     if verbose:
+        if va_groups:
+            print("\n  VA albums (no single majority artist -> filed under 'Various Artists'):")
+            for album, n, srcs in sorted(va_groups, key=lambda x: -x[1])[:25]:
+                print(f"    {n:>4} files  {album!r}  (from {len(srcs)} folder{'s' if len(srcs)!=1 else ''})")
+
+        if split_groups:
+            print("\n  split apart (Bug 2 - same-titled but unrelated singles, filed separately"
+                  " instead of merged as 'Various Artists'):")
+            for album, n, artists in sorted(split_groups, key=lambda x: -x[1])[:25]:
+                print(f"    {n:>4} files  {album!r}  [{', '.join(artists)}]")
+
+        if ambiguous_groups:
+            print("\n  ambiguous groups (>=4 tracks, unclear structure - kept merged for review):")
+            for album, n, artists in sorted(ambiguous_groups, key=lambda x: -x[1])[:25]:
+                print(f"    {n:>4} files  {album!r}  [{', '.join(artists)}]")
+
+        # suspiciously large groups are a wrong-merge smell - list the biggest
+        big = sorted(((dominant_album(m), len(m), os.path.basename(os.path.dirname(m[0]['path'])))
+                      for k, m in groups.items() if k[0] == 'album' and len(m) > 1),
+                     key=lambda x: -x[1])[:15]
+        if big:
+            print("\n  largest album groups (review for wrong merges - same album name, different real albums):")
+            for album, n, cur in big:
+                print(f"    {n:>5} files  {album!r}  (now in: {cur})")
+
         if album_moves:
             print("\n  album moves:")
             for src, dst, aa in album_moves[:5000]:

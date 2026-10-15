@@ -11,7 +11,7 @@ from typing import List, Dict, Any, Optional
 
 from download.manifest import predict_output_filename
 from download.existing import resolve_output_dir
-from download.ytdl import OUTTMPL_PLAYLIST, OUTTMPL_SINGLE, is_playlist_url
+from download.ytdl import OUTTMPL_PLAYLIST, OUTTMPL_SINGLE, is_playlist_url, download_ytdl
 from lib.paths import ffmpeg_path as resolve_ffmpeg_path
 from lib.text import normalize_key
 from organize.normalize_artists import normalize_artist
@@ -61,12 +61,20 @@ def process_fallback(
     print(f"\nInitiating fallback for batch...")
     fallback_succeeded = []
     fallback_failed = []
+    fallback_skipped = []
+    skip_all_remaining = False  # Track if user wants to skip all remaining downloads
 
     # Determine metadata keys based on service
     artist_key = 'artist' if is_spotify else 'uploader'
     track_key = 'track' if is_spotify else 'title'
 
     for url in batch:
+        # If user chose to skip all remaining, skip this URL without prompting
+        if skip_all_remaining:
+            print(f"  Skipping all remaining downloads (including '{artist} - {track}') due to previous skip-all.")
+            fallback_skipped.append(url)
+            continue
+
         meta = metadata.get(url) or {}
         artist = meta.get(artist_key, '')
         track = meta.get(track_key, '')
@@ -109,12 +117,13 @@ def process_fallback(
                 default='', show_default=False
             )
         except (EOFError, click.exceptions.Abort):
-            # Treat as empty input (skip)
+            # Treat as empty input (skip) - also set flag to skip all remaining downloads
             user_input = ''
+            skip_all_remaining = True
 
         if not user_input:
             print(f"  Skipping fallback for '{artist} - {track}'.")
-            fallback_failed.append(url)
+            fallback_skipped.append(url)
             continue
 
         # Determine if input is a URL or file path
@@ -122,58 +131,18 @@ def process_fallback(
             # Treat as URL, download via ytdl but use original metadata for naming
             print(f"  Downloading via ytdl from URL: {user_input}")
 
-            # Prepare ytdl options
-            final_output_dir = resolve_output_dir(output_dir)
-            tmpl = OUTTMPL_PLAYLIST if is_playlist_url(user_input) else OUTTMPL_SINGLE
-            outtmpl = os.path.join(final_output_dir, tmpl)
-
-            ydl_opts = {
-                'format': 'bestaudio/best',
-                'outtmpl': outtmpl,
-                'quiet': True,  # verbose=False in fallback
-                'verbose': False,
-                'ignoreerrors': True,
-                'nooverwrites': not overwrite_errors,
-                'postprocessors': [],
-            }
-
-            if format != 'best':
-                ydl_opts['postprocessors'].append({
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': format,
-                    'preferredquality': '0',  # best VBR
-                })
-
-            ydl_opts['postprocessors'].append({
-                'key': 'FFmpegMetadata',
-                'add_metadata': True,
-            })
-
-            if True:  # embed_thumbnail - always embed in fallback for consistency
-                ydl_opts['postprocessors'].append({'key': 'EmbedThumbnail'})
-                ydl_opts['writethumbnail'] = True
-
-            ffmpeg = resolved_ffmpeg or resolve_ffmpeg_path()
-            if ffmpeg:
-                ydl_opts['ffmpeg_location'] = ffmpeg
-
-            if cookies_from_browser:
-                ydl_opts['cookiesfrombrowser'] = (cookies_from_browser,)
-
-            # Override the output template to use our predicted filename based on original metadata
-            forced_outtmpl = os.path.join(final_output_dir, predict_output_filename(artist, track, format))
-            ydl_opts['outtmpl'] = forced_outtmpl
-
-            print(f"  Saving as: {predict_output_filename(artist, track, format)}")
-
-            try:
-                import yt_dlp
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    result = ydl.download([user_input])
-                ytdl_success = result == 0
-            except Exception as e:
-                print(f"  error during download: {e}")
-                ytdl_success = False
+            ytdl_success = download_ytdl(
+                user_input,
+                output_dir=resolve_output_dir(output_dir),
+                audio_format=format,
+                audio_quality='0',
+                embed_thumbnail=True,
+                overwrite=overwrite_errors,
+                verbose=False,
+                metadata_only=False,
+                cookies_from_browser=cookies_from_browser,
+                ffmpeg_path=resolved_ffmpeg,
+            )
 
             if ytdl_success:
                 print(f"  Successfully downloaded via ytdl.")
@@ -197,13 +166,21 @@ def process_fallback(
                 fallback_failed.append(url)
 
     # Determine if batch succeeded via fallback
-    batch_succeeded_via_fallback = len(fallback_failed) == 0
+    # Only actual failures matter, not intentional skips
+    # The batch succeeds via fallback only if there are no failures AND no skips
+    # (if user skips, we consider that as not succeeding via fallback)
+    batch_succeeded_via_fallback = len(fallback_failed) == 0 and len(fallback_skipped) == 0
 
     if fallback_failed:
         print(f"  Fallback failed for {len(fallback_failed)} URL(s) in batch.")
         # Log the failed URLs
         _log_urls('soft_failures.txt', fallback_failed, reason='fallback_failed')
+    elif fallback_skipped:
+        print(f"  Skipped fallback for {len(fallback_skipped)} URL(s) in batch.")
     else:
         print(f"  All URLs in batch succeeded via fallback.")
 
-    return fallback_succeeded, fallback_failed, batch_succeeded_via_fallback
+    # For return value, combine failed and skipped URLs as "failed" to maintain test compatibility
+    # but keep logging separate (only actual failures are logged)
+    total_failed = fallback_failed + fallback_skipped
+    return fallback_succeeded, total_failed, batch_succeeded_via_fallback

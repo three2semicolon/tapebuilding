@@ -21,6 +21,7 @@ from organize.cleanup import resolve_crate, run_cleanup, check_tags
 from organize.preimport import stage
 from organize.beets_import import run_import, export_library_csv
 from organize.journal import list_runs, undo_run
+from organize.validate import validate
 
 load_dotenv()
 
@@ -165,6 +166,9 @@ def import_cmd(input_dir, output_dir, dry_run, only_pass, timid,
     )
     if not success:
         sys.exit(1)
+
+
+organize.add_command(validate)
 
 
 if __name__ == '__main__':
