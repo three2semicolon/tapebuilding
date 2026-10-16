@@ -170,18 +170,25 @@ def unload_tapedeck(kind, specs, apply=False, verbose=False, archive_path=None,
     return summary
 
 
-def list_tapedeck(kind=None, tapedeck_path=None, verbose=False):
-    """summarise what's staged on the tapedeck. plain, import-safe entry
-    point - see load_tapedeck()."""
-    deck = tapedeck_root(tapedeck_path)
-    if not os.path.isdir(deck):
-        print(f"tapedeck not found: {deck}")
-        return None
-    print(f"tapedeck: {deck}")
+def _collect_subdirectory_stats(deck):
+    """Collect statistics for each subdirectory in the tapedeck.
 
+    Args:
+        deck: Path to tapedeck root directory
+
+    Returns:
+        Dictionary mapping subdirectory names to their statistics:
+        {
+            'subdir': {
+                'files': file count,
+                'folders': folder count,
+                'size': total size in bytes,
+                'root': absolute path to subdirectory,
+                'groups': dict mapping relative paths to file lists
+            }
+        }
+    """
     stats = {}
-    total_files = 0
-    total_bytes = 0
     for sub in ('albums', 'singles', 'soundtracks', 'playlists'):
         root = os.path.join(deck, sub)
         if not os.path.isdir(root):
@@ -196,15 +203,29 @@ def list_tapedeck(kind=None, tapedeck_path=None, verbose=False):
         size = sum(os.path.getsize(f) for f in files)
         stats[sub] = {'files': len(files),
                       'folders': sum(1 for k in folder_files if k is not None),
-                      'size': size, 'root': root, 'groups': folder_files}
-        total_files += len(files)
-        total_bytes += size
+                      'size': size,
+                      'root': root,
+                      'groups': folder_files}
+    return stats
+
+
+def list_tapedeck(kind=None, tapedeck_path=None, verbose=False):
+    """summarise what's staged on the tapedeck. plain, import-safe entry
+    point - see load_tapedeck()."""
+    deck = tapedeck_root(tapedeck_path)
+    if not os.path.isdir(deck):
+        print(f"tapedeck not found: {deck}")
+        return None
+    print(f"tapedeck: {deck}")
+
+    stats = _collect_subdirectory_stats(deck)
 
     if not stats:
         print("  (empty - nothing staged yet)")
         return stats
 
-    print(f"  {total_files} files, {_fmt_size(total_bytes)}\n")
+    total_files, total_bytes = _calculate_totals(stats)
+    _print_header(total_files, total_bytes)
 
     kind_to_sub = {'album': 'albums', 'song': 'singles', 'soundtrack': 'soundtracks',
                    'playlist': 'playlists'}
@@ -215,18 +236,54 @@ def list_tapedeck(kind=None, tapedeck_path=None, verbose=False):
               'soundtracks': 'Soundtracks', 'playlists': 'Playlists'}
     for sub in subs:
         s = stats[sub]
-        head = [f"{s['files']} files"]
-        if s['folders']:
-            head.insert(0, f"{s['folders']} folder(s)")
-        print(f"{labels[sub]:<12} {', '.join(head)}, {_fmt_size(s['size'])}")
-        if not verbose:
-            continue
-        if sub in ('singles', 'playlists'):              # flat: one .m3u8 / single per entry
-            for f in sorted(s['groups'].get(None, [])):
-                print(f"    {os.path.basename(f)}  ({_fmt_size(os.path.getsize(f))})")
-        else:                                             # nested: per-folder summary
-            for key in sorted(k for k in s['groups'] if k is not None):
-                grp = s['groups'][key]
-                sz = _fmt_size(sum(os.path.getsize(x) for x in grp))
-                print(f"    {key}  ({len(grp)} files, {sz})")
+        _print_subfolder_stats(s, labels[sub], verbose)
     return stats
+
+
+def _calculate_totals(stats):
+    """Calculate total files and bytes from stats dictionary.
+
+    Args:
+        stats: Dictionary returned by _collect_subdirectory_stats
+
+    Returns:
+        Tuple of (total_files, total_bytes)
+    """
+    total_files = sum(s['files'] for s in stats.values())
+    total_bytes = sum(s['size'] for s in stats.values())
+    return total_files, total_bytes
+
+
+def _print_header(total_files, total_bytes):
+    """Print the header line with total counts.
+
+    Args:
+        total_files: Total number of files
+        total_bytes: Total size in bytes
+    """
+    print(f"  {total_files} files, {_fmt_size(total_bytes)}\n")
+
+
+def _print_subfolder_stats(stats, label, verbose):
+    """Print statistics for a single subdirectory.
+
+    Args:
+        stats: Statistics dictionary for one subdirectory
+        label: Display label for the subdirectory (e.g., 'Albums')
+        verbose: Whether to show verbose details
+    """
+    head = [f"{stats['files']} files"]
+    if stats['folders']:
+        head.insert(0, f"{stats['folders']} folder(s)")
+    print(f"{label:<12} {', '.join(head)}, {_fmt_size(stats['size'])}")
+    if not verbose:
+        return
+    if label in ('Singles', 'Playlists'):              # flat: one .m3u8 / single per entry
+        for f in sorted(stats['groups'].get(None, [])):
+            print(f"    {os.path.basename(f)}  ({_fmt_size(os.path.getsize(f))})")
+    else:                                             # nested: per-folder summary
+        for key in sorted(k for k in stats['groups'] if k is not None):
+            grp = stats['groups'][key]
+            sz = _fmt_size(sum(os.path.getsize(x) for x in grp))
+            print(f"    {key}  ({len(grp)} files, {sz})")
+

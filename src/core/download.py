@@ -62,34 +62,22 @@ def _looks_like_url(s):
     return s.startswith(('http://', 'https://', 'spotify:')) or 'open.spotify.com' in s
 
 
-def _is_spotify_url(s):
-    """Return True if s is a Spotify URL or URI."""
-    return s.startswith(('https://open.spotify.com/', 'http://open.spotify.com/', 'spotify:'))
+def _handle_configuration_and_paths(source, apply, archive_path_opt, drop, only, format, bitrate, verbose, clean):
+    """Handle configuration and path resolution for the download songs pipeline.
 
+    Args:
+        source: Source for download (file/dir, URL, or None)
+        apply: Whether to apply changes or just preview
+        archive_path_opt: Optional archive path override
+        drop: Optional drop directory override
+        only: Optional list of steps to run
+        format: Audio format for download
+        bitrate: Audio bitrate for download
+        verbose: Whether to show verbose output
+        clean: Whether to clean up temporary files
 
-def _resolve_source(source):
-    """return a url-file path download_spotify() accepts. accepts an existing
-    file/dir, or a bare spotify url (written to a temp one-line .txt). returns
-    (path, tmp_to_unlink) so the caller can clean up; (None, None) on bad input."""
-    if source and os.path.exists(source):
-        return source, None
-    if source and _looks_like_url(source):
-        tmp = tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False, encoding='utf-8')
-        tmp.write(source.strip() + '\n')
-        tmp.close()
-        return tmp.name, tmp.name
-    return None, None
-
-
-def run_download_songs(source=None, apply=False, archive_path_opt=None, drop=None,
-                       only=None, format='mp3', bitrate='320k', verbose=False, clean=False):
-    """download -> beets-import -> playlists-refresh, in-process. plain,
-    import-safe entry point - cli.py resolves click options into these
-    kwargs and turns a failed result into an exit code; nothing in here
-    calls sys.exit() itself.
-
-    returns {'steps': [{'step', 'ok', 'error', 'skipped'}, ...], 'ok': bool}
-    - overall 'ok' is False if any non-skipped step failed or raised.
+    Returns:
+        tuple: (crate, resolved_drop, selected, ordered)
     """
     crate = archive_path_opt or archive_path()
     resolved_drop = drop or os.path.join(crate, 'unorganized')
@@ -103,12 +91,26 @@ def run_download_songs(source=None, apply=False, archive_path_opt=None, drop=Non
     print(f"mode   : {'apply' if apply else 'dry run (each step runs in its own preview mode)'}")
     print()
 
+    return crate, resolved_drop, selected, ordered
+
+
+def _download_step(source, resolved_drop, format, bitrate, verbose, ordered, record, apply):
+    """Handle the download step of the download songs pipeline.
+
+    Args:
+        source: Source for download (file/dir, URL, or None)
+        resolved_drop: Path to the drop directory
+        format: Audio format for download
+        bitrate: Audio bitrate for download
+        verbose: Whether to show verbose output
+        ordered: List of steps to run in order
+        record: Function to record step results
+        apply: Whether to apply changes or just preview
+
+    Returns:
+        tuple: (tmp_path, updated_apply) - tmp_path for cleanup tracking, apply unchanged
+    """
     tmp_path = None
-    results = []
-
-    def record(step, ok, error=None, skipped=False):
-        results.append({'step': step, 'ok': ok, 'error': error, 'skipped': skipped})
-
     # step 1: download - spotdl for Spotify URLs, ytdl for others
     if 'download' in ordered:
         print("=== step 1: download ===")
@@ -169,8 +171,23 @@ def run_download_songs(source=None, apply=False, archive_path_opt=None, drop=Non
                 msg = f"source not found and not a valid URL: {source}"
                 print(f"  error: {msg}")
                 record('download', False, error=msg)
-        print()
+    return tmp_path, apply
 
+
+def _import_step(resolved_drop, crate, ordered, record, apply, verbose):
+    """Handle the import step of the download songs pipeline.
+
+    Args:
+        resolved_drop: Path to the drop directory
+        crate: Path to the crate directory
+        ordered: List of steps to run in order
+        record: Function to record step results
+        apply: Whether to apply changes or just preview
+        verbose: Whether to show verbose output
+
+    Returns:
+        None (results are recorded via the record function)
+    """
     # step 2: import - beets_import moves <drop> into albums/ + singles/ and
     # registers it in beets.db.
     if 'import' in ordered:
@@ -203,8 +220,21 @@ def run_download_songs(source=None, apply=False, archive_path_opt=None, drop=Non
             except Exception as e:
                 print(f"  error: {e}")
                 record('import', False, error=str(e))
-        print()
 
+
+def _playlists_step(crate, ordered, record, apply, verbose):
+    """Handle the playlists step of the download songs pipeline.
+
+    Args:
+        crate: Path to the crate directory
+        ordered: List of steps to run in order
+        record: Function to record step results
+        apply: Whether to apply changes or just preview
+        verbose: Whether to show verbose output
+
+    Returns:
+        None (results are recorded via the record function)
+    """
     # step 3: refresh playlists - rebuild the .m3u8s; reindex so the
     # just-imported files are picked up.
     if 'playlists' in ordered:
@@ -216,14 +246,100 @@ def run_download_songs(source=None, apply=False, archive_path_opt=None, drop=Non
         except Exception as e:
             print(f"  error: {e}")
             record('playlists', False, error=str(e))
-        print()
 
+
+def _is_spotify_url(s):
+    """Return True if s is a Spotify URL or URI."""
+    return s.startswith(('https://open.spotify.com/', 'http://open.spotify.com/', 'spotify:'))
+
+
+def _resolve_source(source):
+    """return a url-file path download_spotify() accepts. accepts an existing
+    file/dir, or a bare spotify url (written to a temp one-line .txt). returns
+    (path, tmp_to_unlink) so the caller can clean up; (None, None) on bad input."""
+    if source and os.path.exists(source):
+        return source, None
+    if source and _looks_like_url(source):
+        tmp = tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False, encoding='utf-8')
+        tmp.write(source.strip() + '\n')
+        tmp.close()
+        return tmp.name, tmp.name
+    return None, None
+
+
+def run_download_songs(source=None, apply=False, archive_path_opt=None, drop=None,
+                       only=None, format='mp3', bitrate='320k', verbose=False, clean=False):
+    """download -> beets-import -> playlists-refresh, in-process. plain,
+    import-safe entry point - cli.py resolves click options into these
+    kwargs and turns a failed result into an exit code; nothing in here
+    calls sys.exit() itself.
+
+    returns {'steps': [{'step', 'ok', 'error', 'skipped'}, ...], 'ok': bool}
+    - overall 'ok' is False if any non-skipped step failed or raised.
+    """
+    # Handle configuration and path resolution
+    crate, resolved_drop, selected, ordered = _handle_configuration_and_paths(
+        source, apply, archive_path_opt, drop, only, format, bitrate, verbose, clean
+    )
+
+    # Initialize tracking variables
+    tmp_path = None
+    results = []
+
+    def record(step, ok, error=None, skipped=False):
+        results.append({'step': step, 'ok': ok, 'error': error, 'skipped': skipped})
+
+    # step 1: download - spotdl for Spotify URLs, ytdl for others
+    tmp_path, apply = _download_step(
+        source, resolved_drop, format, bitrate, verbose, ordered, record, apply
+    )
+    print()
+
+    # step 2: import - beets_import moves <drop> into albums/ + singles/ and
+    # registers it in beets.db.
+    _import_step(
+        resolved_drop, crate, ordered, record, apply, verbose
+    )
+    print()
+
+    # step 3: refresh playlists - rebuild the .m3u8s; reindex so the
+    # just-imported files are picked up.
+    _playlists_step(
+        crate, ordered, record, apply, verbose
+    )
+    print()
+
+    # Cleanup and final result calculation
+    tmp_path = _cleanup_temp_file(tmp_path)
+    overall_ok = _calculate_overall_result(results)
+    print("done." if overall_ok else "completed with errors - see steps above.")
+    return {'steps': results, 'ok': overall_ok}
+
+
+def _cleanup_temp_file(tmp_path):
+    """Clean up temporary file if it exists.
+
+    Args:
+        tmp_path: Temporary path to clean up
+
+    Returns:
+        None (always returns None for consistency)
+    """
     if tmp_path and os.path.exists(tmp_path):
         try:
             os.unlink(tmp_path)
         except OSError:
             pass
+    return None
 
-    overall_ok = all(r['ok'] for r in results if not r['skipped'])
-    print("done." if overall_ok else "completed with errors - see steps above.")
-    return {'steps': results, 'ok': overall_ok}
+
+def _calculate_overall_result(results):
+    """Calculate the overall result based on step results.
+
+    Args:
+        results: List of step result dictionaries
+
+    Returns:
+        bool: True if all non-skipped steps were successful, False otherwise
+    """
+    return all(r['ok'] for r in results if not r['skipped'])

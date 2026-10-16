@@ -154,43 +154,8 @@ def merge_and_deduplicate(playlists_data, liked_songs_data):
     print("merging and deduplicating tracks...")
 
     all_tracks = playlists_data + liked_songs_data
-
-    track_dict = {}
-
-    for track in all_tracks:
-        track_id = track.get('track_id', '')
-        if not track_id:
-            continue
-
-        if track_id not in track_dict:
-            track_dict[track_id] = {
-                **track,
-                'playlist_names': [track.get('playlist_name', '')],
-                'playlist_ids': [track.get('playlist_id', '')]
-            }
-        else:
-            playlist_name = track.get('playlist_name', '')
-            playlist_id_val = track.get('playlist_id', '')
-            if playlist_name and playlist_name not in track_dict[track_id]['playlist_names']:
-                track_dict[track_id]['playlist_names'].append(playlist_name)
-                if playlist_id_val:
-                    track_dict[track_id]['playlist_ids'].append(playlist_id_val)
-
-    id_deduped = []
-    for track_id, track_data in track_dict.items():
-        id_deduped.append({
-            'track_id': track_data.get('track_id', ''),
-            'track_name': track_data.get('track_name', ''),
-            'artist_names': track_data.get('artist_names', ''),
-            'album_name': track_data.get('album_name', ''),
-            'duration_ms': track_data.get('duration_ms', 0),
-            'explicit': track_data.get('explicit', False),
-            'popularity': track_data.get('popularity', 0),
-            'playlist_names': '; '.join([name for name in track_data.get('playlist_names', []) if name]),
-            'playlist_ids': '; '.join([pid for pid in track_data.get('playlist_ids', []) if pid]),
-            'playlist_count': len([name for name in track_data.get('playlist_names', []) if name]),
-            'spotify_url': track_data.get('spotify_url', '')
-        })
+    track_dict = _deduplicate_by_track_id(all_tracks)
+    id_deduped = _convert_dict_to_list(track_dict)
 
     # second pass: fuzzy dedup by primary-artist + title; on collision, merge
     # the dropped track's playlist memberships into the keeper
@@ -222,6 +187,64 @@ def merge_and_deduplicate(playlists_data, liked_songs_data):
 
     deduped_tracks.sort(key=lambda x: x.get('track_name', '').lower())
     return deduped_tracks
+
+
+def _deduplicate_by_track_id(all_tracks):
+    """Deduplicate tracks by Spotify track ID, merging playlist information.
+
+    Args:
+        all_tracks: List of track dictionaries from playlists and liked songs
+
+    Returns:
+        Dictionary mapping track_id to track data with merged playlist info
+    """
+    track_dict = {}
+    for track in all_tracks:
+        track_id = track.get('track_id', '')
+        if not track_id:
+            continue
+
+        if track_id not in track_dict:
+            track_dict[track_id] = {
+                **track,
+                'playlist_names': [track.get('playlist_name', '')],
+                'playlist_ids': [track.get('playlist_id', '')]
+            }
+        else:
+            playlist_name = track.get('playlist_name', '')
+            playlist_id_val = track.get('playlist_id', '')
+            if playlist_name and playlist_name not in track_dict[track_id]['playlist_names']:
+                track_dict[track_id]['playlist_names'].append(playlist_name)
+                if playlist_id_val:
+                    track_dict[track_id]['playlist_ids'].append(playlist_id_val)
+    return track_dict
+
+
+def _convert_dict_to_list(track_dict):
+    """Convert track dictionary to list of track dictionaries.
+
+    Args:
+        track_dict: Dictionary mapping track_id to track data
+
+    Returns:
+        List of track dictionaries with formatted playlist fields
+    """
+    id_deduped = []
+    for track_id, track_data in track_dict.items():
+        id_deduped.append({
+            'track_id': track_data.get('track_id', ''),
+            'track_name': track_data.get('track_name', ''),
+            'artist_names': track_data.get('artist_names', ''),
+            'album_name': track_data.get('album_name', ''),
+            'duration_ms': track_data.get('duration_ms', 0),
+            'explicit': track_data.get('explicit', False),
+            'popularity': track_data.get('popularity', 0),
+            'playlist_names': '; '.join([name for name in track_data.get('playlist_names', []) if name]),
+            'playlist_ids': '; '.join([pid for pid in track_data.get('playlist_ids', []) if pid]),
+            'playlist_count': len([name for name in track_data.get('playlist_names', []) if name]),
+            'spotify_url': track_data.get('spotify_url', '')
+        })
+    return id_deduped
 
 
 def export_to_csv(data, filename, export_dir):

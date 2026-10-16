@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import List, Tuple
 
 from lib.tags import artist_tokens, canonical_albumartist, dominant_album, sanitize, split_group
-from lib.text import normalize_key, group_album_key
+from lib.text import normalize_key, group_album_key, render_credit
 
 
 def _artist_tokens(f):
@@ -46,7 +46,6 @@ def _is_explicit_va_member(f):
     return normalize_key(f.get('albumartist') or '') in ('variousartists', 'va')
 
 
-# older name, still imported elsewhere
 _is_explicit_va = _is_explicit_va_member
 
 
@@ -143,7 +142,7 @@ def resolve_group(members):
       'guarded'   - real compilation, never split
       'ambiguous' - murky >=4 group, kept merged + reported
       'split'     - components should be handled separately
-                    (size>=2 -> album, size 1 -> singleton)."""
+                  (size>=2 -> album, size 1 -> singleton)."""
     if len(members) < 2:
         return [members], 'whole'
     comps = split_group(members)
@@ -193,7 +192,6 @@ def group_files(files):
 
 def build_plan(groups, crate):
     """decide a target path + tag fix for every file. returns Plan."""
-    from lib.text import render_credit
 
     albums_dir = os.path.join(crate, 'albums')
     singles_dir = os.path.join(crate, 'singles')
@@ -201,86 +199,118 @@ def build_plan(groups, crate):
     album_moves, singleton_moves = [], []
     tag_writes, album_tag_writes = [], []
     va_groups, split_groups, ambiguous_groups = [], [], []
-    noop = 0
+    noop_count = 0
     seen_singletons = set()
-
-    def track_label(idx_in_group, f):
-        n = f['track'] or (idx_in_group + 1)
-        return f"{int(n) if n else idx_in_group + 1:02d}"
-
-    def add_singleton(f):
-        nonlocal noop
-        ext = os.path.splitext(f['path'])[1]
-        base_name = f"{sanitize(f['artist'])} - {sanitize(f['title'])}{ext}"
-        name, c = base_name, 2
-        while os.path.normpath(os.path.join(singles_dir, name)).lower() in seen_singletons:
-            stem, sfx = os.path.splitext(base_name)
-            name = f"{stem} ({c}){sfx}"
-            c += 1
-        seen_singletons.add(os.path.normpath(os.path.join(singles_dir, name)).lower())
-        dst = os.path.join(singles_dir, name)
-        if os.path.normpath(dst) != os.path.normpath(f['path']):
-            singleton_moves.append((f['path'], dst))
-        else:
-            noop += 1
-
-    def add_album(component, heal_va):
-        nonlocal noop
-        # in a group we decided to split, an explicit 'Various Artists'
-        # albumartist is self-inflicted (an earlier wrong merge), not a signal -
-        # ignore it when picking the folder's albumartist, and the tag write
-        # below then repairs it.
-        basis = [dict(m, albumartist='') if heal_va and _is_explicit_va_member(m) else m
-                 for m in component]
-        aa = canonical_albumartist(basis)
-        album = dominant_album(component)
-        folder = sanitize(f"{render_credit(aa)} - {album}") or 'Unknown Album'
-        src_folders = {os.path.basename(os.path.dirname(m['path'])) for m in component}
-        if aa == 'Various Artists':
-            va_groups.append((album or folder, len(component), sorted(src_folders)))
-        for m in component:
-            if normalize_key(m['albumartist'] or '') != normalize_key(aa):
-                tag_writes.append((m['path'], aa))
-            if normalize_key(m['album'] or '') != normalize_key(album):
-                album_tag_writes.append((m['path'], album))
-        seen_names = set()
-        for idx, m in enumerate(component):
-            ext = os.path.splitext(m['path'])[1]
-            name = f"{track_label(idx, m)} - {sanitize(m['artist'])} - {sanitize(m['title'])}{ext}"
-            base, sfx = os.path.splitext(name)
-            c = 2
-            while name.lower() in seen_names:
-                name = f"{base} ({c}){sfx}"
-                c += 1
-            seen_names.add(name.lower())
-            dst = os.path.join(albums_dir, folder, name)
-            if os.path.normpath(dst) != os.path.normpath(m['path']):
-                album_moves.append((m['path'], dst, aa))
-            else:
-                noop += 1
 
     for (kind, _), members in groups.items():
         # no album tag / lone track / empty key (Bug 4: never merge on emptiness)
         if kind == 'single' or len(members) == 1 or not (
                 members[0]['album'] and group_album_key(members[0]['album'])):
+            noop_ref = [0]  # mutable counter for nested function
             for f in members:
-                add_singleton(f)
+                _add_singleton(f, albums_dir, singles_dir, seen_singletons, singleton_moves, noop_ref)
+            noop_count += noop_ref[0]
             continue
 
-        components, status = resolve_group(members)
-        album = dominant_album(members)
+        status, album, artists_list, components = _handle_group_status(members, resolve_group, dominant_album)
         if status == 'split':
-            artists = sorted({m['artist'] for m in members})
-            split_groups.append((album, len(members), artists))
+            split_groups.append((album, len(members), artists_list))
         elif status == 'ambiguous':
-            artists = sorted({m['artist'] for m in members})
-            ambiguous_groups.append((album, len(members), artists))
+            ambiguous_groups.append((album, len(members), artists_list))
 
+        noop_singleton_ref = [0]  # mutable counter for nested function
         for component in components:
             if len(component) == 1:
-                add_singleton(component[0])
+                _add_singleton(component[0], albums_dir, singles_dir, seen_singletons, singleton_moves, noop_singleton_ref)
             else:
-                add_album(component, heal_va=(status == 'split'))
+                _add_album(component, albums_dir, singles_dir, seen_singletons,
+                           album_moves, singleton_moves, tag_writes, album_tag_writes,
+                           va_groups, heal_va=(status == 'split'))
+        noop_count += noop_singleton_ref[0]
 
-    return Plan(album_moves, singleton_moves, noop, tag_writes, album_tag_writes,
+    return Plan(album_moves, singleton_moves, noop_count, tag_writes, album_tag_writes,
                 va_groups, split_groups, ambiguous_groups)
+
+
+def _track_label(idx_in_group, f):
+    """Generate a zero-padded track label for filename construction."""
+    n = f['track'] or (idx_in_group + 1)
+    return f"{int(n) if n else idx_in_group + 1:02d}"
+
+
+def _add_singleton(f, albums_dir, singles_dir, seen_singletons, singleton_moves, noop_ref):
+    """Add a singleton file to the plan."""
+    ext = os.path.splitext(f['path'])[1]
+    base_name = f"{sanitize(f['artist'])} - {sanitize(f['title'])}{ext}"
+    name, c = base_name, 2
+    while os.path.normpath(os.path.join(singles_dir, name)).lower() in seen_singletons:
+        stem, sfx = os.path.splitext(base_name)
+        name = f"{stem} ({c}){sfx}"
+        c += 1
+    seen_singletons.add(os.path.normpath(os.path.join(singles_dir, name)).lower())
+    dst = os.path.join(singles_dir, name)
+    if os.path.normpath(dst) != os.path.normpath(f['path']):
+        singleton_moves.append((f['path'], dst))
+    else:
+        noop_ref[0] += 1
+
+
+def _add_album(component, albums_dir, singles_dir, seen_singletons,
+               album_moves, singleton_moves, tag_writes, album_tag_writes,
+               va_groups, heal_va):
+    """Add an album component to the plan."""
+    # in a group we decided to split, an explicit 'Various Artists'
+    # albumartist is self-inflicted (an earlier wrong merge), not a signal -
+    # ignore it when picking the folder's albumartist, and the tag write
+    # below then repairs it.
+    basis = [dict(m, albumartist='') if heal_va and _is_explicit_va_member(m) else m
+             for m in component]
+    aa = canonical_albumartist(basis)
+    album = dominant_album(component)
+    folder = sanitize(f"{render_credit(aa)} - {album}") or 'Unknown Album'
+    src_folders = {os.path.basename(os.path.dirname(m['path'])) for m in component}
+    if aa == 'Various Artists':
+        va_groups.append((album or folder, len(component), sorted(src_folders)))
+    for m in component:
+        if normalize_key(m['albumartist'] or '') != normalize_key(aa):
+            tag_writes.append((m['path'], aa))
+        if normalize_key(m['album'] or '') != normalize_key(album):
+            album_tag_writes.append((m['path'], album))
+    seen_names = set()
+    for idx, m in enumerate(component):
+        ext = os.path.splitext(m['path'])[1]
+        name = f"{_track_label(idx, m)} - {sanitize(m['artist'])} - {sanitize(m['title'])}{ext}"
+        base, sfx = os.path.splitext(name)
+        c = 2
+        while name.lower() in seen_names:
+            name = f"{base} ({c}){sfx}"
+            c += 1
+        seen_names.add(name.lower())
+        dst = os.path.join(albums_dir, folder, name)
+        if os.path.normpath(dst) != os.path.normpath(m['path']):
+            album_moves.append((m['path'], dst, aa))
+
+
+def _handle_group_status(members, resolve_group, dominant_album):
+    """Handle the status resolution for a group and return relevant data.
+
+    Args:
+        members: List of group members
+        resolve_group: Function to resolve group into components and status
+        dominant_album: Function to get dominant album from members
+
+    Returns:
+        Tuple of (status, album, artists_list, components)
+            status: The group status ('split', 'ambiguous', 'whole', 'guarded')
+            album: The dominant album string
+            artists_list: List of artist names (for split/ambiguous status)
+            components: List of components from resolve_group
+    """
+    components, status = resolve_group(members)
+    album = dominant_album(members)
+    artists_list = []
+    if status == 'split':
+        artists_list = sorted({m['artist'] for m in members})
+    elif status == 'ambiguous':
+        artists_list = sorted({m['artist'] for m in members})
+    return status, album, artists_list, components

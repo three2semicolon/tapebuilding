@@ -81,77 +81,103 @@ def validate(file_path: Optional[str], all: bool, apply: bool, verbose: bool):
         sys.exit(1)
 
     if all:
-        # Run full pipeline: preimport -> import -> cleanup
-        if verbose:
-            click.echo(f"Running full organize pipeline on crate: {crate_path}")
-
-        unorganized_dir = os.path.join(crate_path, 'unorganized')
-
-        # Step 1: Preimport staging
-        if verbose:
-            click.echo("\n=== Step 1: Preimport staging ===")
-        try:
-            preimport_result = preimport_stage(
-                unorganized_dir,
-                crate_path,
-                apply=apply,
-                verbose=verbose
-            )
-            if verbose:
-                click.echo(f"Preimport complete: {preimport_result.get('staged_folders', 0)} folders staged")
-        except Exception as e:
-            click.echo(f"error: Preimport failed: {e}", err=True)
-            sys.exit(1)
-
-        # Step 2: Beets import
-        if verbose:
-            click.echo("\n=== Step 2: Beets import ===")
-        try:
-            import_result = run_import(
-                unorganized_dir,
-                output_dir=crate_path,
-                dry_run=not apply,
-                verbose=verbose
-            )
-            if not import_result.get('ok', False):
-                click.echo(f"error: Import failed: {import_result.get('error', 'Unknown error')}", err=True)
-                sys.exit(1)
-            if verbose:
-                click.echo("Import complete")
-        except Exception as e:
-            click.echo(f"error: Import failed: {e}", err=True)
-            sys.exit(1)
-
-        # Step 3: Cleanup
-        if verbose:
-            click.echo("\n=== Step 3: Cleanup ===")
-        try:
-            _cleanup_result = cleanup_apply.run_cleanup(
-                crate=crate_path,
-                apply=apply,
-                verbose=verbose
-            )
-            if verbose:
-                click.echo("Cleanup complete")
-        except Exception as e:
-            click.echo(f"error: Cleanup failed: {e}", err=True)
-            sys.exit(1)
-
-        click.echo("\nFull organize pipeline completed successfully!")
-
+        _validate_all(crate_path, apply, verbose)
     elif file_path:
-        # Validate single file
-        result = validate_file(file_path, crate_path)
-        if not result.get('ok', False):
-            click.echo(f"error: {result.get('error', 'Validation failed')}", err=True)
-            sys.exit(1)
-        else:
-            click.echo("File validation completed successfully!")
+        _validate_single_file(file_path, crate_path)
     else:
-        # No arguments provided
-        click.echo("Error: Either provide a file path or use --all flag", err=True)
-        click.echo("Usage: organize validate [--all] [FILE_PATH]")
+        _validate_no_arguments()
+
+
+def _validate_all(crate_path: str, apply: bool, verbose: bool):
+    """Run the full organize pipeline: preimport -> import -> cleanup."""
+    if verbose:
+        click.echo(f"Running full organize pipeline on crate: {crate_path}")
+
+    unorganized_dir = os.path.join(crate_path, 'unorganized')
+
+    # Step 1: Preimport staging
+    if verbose:
+        click.echo("\n=== Step 1: Preimport staging ===")
+    _run_preimport_stage(unorganized_dir, crate_path, apply, verbose)
+
+    # Step 2: Beets import
+    if verbose:
+        click.echo("\n=== Step 2: Beets import ===")
+    _run_beets_import(unorganized_dir, crate_path, apply, verbose)
+
+    # Step 3: Cleanup
+    if verbose:
+        click.echo("\n=== Step 3: Cleanup ===")
+    _run_cleanup(crate_path, apply, verbose)
+
+    click.echo("\nFull organize pipeline completed successfully!")
+
+
+def _run_preimport_stage(unorganized_dir: str, crate_path: str, apply: bool, verbose: bool):
+    """Run the preimport staging step."""
+    try:
+        preimport_result = preimport_stage(
+            unorganized_dir,
+            crate_path,
+            apply=apply,
+            verbose=verbose
+        )
+        if verbose:
+            click.echo(f"Preimport complete: {preimport_result.get('staged_folders', 0)} folders staged")
+    except Exception as e:
+        click.echo(f"error: Preimport failed: {e}", err=True)
         sys.exit(1)
+
+
+def _run_beets_import(unorganized_dir: str, crate_path: str, apply: bool, verbose: bool):
+    """Run the beets import step."""
+    try:
+        import_result = run_import(
+            unorganized_dir,
+            output_dir=crate_path,
+            dry_run=not apply,
+            verbose=verbose
+        )
+        if not import_result.get('ok', False):
+            click.echo(f"error: Import failed: {import_result.get('error', 'Unknown error')}", err=True)
+            sys.exit(1)
+        if verbose:
+            click.echo("Import complete")
+    except Exception as e:
+        click.echo(f"error: Import failed: {e}", err=True)
+        sys.exit(1)
+
+
+def _run_cleanup(crate_path: str, apply: bool, verbose: bool):
+    """Run the cleanup step."""
+    try:
+        _cleanup_result = cleanup_apply.run_cleanup(
+            crate=crate_path,
+            apply=apply,
+            verbose=verbose
+        )
+        if verbose:
+            click.echo("Cleanup complete")
+    except Exception as e:
+        click.echo(f"error: Cleanup failed: {e}", err=True)
+        sys.exit(1)
+
+
+def _validate_single_file(file_path: str, crate_path: str):
+    """Validate a single file against the crate as ground truth."""
+    result = validate_file(file_path, crate_path)
+    if not result.get('ok', False):
+        click.echo(f"error: {result.get('error', 'Validation failed')}", err=True)
+        sys.exit(1)
+    else:
+        click.echo("File validation completed successfully!")
+
+
+def _validate_no_arguments():
+    """Handle the case where no arguments are provided."""
+    click.echo("Error: Either provide a file path or use --all flag", err=True)
+    click.echo("Usage: organize validate [--all] [FILE_PATH]")
+    sys.exit(1)
 
 
 if __name__ == '__main__':

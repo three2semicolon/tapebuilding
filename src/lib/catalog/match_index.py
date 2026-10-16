@@ -178,31 +178,83 @@ class MatchIndex:
 
         return _pick_best(ascii_title_candidates, pred, want_dur, _TOLERANCE[3])
 
-    def _tier4(self, row, title_key, want_dur):
-        # rescues a local "Title (feat. X)" against a clean spotify "Title"
-        # when the exact-norm tiers (1-3) miss on the suffix. only fires
-        # against entries whose feat.-clause was actually stripped (see
-        # by_core_title's population guard above).
+    def _tier4_initial_setup(self, row, title_key):
+        """Perform initial setup and validation for _tier4.
+
+        Args:
+            row: The row to match against
+            title_key: The normalized title key
+
+        Returns:
+            tuple: (row_artists, row_primary, core_q) or (None, None, None) if validation fails
+        """
         row_artists = _row_artist_set(row)
         if not row_artists:
-            return None
+            return None, None, None
         row_primary = _row_primary(row)
         core_q = normalize_key(strip_feat_clause(_row_title(row))) or title_key
+        return row_artists, row_primary, core_q
 
+    def _tier4_create_predicates(self, row_artists, row_primary):
+        """Create predicate functions for _tier4.
+
+        Args:
+            row_artists: Set of artists from the row
+            row_primary: Primary artist from the row
+
+        Returns:
+            tuple: (pred, reverse_pred) predicate functions
+        """
         def pred(entry):
             return bool(row_artists & _entry_artist_set(entry)) or (row_primary and row_primary == _entry_primary(entry))
 
-        # Get candidates - for Spotify: exact core title match only; for SoundCloud: also try variations
-        candidates = list(self.by_core_title.get(core_q, []))
-        # For SoundCloud: also try title variations
-        if _is_soundcloud_like_title(_row_title(row)):
-            soundcloud_title = _row_title(row)
+        def reverse_pred(entry):
+            return bool(row_artists & _entry_artist_set(entry)) or (row_primary and row_primary == _entry_primary(entry))
+
+        return pred, reverse_pred
+
+    def _tier4_get_base_candidates(self, core_q):
+        """Get base candidates from by_core_title index.
+
+        Args:
+            core_q: The core title query
+
+        Returns:
+            list: Base candidates
+        """
+        return list(self.by_core_title.get(core_q, []))
+
+    def _tier4_get_soundcloud_variations_candidates(self, row_title, core_q):
+        """Get candidates from SoundCloud title variations.
+
+        Args:
+            row_title: The title from the row
+            core_q: The core title query
+
+        Returns:
+            list: Candidates from SoundCloud variations
+        """
+        candidates = []
+        if _is_soundcloud_like_title(row_title):
+            soundcloud_title = row_title
             for variation in _soundcloud_title_variations(soundcloud_title):
                 variation_core = normalize_key(strip_feat_clause(variation))
                 if variation_core and variation_core != core_q:
                     candidates.extend(self.by_core_title.get(variation_core, []))
+        return candidates
 
-        # Also check the reverse direction (as in original)
+    def _tier4_get_reverse_candidates(self, row, title_key, core_q, row_artists, row_primary):
+        """Get reverse direction candidates.
+
+        Args:
+            title_key: The normalized title key
+            core_q: The core title query
+            row_artists: Set of artists from the row
+            row_primary: Primary artist from the row
+
+        Returns:
+            list: Reverse direction candidates
+        """
         reverse_candidates = []
         if core_q != title_key:
             # Also check the reverse direction
@@ -210,6 +262,7 @@ class MatchIndex:
             # Apply same artist predicate to reverse candidates
             def reverse_pred(entry):
                 return bool(row_artists & _entry_artist_set(entry)) or (row_primary and row_primary == _entry_primary(entry))
+            reverse_candidates = [entry for entry in reverse_candidates if reverse_pred(entry)]
 
             # For SoundCloud: also try title variations in reverse direction
             if _is_soundcloud_like_title(_row_title(row)):
@@ -219,33 +272,99 @@ class MatchIndex:
                     if variation_key and variation_key != title_key:  # Avoid duplicate work
                         reverse_candidates.extend(self.by_title.get(variation_key, []))
 
-            # Add Unicode-aware candidates for both base and reverse
-            # Base candidates Unicode-aware
-            if _is_soundcloud_like_title(_row_title(row)):
-                u_key = group_key(title_key)
-                if u_key:
-                    candidates.extend(self.by_u_title.get(u_key, []))
-                # Also try variations
-                for variation in _soundcloud_title_variations(_row_title(row)):
+        return reverse_candidates
+
+    def _get_unicode_matches_for_key(self, u_key):
+        """Get Unicode matches for a given key.
+
+        Args:
+            u_key: Unicode key to look up
+
+        Returns:
+            list: Matching entries or empty list
+        """
+        if u_key:
+            return self.by_u_title.get(u_key, [])
+        return []
+
+    def _get_unicode_matches_for_variations(self, row_title, is_forward):
+        """Get Unicode matches for SoundCloud title variations.
+
+        Args:
+            row_title: The title from the row
+            is_forward: Whether to get forward (True) or reverse (False) candidates
+
+        Returns:
+            list: Unicode-aware candidates from variations
+        """
+        candidates = []
+        if _is_soundcloud_like_title(row_title):
+            if is_forward:
+                for variation in _soundcloud_title_variations(row_title):
                     variation_u_key = group_key(variation)
                     if variation_u_key:
                         candidates.extend(self.by_u_title.get(variation_u_key, []))
-
-            # Reverse candidates Unicode-aware
-            if _is_soundcloud_like_title(_row_title(row)):
-                reverse_u_key = group_key(core_q)
-                if reverse_u_key:
-                    reverse_candidates.extend(self.by_u_title.get(reverse_u_key, []))
-                # Also try variations
-                for variation in _soundcloud_title_variations(_row_title(row)):
+            else:
+                for variation in _soundcloud_title_variations(row_title):
                     variation_key = normalize_key(variation)
-                    if variation_key and variation_key != title_key:
+                    if variation_key:
                         variation_core = normalize_key(strip_feat_clause(variation))
                         if variation_core:
                             reverse_u_key_var = group_key(variation_core)
                             if reverse_u_key_var:
-                                reverse_candidates.extend(self.by_u_title.get(reverse_u_key_var, []))
+                                candidates.extend(self.by_u_title.get(reverse_u_key_var, []))
+        return candidates
 
+    def _get_base_unicode_match(self, title_key, core_q, is_forward):
+        """Get base Unicode match for title_key or core_q.
+
+        Args:
+            title_key: The normalized title key
+            core_q: The core title query
+            is_forward: Whether to get forward (True) or reverse (False) candidates
+
+        Returns:
+            list: Base Unicode-aware candidates
+        """
+        if is_forward:
+            u_key = group_key(title_key)
+            return self._get_unicode_matches_for_key(u_key)
+        else:
+            reverse_u_key = group_key(core_q)
+            return self._get_unicode_matches_for_key(reverse_u_key)
+
+    def _tier4_get_unicode_candidates(self, title_key, core_q, row_title, is_forward=True):
+        """Get Unicode-aware candidates.
+
+        Args:
+            title_key: The normalized title key
+            core_q: The core title query
+            row_title: The title from the row
+            is_forward: Whether to get forward (True) or reverse (False) candidates
+
+        Returns:
+            list: Unicode-aware candidates
+        """
+        candidates = []
+        if _is_soundcloud_like_title(row_title):
+            # Get base matches
+            candidates.extend(self._get_base_unicode_match(title_key, core_q, is_forward))
+
+            # Get matches from variations
+            candidates.extend(self._get_unicode_matches_for_variations(row_title, is_forward))
+
+        return candidates
+
+    def _tier4_combine_and_deduplicate(self, candidates, reverse_candidates):
+        """Combine all candidates and remove duplicates.
+
+        Args:
+            candidates: Forward direction candidates
+            reverse_candidates: Reverse direction candidates
+
+        Returns:
+            list: Unique candidates
+        """
         # Combine all candidates and remove duplicates
         all_candidates = candidates + reverse_candidates
         seen = set()
@@ -256,8 +375,50 @@ class MatchIndex:
             if candidate_id not in seen:
                 seen.add(candidate_id)
                 unique_candidates.append(candidate)
+        return unique_candidates
 
+    def _tier4_select_best_candidate(self, unique_candidates, pred, want_dur):
+        """Select the best candidate from unique candidates.
+
+        Args:
+            unique_candidates: List of unique candidates
+            pred: Predicate function
+            want_dur: Whether duration is wanted
+
+        Returns:
+            The best matching candidate or None
+        """
         return _pick_best(unique_candidates, pred, want_dur, _TOLERANCE[4])
+
+    def _tier4(self, row, title_key, want_dur):
+        # rescues a local "Title (feat. X)" against a clean spotify "Title"
+        # when the exact-norm tiers (1-3) miss on the suffix. only fires
+        # against entries whose feat.-clause was actually stripped (see
+        # by_core_title's population guard above).
+        # Initial setup
+        row_artists, row_primary, core_q = self._tier4_initial_setup(row, title_key)
+        if row_artists is None:
+            return None
+
+        # Create predicates
+        pred, reverse_pred = self._tier4_create_predicates(row_artists, row_primary)
+
+        # Get candidates - for Spotify: exact core title match only; for SoundCloud: also try variations
+        candidates = self._tier4_get_base_candidates(core_q)
+        candidates.extend(self._tier4_get_soundcloud_variations_candidates(_row_title(row), core_q))
+
+        # Also check the reverse direction (as in original)
+        reverse_candidates = self._tier4_get_reverse_candidates(row, title_key, core_q, row_artists, row_primary)
+
+        # Add Unicode-aware candidates for both base and reverse
+        candidates.extend(self._tier4_get_unicode_candidates(title_key, core_q, _row_title(row), is_forward=True))
+        reverse_candidates.extend(self._tier4_get_unicode_candidates(title_key, core_q, _row_title(row), is_forward=False))
+
+        # Combine all candidates and remove duplicates
+        unique_candidates = self._tier4_combine_and_deduplicate(candidates, reverse_candidates)
+
+        # Select best candidate
+        return self._tier4_select_best_candidate(unique_candidates, pred, want_dur)
 
     def _tier5(self, row, title_key, want_dur):
         # fuzzy title (same leading-4-char prefix) + duration; hesitant.
@@ -267,7 +428,17 @@ class MatchIndex:
         # never filters anything out, per _duration_close's own rule.
         if not title_key:
             return None
-        best, best_ratio = None, 0.0
+
+        ascii_entries = self._tier5_gather_ascii_entries(row, title_key)
+        unique_entries = self._tier5_deduplicate_entries(ascii_entries)
+        best, best_ratio = self._tier5_find_best_match(unique_entries, title_key, want_dur, row)
+
+        if best and best_ratio >= FUZZY_RATIO_THRESHOLD:
+            return best
+        return None
+
+    def _tier5_gather_ascii_entries(self, row, title_key):
+        """Gather ASCII entries for tier 5 matching."""
         # For Spotify: ASCII index only
         # For SoundCloud: also consider title variations for prefix matching
         ascii_entries = list(self.by_prefix.get(title_key[:FUZZY_PREFIX_LEN], []))
@@ -287,8 +458,10 @@ class MatchIndex:
                     variation_u_key = group_key(variation)
                     if variation_u_key:
                         ascii_entries.extend(self.by_u_prefix.get(variation_u_key[:FUZZY_PREFIX_LEN], []))
+        return ascii_entries
 
-        # Remove duplicates while preserving order
+    def _tier5_deduplicate_entries(self, ascii_entries):
+        """Remove duplicates while preserving order."""
         seen = set()
         unique_entries = []
         for entry in ascii_entries:
@@ -297,7 +470,11 @@ class MatchIndex:
             if entry_id not in seen:
                 seen.add(entry_id)
                 unique_entries.append(entry)
+        return unique_entries
 
+    def _tier5_find_best_match(self, unique_entries, title_key, want_dur, row):
+        """Find the best match from unique entries."""
+        best, best_ratio = None, 0.0
         for entry in unique_entries:
             if not _duration_close(want_dur, entry.get('length'), _TOLERANCE[5]):
                 continue
@@ -309,9 +486,7 @@ class MatchIndex:
             if ratio > best_ratio:
                 best_ratio = ratio
                 best = entry
-        if best and best_ratio >= FUZZY_RATIO_THRESHOLD:
-            return best
-        return None
+        return best, best_ratio
 
     def _tier6(self, row, title_key, want_dur):
         # all-symbol titles (normalize_key -> ''): tiers 1-5 are blind to
@@ -322,13 +497,35 @@ class MatchIndex:
         # Preserve the ''-means-symbol-only contract tier 6 relies on
         if title_key:
             return None
+
         row_raw = _raw_key(_row_title(row))
-        # normalize_album() so the by_album_track lookup below stays
-        # consistent with how MatchIndex._build() indexed it, and so the
-        # anchor check doesn't reject an edition-suffixed local album tag.
         row_album_key = normalize_album(_row_album(row))
         u_row_album_key = group_album_key(_row_album(row))  # Unicode-aware album key
 
+        if row_raw:
+            # Check both ASCII and Unicode-aware indexes for raw title
+            ascii_candidates = self.by_raw_title.get(row_raw, [])
+            u_candidates = self.by_u_title.get(group_key(_row_title(row)), [])  # Using u_title for raw title matching
+            # Combine candidates, avoiding duplicates
+            all_candidates = ascii_candidates + [c for c in u_candidates if c not in ascii_candidates]
+            chosen = self._tier6_process_raw_title_candidates(all_candidates, row, row_album_key, want_dur)
+            if chosen:
+                return chosen
+
+        track_number = _row_track_number(row)
+        if row_album_key and track_number is not None:
+            # Check both ASCII and Unicode-aware indexes for album/track
+            ascii_candidates = self.by_album_track.get((row_album_key, track_number), [])
+            u_candidates = self.by_u_album_track.get((u_row_album_key, track_number), [])
+            # Combine candidates, avoiding duplicates
+            all_candidates = ascii_candidates + [c for c in u_candidates if c not in ascii_candidates]
+            kept = self._tier6_process_album_track_candidates(all_candidates, want_dur)
+            if kept:
+                return self._tier6_select_best_by_duration(kept, want_dur)
+        return None
+
+    def _tier6_process_raw_title_candidates(self, all_candidates, row, row_album_key, want_dur):
+        """Process raw title candidates for tier 6."""
         def anchor(entry):
             # Use Unicode-aware artist sets for better matching (V9 > 0)
             row_fold_artists = {fold_key(a) for a in split_artists(_row_artist(row)) if fold_key(a)}
@@ -344,27 +541,16 @@ class MatchIndex:
                 return True
             return False
 
-        if row_raw:
-            # Check both ASCII and Unicode-aware indexes for raw title
-            ascii_candidates = self.by_raw_title.get(row_raw, [])
-            u_candidates = self.by_u_title.get(group_key(_row_title(row)), [])  # Using u_title for raw title matching
-            # Combine candidates, avoiding duplicates
-            all_candidates = ascii_candidates + [c for c in u_candidates if c not in ascii_candidates]
-            chosen = _pick_best(all_candidates, anchor, want_dur, _TOLERANCE['6a'])
-            if chosen:
-                return chosen
+        chosen = _pick_best(all_candidates, anchor, want_dur, _TOLERANCE['6a'])
+        return chosen
 
-        track_number = _row_track_number(row)
-        if row_album_key and track_number is not None:
-            # Check both ASCII and Unicode-aware indexes for album/track
-            ascii_candidates = self.by_album_track.get((row_album_key, track_number), [])
-            u_candidates = self.by_u_album_track.get((u_row_album_key, track_number), [])
-            # Combine candidates, avoiding duplicates
-            all_candidates = ascii_candidates + [c for c in u_candidates if c not in ascii_candidates]
-            kept = [c for c in all_candidates if _duration_close(want_dur, c.get('length'), _TOLERANCE['6b'])]
-            if kept:
-                return min(kept, key=lambda c: abs((c.get('length') or 0) - want_dur) if want_dur else 0)
-        return None
+    def _tier6_process_album_track_candidates(self, all_candidates, want_dur):
+        """Process album/track candidates for tier 6."""
+        return [c for c in all_candidates if _duration_close(want_dur, c.get('length'), _TOLERANCE['6b'])]
+
+    def _tier6_select_best_by_duration(self, kept, want_dur):
+        """Select the best candidate by duration from kept candidates."""
+        return min(kept, key=lambda c: abs((c.get('length') or 0) - want_dur) if want_dur else 0)
 
     def match(self, row):
         """match a single spotify row -> (entry, tier_number) or (None, None)."""

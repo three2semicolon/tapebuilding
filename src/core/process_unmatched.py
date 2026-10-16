@@ -13,39 +13,21 @@ from playlists.build import _spotify_exports_dir, build_playlists
 from download.spotify.spotify_download import download_spotify
 from organize.beets_import import run_import
 
-def run_process_unmatched(
-    archive_path_opt=None,
-    playlists_path_opt=None,
-    exports_dir_opt=None,
-    service='spotify',
-    exclude_names=None,
-    apply=False,
-    format='mp3',
-    bitrate='320k',
-    cookies_file=None,
-    pre_skip_existing=False,
-    retries=0,
-    manual=False,
-    verbose=False,
-    skip_initial_playlist_refresh=False
-):
-    """
-    Execute the full unmatched tracks processing pipeline.
-
-    Returns:
-        dict: {'steps': [{'step', 'ok', 'error', 'skipped'], ...], 'ok': bool}
-    """
-    # Handle PLAYLISTS_EXCLUDE environment variable as standing default for --exclude
+def _handle_playlists_exclude(exclude_names):
+    """Handle PLAYLISTS_EXCLUDE environment variable as standing default for --exclude."""
     env_exclude = os.environ.get('PLAYLISTS_EXCLUDE', '')
     if env_exclude:
         env_exclude_list = [item.strip() for item in env_exclude.split(',') if item.strip()]
         if exclude_names:
-            exclude_names = list(exclude_names) + env_exclude_list
+            return list(exclude_names) + env_exclude_list
         else:
-            exclude_names = env_exclude_list
+            return env_exclude_list
     # else: exclude_names remains as passed (could be None)
+    return exclude_names
 
-    # Handle DOWNLOAD_PRE_SKIP_EXISTING environment variable as default for --pre-skip-existing
+
+def _handle_download_pre_skip_existing(pre_skip_existing):
+    """Handle DOWNLOAD_PRE_SKIP_EXISTING environment variable as default for --pre-skip-existing."""
     env_pre_skip = os.environ.get('DOWNLOAD_PRE_SKIP_EXISTING', '')
     if env_pre_skip:
         # Convert to boolean - common true values
@@ -57,48 +39,71 @@ def run_process_unmatched(
             # Default to False if unrecognized value
             env_pre_skip_bool = False
         if pre_skip_existing is False:  # Only apply env var if still at default (not explicitly set via command line)
-            pre_skip_existing = env_pre_skip_bool
+            return env_pre_skip_bool
+    return pre_skip_existing
 
-    # Handle DOWNLOAD_COOKIES_FILE environment variable as default for --cookies-file
+
+def _handle_download_cookies_file(cookies_file):
+    """Handle DOWNLOAD_COOKIES_FILE environment variable as default for --cookies-file."""
     env_cookies_file = os.environ.get('DOWNLOAD_COOKIES_FILE', '')
     if env_cookies_file:
         if cookies_file is None:  # Only apply env var if not explicitly set via command line
-            cookies_file = env_cookies_file
+            return env_cookies_file
+    return cookies_file
 
-    # Handle DOWNLOAD_RETRIES environment variable as default for --retries
+
+def _handle_download_retries(retries):
+    """Handle DOWNLOAD_RETRIES environment variable as default for --retries."""
     env_retries = os.environ.get('DOWNLOAD_RETRIES', '')
     if env_retries:
         try:
             env_retries_int = int(env_retries)
             if retries == 0:  # Only apply env var if still at default (not explicitly set via command line)
-                retries = env_retries_int
+                return env_retries_int
         except ValueError:
             # If not a valid integer, ignore the environment variable
             pass
+    return retries
 
-    # Resolve paths (same as in playlists.build)
-    playlists_path_resolved = playlists_path_opt or playlists_path()
-    exports_dir_resolved = resolve_exports_dir(playlists_path_resolved, exports_dir_opt)
 
-    # Determine service-specific exports directory (same as in playlists.build)
-    if service == 'soundcloud':
-        service_exports_dir = os.path.join(exports_dir_resolved, 'soundcloud')
-    else:  # spotify (default)
-        service_exports_dir = _spotify_exports_dir(exports_dir_resolved)
+def _handle_environment_variables(exclude_names, pre_skip_existing, cookies_file, retries):
+    """Handle environment variables that serve as defaults for command-line options.
 
-    unorganized_dir = os.path.join((archive_path_opt or archive_path()), 'unorganized')
+    Processes PLAYLISTS_EXCLUDE, DOWNLOAD_PRE_SKIP_EXISTING, DOWNLOAD_COOKIES_FILE,
+    and DOWNLOAD_RETRIES environment variables, applying them only when the
+    corresponding parameter is at its default value.
 
-    # Ensure directories exist
-    os.makedirs(unorganized_dir, exist_ok=True)
+    Returns:
+        tuple: (processed_exclude_names, processed_pre_skip_existing,
+                processed_cookies_file, processed_retries)
+    """
+    exclude_names = _handle_playlists_exclude(exclude_names)
+    pre_skip_existing = _handle_download_pre_skip_existing(pre_skip_existing)
+    cookies_file = _handle_download_cookies_file(cookies_file)
+    retries = _handle_download_retries(retries)
 
-    results = []
+    return exclude_names, pre_skip_existing, cookies_file, retries
 
-    def record(step, ok, error=None, skipped=False):
-        results.append({'step': step, 'ok': ok, 'error': error, 'skipped': skipped})
 
-    crate = archive_path_opt or archive_path()
+def _refresh_playlists_step(service_exports_dir, skip_initial_playlist_refresh, apply, verbose,
+                           exclude_names, service, crate, playlists_path_resolved, exports_dir_opt, record):
+    """Handle the refresh playlists step of the unmatched tracks processing pipeline.
 
-    # Step 1: Refresh playlists to generate unmatched CSV
+    Args:
+        service_exports_dir: Path to service-specific exports directory
+        skip_initial_playlist_refresh: Whether to skip the initial playlist refresh
+        apply: Whether to apply changes or just show what would be done
+        verbose: Whether to show verbose output
+        exclude_names: List of names to exclude from processing
+        service: Service name ('spotify' or 'soundcloud')
+        crate: Path to the crate/archive directory
+        playlists_path_resolved: Resolved playlists path
+        exports_dir_opt: Optional exports directory override
+        record: Function to record step results
+
+    Returns:
+        None (results are recorded via the record function)
+    """
     if skip_initial_playlist_refresh:
         print("=== step 1: refresh playlists (rescrape/reindex) [SKIPPED] ===")
         # When skipping, we still need to check if unmatched CSV exists
@@ -133,10 +138,61 @@ def run_process_unmatched(
                 record('refresh-playlists', False, error="unmatched CSV not generated")
         except Exception as e:
             record('refresh-playlists', False, error=str(e))
-    print()
 
-    # Step 2: Download from unmatched CSV (if it exists and we're not in dry-run or it exists)
-    # When skip_initial_playlist_refresh is True, we skip download entirely
+
+def _resolve_paths(archive_path_opt, playlists_path_opt, exports_dir_opt, service):
+    """Resolve paths for the unmatched tracks processing pipeline.
+
+    Resolves archive_path, playlists_path, exports_dir, service_exports_dir,
+    and unorganized_dir based on the provided options and defaults.
+
+    Args:
+        archive_path_opt: Optional archive path override
+        playlists_path_opt: Optional playlists path override
+        exports_dir_opt: Optional exports directory override
+        service: Service name ('spotify' or 'soundcloud')
+
+    Returns:
+        tuple: (playlists_path_resolved, exports_dir_resolved, service_exports_dir, unorganized_dir, crate)
+    """
+    # Resolve paths (same as in playlists.build)
+    playlists_path_resolved = playlists_path_opt or playlists_path()
+    exports_dir_resolved = resolve_exports_dir(playlists_path_resolved, exports_dir_opt)
+
+    # Determine service-specific exports directory (same as in playlists.build)
+    if service == 'soundcloud':
+        service_exports_dir = os.path.join(exports_dir_resolved, 'soundcloud')
+    else:  # spotify (default)
+        service_exports_dir = _spotify_exports_dir(exports_dir_resolved)
+
+    unorganized_dir = os.path.join((archive_path_opt or archive_path()), 'unorganized')
+    crate = archive_path_opt or archive_path()
+
+    return playlists_path_resolved, exports_dir_resolved, service_exports_dir, unorganized_dir, crate
+
+
+def _download_step(skip_initial_playlist_refresh, service_exports_dir, unorganized_dir, format, bitrate,
+                  cookies_file, pre_skip_existing, retries, apply, verbose, manual, record, results):
+    """Handle the download step of the unmatched tracks processing pipeline.
+
+    Args:
+        skip_initial_playlist_refresh: Whether to skip the initial playlist refresh
+        service_exports_dir: Path to service-specific exports directory
+        unorganized_dir: Path to the unorganized directory
+        format: Audio format for download
+        bitrate: Audio bitrate for download
+        cookies_file: Path to cookies file
+        pre_skip_existing: Whether to pre-skip existing files
+        retries: Number of retry attempts
+        apply: Whether to apply changes or just show what would be done
+        verbose: Whether to show verbose output
+        manual: Whether to use manual mode
+        record: Function to record step results
+        results: List of step results so far
+
+    Returns:
+        None (results are recorded via the record function)
+    """
     if skip_initial_playlist_refresh:
         record('download', True, skipped=True)  # Completely skip download step
     else:
@@ -166,9 +222,23 @@ def run_process_unmatched(
                     record('download', False, error=str(e))
         else:
             record('download', True, skipped=True)  # Skip if previous step failed
-    print()
 
-    # Step 3: Import downloaded files
+
+def _import_step(skip_initial_playlist_refresh, unorganized_dir, crate, apply, verbose, record, results):
+    """Handle the import step of the unmatched tracks processing pipeline.
+
+    Args:
+        skip_initial_playlist_refresh: Whether to skip the initial playlist refresh
+        unorganized_dir: Path to the unorganized directory
+        crate: Path to the crate/archive directory
+        apply: Whether to apply changes or just show what would be done
+        verbose: Whether to show verbose output
+        record: Function to record step results
+        results: List of step results so far
+
+    Returns:
+        None (results are recorded via the record function)
+    """
     # When skip_initial_playlist_refresh is True, we skip import entirely
     if skip_initial_playlist_refresh:
         record('import', True, skipped=True)  # Completely skip import step
@@ -190,9 +260,27 @@ def run_process_unmatched(
                 record('import', False, error=str(e))
         else:
             record('import', True, skipped=True)  # Skip if download failed/skipped
-    print()
 
-    # Step 4: Refresh playlists (reindex only) to sync with updated library
+
+def _sync_playlists_step(service, crate, playlists_path_resolved, exports_dir_opt, apply, verbose,
+                        exclude_names, skip_initial_playlist_refresh, results, record):
+    """Handle the sync playlists step of the unmatched tracks processing pipeline.
+
+    Args:
+        service: Service name ('spotify' or 'soundcloud')
+        crate: Path to the crate/archive directory
+        playlists_path_resolved: Resolved playlists path
+        exports_dir_opt: Optional exports directory override
+        apply: Whether to apply changes or just show what would be done
+        verbose: Whether to show verbose output
+        exclude_names: List of names to exclude from processing
+        skip_initial_playlist_refresh: Whether to skip the initial playlist refresh
+        results: List of step results so far
+        record: Function to record step results
+
+    Returns:
+        None (results are recorded via the record function)
+    """
     # When skip_initial_playlist_refresh is True, we still perform the sync step
     # but record it as skipped to indicate we didn't do the initial refresh
     # Only perform sync if we had a CSV to work from (step 1 was successful)
@@ -253,9 +341,88 @@ def run_process_unmatched(
                 record('refresh-playlists-sync', False, error=str(e))
         else:
             record('refresh-playlists-sync', True, skipped=True)  # Skip if import failed/skipped
+
+
+def run_process_unmatched(
+    archive_path_opt=None,
+    playlists_path_opt=None,
+    exports_dir_opt=None,
+    service='spotify',
+    exclude_names=None,
+    apply=False,
+    format='mp3',
+    bitrate='320k',
+    cookies_file=None,
+    pre_skip_existing=False,
+    retries=0,
+    manual=False,
+    verbose=False,
+    skip_initial_playlist_refresh=False
+):
+    """
+    Execute the full unmatched tracks processing pipeline.
+
+    Returns:
+        dict: {'steps': [{'step', 'ok', 'error', 'skipped'], ...], 'ok': bool}
+    """
+    # Handle environment variables that serve as defaults for command-line options
+    exclude_names, pre_skip_existing, cookies_file, retries = _handle_environment_variables(
+        exclude_names, pre_skip_existing, cookies_file, retries)
+
+    # Resolve paths (same as in playlists.build)
+    playlists_path_resolved, exports_dir_resolved, service_exports_dir, unorganized_dir, crate = _resolve_paths(
+        archive_path_opt, playlists_path_opt, exports_dir_opt, service)
+
+    # Ensure directories exist
+    os.makedirs(unorganized_dir, exist_ok=True)
+
+    results = []
+
+    def record(step, ok, error=None, skipped=False):
+        results.append({'step': step, 'ok': ok, 'error': error, 'skipped': skipped})
+
+    # Step 1: Refresh playlists to generate unmatched CSV
+    _refresh_playlists_step(
+        service_exports_dir, skip_initial_playlist_refresh, apply, verbose,
+        exclude_names, service, crate, playlists_path_resolved, exports_dir_opt, record
+    )
+    print()
+
+    # Step 2: Download from unmatched CSV (if it exists and we're not in dry-run or it exists)
+    # When skip_initial_playlist_refresh is True, we skip download entirely
+    _download_step(
+        skip_initial_playlist_refresh, service_exports_dir, unorganized_dir, format, bitrate,
+        cookies_file, pre_skip_existing, retries, apply, verbose, manual, record, results
+    )
+    print()
+
+    # Step 3: Import downloaded files
+    # When skip_initial_playlist_refresh is True, we skip import entirely
+    _import_step(
+        skip_initial_playlist_refresh, unorganized_dir, crate, apply, verbose, record, results
+    )
+    print()
+
+    # Step 4: Refresh playlists (reindex only) to sync with updated library
+    _sync_playlists_step(
+        service, crate, playlists_path_resolved, exports_dir_opt, apply, verbose,
+        exclude_names, skip_initial_playlist_refresh, results, record
+    )
     print()
 
     # Overall result
-    overall_ok = all(r['ok'] for r in results if not r['skipped'])
+    overall_ok = _calculate_overall_result(results)
     print("done." if overall_ok else "completed with errors - see steps above.")
     return {'steps': results, 'ok': overall_ok}
+
+
+def _calculate_overall_result(results):
+    """Calculate the overall result based on step results.
+
+    Args:
+        results: List of step result dictionaries
+
+    Returns:
+        bool: True if all non-skipped steps were successful, False otherwise
+    """
+    return all(r['ok'] for r in results if not r['skipped'])

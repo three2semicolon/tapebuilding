@@ -50,6 +50,82 @@ from organize.validate import validate
 load_dotenv()
 
 
+def _process_export_parameters(playlists, playlists_file):
+    """Process playlist parameters and return list of identifiers.
+
+    Args:
+        playlists: List of playlist URLs/IDs from --playlist option
+        playlists_file: Path to file containing playlist URLs/IDs
+
+    Returns:
+        list: List of playlist identifiers
+    """
+    identifiers = list(playlists)
+    if playlists_file:
+        with open(playlists_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    identifiers.append(line)
+    return identifiers
+
+
+def _handle_spotify_export(identifiers, output, mine):
+    """Handle Spotify export logic.
+
+    Args:
+        identifiers: List of playlist identifiers
+        output: Output directory override
+        mine: Whether to export only own playlists
+    """
+    sp = authenticate_user()
+    export_dir = get_export_dir(base_dir=output)
+
+    if len(identifiers) == 1:
+        export_specific_playlist(sp, identifiers[0], export_dir)
+    elif identifiers:
+        export_playlists(sp, identifiers, export_dir)
+    else:
+        spotify_export_all_data(sp, export_dir, my_playlists_only=mine)
+
+
+def _handle_soundcloud_export(export_type, set_ids, playlists_file, output, user):
+    """Handle SoundCloud export logic.
+
+    Args:
+        export_type: Type of export ('likes', 'sets', or 'all-sets')
+        set_ids: List of set IDs for --type sets
+        playlists_file: Path to file containing set IDs
+        output: Output directory override
+        user: SoundCloud username or URL
+    """
+    export_dir = get_export_dir(base_dir=output)
+    soundcloud_user = user if user else os.getenv('SOUNDCLOUD_USER', 'me')  # default to current user
+
+    if export_type == 'likes':
+        click.echo(f"exporting soundcloud likes for user: {soundcloud_user}")
+        likes = export_likes(None, soundcloud_user, export_dir)  # sp=None for soundcloud
+        click.echo(f"exported {len(likes)} likes")
+    elif export_type == 'sets':
+        identifiers = list(set_ids)
+        if playlists_file:
+            with open(playlists_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        identifiers.append(line)
+        if not identifiers:
+            click.echo("error: --set-ids or --playlists-file required for --type sets", err=True)
+            sys.exit(1)
+        click.echo(f"exporting {len(identifiers)} specific soundcloud set(s) for user: {soundcloud_user}")
+        unique_tracks = export_sets(None, identifiers, export_dir)  # sp=None for soundcloud
+        click.echo(f"exported {len(unique_tracks)} unique tracks from {len(identifiers)} set(s)")
+    elif export_type == 'all-sets':
+        click.echo(f"exporting all soundcloud sets for user: {soundcloud_user}")
+        unique_tracks = soundcloud_export_all_data(None, soundcloud_user, export_dir)  # sp=None for soundcloud
+        click.echo(f"exported {len(unique_tracks)} unique tracks")
+
+
 @click.group()
 def download():
     """spotify/soundcloud export/download, generic ytdl, failure retry, and soundbyte
@@ -99,49 +175,10 @@ def export_cmd(playlists, playlists_file, output, mine, service, export_type, se
     """
     try:
         if service == 'spotify':
-            identifiers = list(playlists)
-            if playlists_file:
-                with open(playlists_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith('#'):
-                            identifiers.append(line)
-
-            sp = authenticate_user()
-            export_dir = get_export_dir(base_dir=output)
-
-            if len(identifiers) == 1:
-                export_specific_playlist(sp, identifiers[0], export_dir)
-            elif identifiers:
-                export_playlists(sp, identifiers, export_dir)
-            else:
-                spotify_export_all_data(sp, export_dir, my_playlists_only=mine)
-
+            identifiers = _process_export_parameters(playlists, playlists_file)
+            _handle_spotify_export(identifiers, output, mine)
         elif service == 'soundcloud':
-            export_dir = get_export_dir(base_dir=output)
-            soundcloud_user = user if user else os.getenv('SOUNDCLOUD_USER', 'me')  # default to current user
-            if export_type == 'likes':
-                click.echo(f"exporting soundcloud likes for user: {soundcloud_user}")
-                likes = export_likes(None, soundcloud_user, export_dir)  # sp=None for soundcloud
-                click.echo(f"exported {len(likes)} likes")
-            elif export_type == 'sets':
-                identifiers = list(set_ids)
-                if playlists_file:
-                    with open(playlists_file, 'r', encoding='utf-8') as f:
-                        for line in f:
-                            line = line.strip()
-                            if line and not line.startswith('#'):
-                                identifiers.append(line)
-                if not identifiers:
-                    click.echo("error: --set-ids or --playlists-file required for --type sets", err=True)
-                    sys.exit(1)
-                click.echo(f"exporting {len(identifiers)} specific soundcloud set(s) for user: {soundcloud_user}")
-                unique_tracks = export_sets(None, identifiers, export_dir)  # sp=None for soundcloud
-                click.echo(f"exported {len(unique_tracks)} unique tracks from {len(identifiers)} set(s)")
-            elif export_type == 'all-sets':
-                click.echo(f"exporting all soundcloud sets for user: {soundcloud_user}")
-                unique_tracks = soundcloud_export_all_data(None, soundcloud_user, export_dir)  # sp=None for soundcloud
-                click.echo(f"exported {len(unique_tracks)} unique tracks")
+            _handle_soundcloud_export(export_type, set_ids, playlists_file, output, user)
     except Exception as e:
         click.echo(f"error: {e}", err=True)
         sys.exit(1)

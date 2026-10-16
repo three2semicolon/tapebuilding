@@ -63,6 +63,30 @@ _FEAT_PAREN_RE = re.compile(
     re.IGNORECASE,
 )
 
+# featuring aliases -> normalized to "feat."
+#
+# BUGFIX_PLAN.md Bug 13: the old pattern had no word boundaries and was
+# applied with .search(), so it matched "ft"/"f."/"feat" INSIDE words -
+# "Daft Punk" -> "Da feat. Punk", "Soft Cell" -> "So feat. Cell". The marker
+# must now be a whole token: (?<!\w) before it, and \b after the word forms
+# ("f." keeps its dot as the terminator). An optional opening bracket and
+# surrounding whitespace are still consumed, as before.
+_FEAT_RE = re.compile(
+    r'\s*[\(\[]?\s*(?<!\w)(?:feat(?:uring)?\b\.?|ft\b\.?|f\.)\s*',
+    re.IGNORECASE,
+)
+
+# collab "x" between artists - whitespace-delimited only. (Old pattern was a
+# bare \b[xX]\b applied to the featuring part, which turned a lone "X" in a
+# name - "Malcolm X" - into a separator.)
+_COLLAB_X_RE = re.compile(r'\s+[xX]\s+')
+
+# " and " as an artist separator
+_AND_WORD_RE = re.compile(r'\s+and\s+', re.IGNORECASE)
+
+_SPACES_RE = re.compile(r'  +')
+_EDGE_PUNCT_RE = re.compile(r'^[\s,&]+|[\s,&]+$')
+
 _ARTIST_SPLIT_RE = re.compile(
     r'\s*(?:,|&|/| x | vs | feat\.?|ft\.?|featuring)\s*', re.IGNORECASE
 )
@@ -199,6 +223,58 @@ def fold_key(s):
     # keep only ASCII alphanumerics
     kept = ''.join(c for c in lowered if c.isascii() and c.isalnum())
     return kept
+
+
+def _normalize_list(artists):
+    """join a list of artists with ", " (D8 - was "A & B" / "A, B & C").
+    a single artist is returned as-is."""
+    artists = [a.strip() for a in artists if a.strip()]
+    return ', '.join(artists)
+
+
+def normalize_artist(raw):
+    """Canonicalise an artist string for use in file paths."""
+    # Strip whitespace; if nothing remains, return empty string
+    if not raw or not raw.strip():
+        return ''
+
+    # Split off a featuring clause first - it is handled separately below.
+    # A match at the very start of the string (nothing before it) isn't a
+    # featuring credit, it's the artist's name ("Ft. Lauderdale") - leave it.
+    feat_match = _FEAT_RE.search(raw)
+    if feat_match and raw[:feat_match.start()].strip():
+        main_part = raw[:feat_match.start()].strip()
+        feat_part = raw[feat_match.end():].strip().strip('()[] ')
+        # If the featuring part only contained punctuation, treat it as a plain "feat."
+        if not feat_part:
+            feat_part = 'feat.'
+    else:
+        main_part = raw
+        feat_part = None
+
+    # Normalise "x" / "and" collaborations to a comma list
+    main_part = _COLLAB_X_RE.sub(', ', main_part)
+    main_part = _AND_WORD_RE.sub(', ', main_part)
+
+    # Split on commas, strip each piece, drop empties
+    main_artists = [a.strip() for a in main_part.split(',') if a.strip()]
+    result = _normalize_list(main_artists)
+
+    if feat_part:
+        # Normalise the featuring part the same way
+        feat_part = _COLLAB_X_RE.sub(', ', feat_part)
+        feat_part = _AND_WORD_RE.sub(', ', feat_part)
+        feat_artists = [a.strip() for a in feat_part.split(',') if a.strip()]
+        feat_str = _normalize_list(feat_artists)
+        if feat_str == "feat.":
+            result = f"{result} feat."
+        else:
+            result = f"{result} feat. {feat_str}"
+
+    # Clean up spacing and edge punctuation
+    result = _SPACES_RE.sub(' ', result)
+    result = _EDGE_PUNCT_RE.sub('', result)
+    return result
 
 
 # Allowlist for artist credits that contain '/' but should be rendered with '_' instead of being split
@@ -343,6 +419,16 @@ def _run_sanity_checks():
     assert render_credit('AC/DC') == 'AC_DC'  # Legitimate slash credit -> rendered with '_'
     assert render_credit('') == ''
     assert render_credit(None) == ''
+
+    # normalize_artist: canonicalise artist string for use in file paths
+    assert normalize_artist('Artist feat. Other') == 'Artist feat.'
+    assert normalize_artist('Artist & Other') == 'Artist, Other'
+    assert normalize_artist('Artist x Other') == 'Artist, Other'
+    assert normalize_artist('Artist and Other') == 'Artist, Other'
+    assert normalize_artist('Artist, Other & Third') == 'Artist, Other, Third'
+    assert normalize_artist('  Artist  ') == 'Artist'
+    assert normalize_artist('& Artist &') == 'Artist'
+    assert normalize_artist('Artist, , Other') == 'Artist, Other'
 
     print('lib.text sanity checks: ok')
 
