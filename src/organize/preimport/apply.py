@@ -26,9 +26,11 @@ def duplicates_dir(crate):
 def prune_unorganized(unorganized):
     """remove now-empty stray dirs left under <input> after moves, but keep the
     input root and the staging albums/ root (even if empty)."""
-    staging = os.path.join(unorganized, 'albums')
+    unorganized_norm = os.path.normpath(unorganized)
+    staging_norm = os.path.normpath(os.path.join(unorganized, 'albums'))
     for dp, dirs, fns in os.walk(unorganized, topdown=False):
-        if dp in (unorganized, staging):
+        dp_norm = os.path.normpath(dp)
+        if dp_norm in (unorganized_norm, staging_norm):
             continue
         if not dirs and not fns:
             try:

@@ -31,11 +31,12 @@ DB_BACKUPS_KEPT = 5
 
 def prune_empty_dirs(crate):
     for sub in ('albums', 'singles'):
-        root = os.path.join(crate, sub)
+        root = os.path.normpath(os.path.join(crate, sub))
         if not os.path.isdir(root):
             continue
         for dp, dirs, fns in os.walk(root, topdown=False):
-            if dp == root:
+            dp_norm = os.path.normpath(dp)
+            if dp_norm == root:
                 continue
             try:
                 if not dirs and not fns:
