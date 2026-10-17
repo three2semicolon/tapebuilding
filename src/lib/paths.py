@@ -79,3 +79,11 @@ def ffmpeg_path(cli=None):
     """ffmpeg executable, if not already on PATH - FFMPEG_PATH. no default:
     None means "let the tool find it on PATH itself"."""
     return resolve('FFMPEG_PATH', cli, required=False)
+
+
+def config_path(cli=None):
+    """config file path - CONFIG_PATH. defaults to project root/config.yaml."""
+    default_config_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config.yaml'
+    )
+    return resolve('CONFIG_PATH', cli, default=default_config_path)

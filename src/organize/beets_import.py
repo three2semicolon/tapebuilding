@@ -27,18 +27,13 @@ import subprocess
 import sys
 import csv
 
-from lib.paths import resolve as resolve_path
+from lib.paths import resolve as resolve_path, config_path
 from lib.tags import EXTENSIONS
-
-
-def _config_path():
-    """config.yaml sits alongside this file in organize/."""
-    return os.path.join(os.path.dirname(__file__), 'config.yaml')
 
 
 def _beets_cmd(output_dir, extra_args):
     """build a beet command pointing at our config."""
-    config = _config_path()
+    config = config_path()
     library = os.path.join(output_dir, 'beets.db')
     return [
         sys.executable, '-m', 'beets',
