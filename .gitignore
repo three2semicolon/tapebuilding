@@ -13,6 +13,8 @@ venv/
 # Data / manifests (can contain personal library info)
 *.csv
 manifest.txt
+test_exports/
+
 
 # Music files
 *.mp3
