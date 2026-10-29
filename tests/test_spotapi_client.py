@@ -100,3 +100,104 @@ def test_album_track_item_maps_to_simplified_track():
     t = c._map_album_track_item(item)
     assert t['id'] == '6bj42Hzr3RErxhfgSTdSx6' and t['explicit'] is True and t['duration_ms'] == 289492
     assert c._map_album_track_item({'track': {}}) is None
+
+
+# --- change detection / cache / resilience ----------------------------------------------
+
+import pytest
+
+
+class _Stub(c.SpotApiClient):
+    """no network: counts page fetches, serves canned playlist/liked pages."""
+
+    def __init__(self, playlists, liked_items, dead=()):
+        self._delay = 0
+        self._fetch_track_counts = False
+        self._snapshots = {}
+        self.playlists, self.liked_items, self.dead = playlists, liked_items, set(dead)
+        self.playlist_fetches = 0
+        self.liked_fetches = 0
+
+    def _playlist_page(self, playlist_id, limit, offset):
+        if playlist_id in self.dead:
+            raise c.PlaylistNotAccessible(f"playlist {playlist_id} not accessible (NotFound)")
+        self.playlist_fetches += 1
+        items = self.playlists[playlist_id][offset:offset + limit]
+        return {'content': {'items': items, 'totalCount': len(self.playlists[playlist_id])}}
+
+    def _saved_page(self, limit, offset):
+        if limit > 1:
+            self.liked_fetches += 1
+        return {'items': self.liked_items[offset:offset + limit], 'totalCount': len(self.liked_items)}
+
+
+def _pl_item(n):
+    return {'addedAt': {'isoString': '2024-01-01T00:00:00Z'},
+            'itemV2': {'data': _track_data(uri=f'spotify:track:t{n}', name=f'song {n}')}}
+
+
+def _liked(n):
+    d = _track_data(); d.pop('uri'); d.pop('trackDuration'); d['duration'] = {'totalMilliseconds': 1}
+    return {'addedAt': {'isoString': f'2026-01-{n:02d}T00:00:00Z'}, 'track': {'_uri': f'spotify:track:l{n}', 'data': d}}
+
+
+@pytest.fixture
+def cache_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv('SPOTAPI_CACHE_DIR', str(tmp_path))
+    monkeypatch.delenv('SPOTAPI_NO_CACHE', raising=False)
+    return tmp_path
+
+
+def test_playlist_tracks_cached_until_snapshot_changes(cache_dir):
+    sp = _Stub({'p1': [_pl_item(1), _pl_item(2)]}, [])
+    sp._snapshots['p1'] = 'rev1'
+    assert len(sp.playlist_tracks('p1')['items']) == 2 and sp.playlist_fetches == 1
+    assert len(sp.playlist_tracks('p1')['items']) == 2 and sp.playlist_fetches == 1   # cache hit
+    sp._snapshots['p1'] = 'rev2'                                                       # playlist edited
+    sp.playlists['p1'].append(_pl_item(3))
+    assert len(sp.playlist_tracks('p1')['items']) == 3 and sp.playlist_fetches == 2
+
+
+def test_cache_disabled_by_env(cache_dir, monkeypatch):
+    monkeypatch.setenv('SPOTAPI_NO_CACHE', '1')
+    sp = _Stub({'p1': [_pl_item(1)]}, [])
+    sp._snapshots['p1'] = 'rev1'
+    sp.playlist_tracks('p1'); sp.playlist_tracks('p1')
+    assert sp.playlist_fetches == 2
+
+
+def test_no_snapshot_means_no_caching(cache_dir):
+    sp = _Stub({'p1': [_pl_item(1)]}, [])
+    sp.playlist_tracks('p1'); sp.playlist_tracks('p1')
+    assert sp.playlist_fetches == 2
+
+
+def test_inaccessible_playlist_is_skipped_not_fatal(cache_dir):
+    sp = _Stub({}, [], dead={'gone'})
+    assert sp.playlist_tracks('gone') == {'items': [], 'next': None}
+
+
+def test_liked_songs_cached_and_invalidated_by_new_like(cache_dir):
+    liked = [_liked(3), _liked(2), _liked(1)]      # newest first, like spotify
+    sp = _Stub({}, liked)
+    assert len(sp.current_user_saved_tracks()['items']) == 3 and sp.liked_fetches == 1
+    assert len(sp.current_user_saved_tracks()['items']) == 3 and sp.liked_fetches == 1   # cache hit
+    sp.liked_items.insert(0, _liked(4))
+    assert len(sp.current_user_saved_tracks()['items']) == 4 and sp.liked_fetches == 2
+    sp.liked_items.pop()                                                                  # an unlike
+    assert len(sp.current_user_saved_tracks()['items']) == 3 and sp.liked_fetches == 3
+
+
+def test_stale_cache_entry_is_ignored(cache_dir, monkeypatch):
+    c._cache_write('playlist_x', 'rev1', [{'a': 1}])
+    assert c._cache_read('playlist_x', 'rev1') == [{'a': 1}]
+    monkeypatch.setattr(c.time, 'time', lambda: 10**10)       # far future -> older than max age
+    assert c._cache_read('playlist_x', 'rev1') is None
+
+
+def test_library_entry_without_name_is_skipped_and_snapshot_mapped():
+    stub = {'item': {'__typename': 'PlaylistResponseWrapper', '_uri': 'spotify:playlist:dead', 'data': {}}}
+    assert c._map_library_playlist(stub) is None
+    ok = {'item': {'__typename': 'PlaylistResponseWrapper', '_uri': 'spotify:playlist:abc',
+                   'data': {'name': 'n', 'revisionId': 'AAAA'}}}
+    assert c._map_library_playlist(ok)['snapshot_id'] == 'AAAA'

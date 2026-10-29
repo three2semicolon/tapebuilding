@@ -404,7 +404,8 @@ fallback (`ARCHIVE_PATH`/`archive_path`) has been dropped.
 - `TAPEDECK_PATH` - sync target for `tapedeck`. defaults to
   `~/music/tapedeck`.
 - `FFMPEG_PATH` - ffmpeg executable, if not already on `PATH`.
-- `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` - spotify api creds.
+- `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` - spotify api creds (official web api oauth flow).
 - `SPOTIFY_REDIRECT_URI` - oauth redirect (default
   `http://127.0.0.1:8888/callback`).
+- `SPOTIFY_SP_DC` - your browser's `sp_dc` cookie (obtained after logging into Spotify). when set, auth uses spotapi instead of oauth — no spotify premium needed. when unset, falls back to the official web api oauth flow above.
 - `FIREBASE_PROJECT_ID`, `FIREBASE_CREDENTIALS_PATH` - for `download soundbyte`.

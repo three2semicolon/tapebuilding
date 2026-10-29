@@ -14,6 +14,7 @@ venv/
 *.csv
 manifest.txt
 test_exports/
+.spotapi_cache/
 
 
 # Music files
