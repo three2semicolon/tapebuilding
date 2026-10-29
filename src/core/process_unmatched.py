@@ -12,57 +12,42 @@ from lib.paths import archive_path, playlists_path, exports_dir as resolve_expor
 from playlists.build import _spotify_exports_dir, build_playlists
 from download.spotify.spotify_download import download_spotify
 from organize.beets_import import run_import
+from lib import config
+
 
 def _handle_playlists_exclude(exclude_names):
     """Handle PLAYLISTS_EXCLUDE environment variable as standing default for --exclude."""
-    env_exclude = os.environ.get('PLAYLISTS_EXCLUDE', '')
+    env_exclude = config.PLAYLISTS_EXCLUDE
     if env_exclude:
-        env_exclude_list = [item.strip() for item in env_exclude.split(',') if item.strip()]
         if exclude_names:
-            return list(exclude_names) + env_exclude_list
+            return list(exclude_names) + env_exclude
         else:
-            return env_exclude_list
+            return env_exclude
     # else: exclude_names remains as passed (could be None)
     return exclude_names
 
 
 def _handle_download_pre_skip_existing(pre_skip_existing):
     """Handle DOWNLOAD_PRE_SKIP_EXISTING environment variable as default for --pre-skip-existing."""
-    env_pre_skip = os.environ.get('DOWNLOAD_PRE_SKIP_EXISTING', '')
-    if env_pre_skip:
-        # Convert to boolean - common true values
-        if env_pre_skip.lower() in ('true', '1', 'yes', 'on'):
-            env_pre_skip_bool = True
-        elif env_pre_skip.lower() in ('false', '0', 'no', 'off'):
-            env_pre_skip_bool = False
-        else:
-            # Default to False if unrecognized value
-            env_pre_skip_bool = False
-        if pre_skip_existing is False:  # Only apply env var if still at default (not explicitly set via command line)
-            return env_pre_skip_bool
+    env_pre_skip = config.DOWNLOAD_PRE_SKIP_EXISTING
+    if env_pre_skip is not None and pre_skip_existing is False:  # Only apply env var if still at default
+        return env_pre_skip
     return pre_skip_existing
 
 
 def _handle_download_cookies_file(cookies_file):
     """Handle DOWNLOAD_COOKIES_FILE environment variable as default for --cookies-file."""
-    env_cookies_file = os.environ.get('DOWNLOAD_COOKIES_FILE', '')
-    if env_cookies_file:
-        if cookies_file is None:  # Only apply env var if not explicitly set via command line
-            return env_cookies_file
+    env_cookies_file = config.DOWNLOAD_COOKIES_FILE
+    if env_cookies_file and cookies_file is None:  # Only apply env var if not explicitly set via command line
+        return env_cookies_file
     return cookies_file
 
 
 def _handle_download_retries(retries):
     """Handle DOWNLOAD_RETRIES environment variable as default for --retries."""
-    env_retries = os.environ.get('DOWNLOAD_RETRIES', '')
-    if env_retries:
-        try:
-            env_retries_int = int(env_retries)
-            if retries == 0:  # Only apply env var if still at default (not explicitly set via command line)
-                return env_retries_int
-        except ValueError:
-            # If not a valid integer, ignore the environment variable
-            pass
+    env_retries = config.DOWNLOAD_RETRIES
+    if env_retries is not None and retries == 0:  # Only apply env var if still at default (not explicitly set via command line)
+        return env_retries
     return retries
 
 
@@ -85,8 +70,18 @@ def _handle_environment_variables(exclude_names, pre_skip_existing, cookies_file
     return exclude_names, pre_skip_existing, cookies_file, retries
 
 
-def _refresh_playlists_step(service_exports_dir, skip_initial_playlist_refresh, apply, verbose,
-                           exclude_names, service, crate, playlists_path_resolved, exports_dir_opt, record):
+def _refresh_playlists_step(
+    service_exports_dir,
+    skip_initial_playlist_refresh,
+    apply,
+    verbose,
+    exclude_names,
+    service,
+    crate,
+    playlists_path_resolved,
+    exports_dir_opt,
+    record,
+):
     """Handle the refresh playlists step of the unmatched tracks processing pipeline.
 
     Args:
@@ -107,12 +102,12 @@ def _refresh_playlists_step(service_exports_dir, skip_initial_playlist_refresh, 
     if skip_initial_playlist_refresh:
         print("=== step 1: refresh playlists (rescrape/reindex) [SKIPPED] ===")
         # When skipping, we still need to check if unmatched CSV exists
-        unmatched_csv_path = os.path.join(service_exports_dir, 'unmatched.csv')
+        unmatched_csv_path = os.path.join(service_exports_dir, "unmatched.csv")
         if os.path.exists(unmatched_csv_path):
-            record('refresh-playlists', True, skipped=True)
+            record("refresh-playlists", True, skipped=True)
             print(f"  using existing unmatched CSV: {unmatched_csv_path}")
         else:
-            record('refresh-playlists', False, error="unmatched CSV not found and initial refresh was skipped")
+            record("refresh-playlists", False, error="unmatched CSV not found and initial refresh was skipped")
     else:
         print("=== step 1: refresh playlists (rescrape/reindex) ===")
         try:
@@ -127,17 +122,17 @@ def _refresh_playlists_step(service_exports_dir, skip_initial_playlist_refresh, 
                 archive_path=crate,
                 playlists_path=playlists_path_resolved,
                 exports_dir=exports_dir_opt,
-                verbose=verbose
+                verbose=verbose,
             )
 
             # Check if unmatched CSV was created
-            unmatched_csv_path = os.path.join(service_exports_dir, 'unmatched.csv')
+            unmatched_csv_path = os.path.join(service_exports_dir, "unmatched.csv")
             if os.path.exists(unmatched_csv_path):
-                record('refresh-playlists', True)
+                record("refresh-playlists", True)
             else:
-                record('refresh-playlists', False, error="unmatched CSV not generated")
+                record("refresh-playlists", False, error="unmatched CSV not generated")
         except Exception as e:
-            record('refresh-playlists', False, error=str(e))
+            record("refresh-playlists", False, error=str(e))
 
 
 def _resolve_paths(archive_path_opt, playlists_path_opt, exports_dir_opt, service):
@@ -160,19 +155,32 @@ def _resolve_paths(archive_path_opt, playlists_path_opt, exports_dir_opt, servic
     exports_dir_resolved = resolve_exports_dir(playlists_path_resolved, exports_dir_opt)
 
     # Determine service-specific exports directory (same as in playlists.build)
-    if service == 'soundcloud':
-        service_exports_dir = os.path.join(exports_dir_resolved, 'soundcloud')
+    if service == "soundcloud":
+        service_exports_dir = os.path.join(exports_dir_resolved, "soundcloud")
     else:  # spotify (default)
         service_exports_dir = _spotify_exports_dir(exports_dir_resolved)
 
-    unorganized_dir = os.path.join((archive_path_opt or archive_path()), 'unorganized')
+    unorganized_dir = os.path.join((archive_path_opt or archive_path()), "unorganized")
     crate = archive_path_opt or archive_path()
 
     return playlists_path_resolved, exports_dir_resolved, service_exports_dir, unorganized_dir, crate
 
 
-def _download_step(skip_initial_playlist_refresh, service_exports_dir, unorganized_dir, format, bitrate,
-                  cookies_file, pre_skip_existing, retries, apply, verbose, manual, record, results):
+def _download_step(
+    skip_initial_playlist_refresh,
+    service_exports_dir,
+    unorganized_dir,
+    format,
+    bitrate,
+    cookies_file,
+    pre_skip_existing,
+    retries,
+    apply,
+    verbose,
+    manual,
+    record,
+    results,
+):
     """Handle the download step of the unmatched tracks processing pipeline.
 
     Args:
@@ -194,14 +202,14 @@ def _download_step(skip_initial_playlist_refresh, service_exports_dir, unorganiz
         None (results are recorded via the record function)
     """
     if skip_initial_playlist_refresh:
-        record('download', True, skipped=True)  # Completely skip download step
+        record("download", True, skipped=True)  # Completely skip download step
     else:
         # Normal behavior: proceed if previous step was successful
-        if 'refresh-playlists' in [r['step'] for r in results if r['ok']]:
+        if "refresh-playlists" in [r["step"] for r in results if r["ok"]]:
             print("=== step 2: download from unmatched CSV ===")
-            unmatched_csv_path = os.path.join(service_exports_dir, 'unmatched.csv')
+            unmatched_csv_path = os.path.join(service_exports_dir, "unmatched.csv")
             if not os.path.exists(unmatched_csv_path):
-                record('download', False, error="unmatched CSV not found")
+                record("download", False, error="unmatched CSV not found")
             else:
                 try:
                     # Configure download options
@@ -215,13 +223,13 @@ def _download_step(skip_initial_playlist_refresh, service_exports_dir, unorganiz
                         retries=retries,
                         validate_only=not apply,  # Dry run mode
                         debug=verbose,
-                        manual=manual
+                        manual=manual,
                     )
-                    record('download', ok)
+                    record("download", ok)
                 except Exception as e:
-                    record('download', False, error=str(e))
+                    record("download", False, error=str(e))
         else:
-            record('download', True, skipped=True)  # Skip if previous step failed
+            record("download", True, skipped=True)  # Skip if previous step failed
 
 
 def _import_step(skip_initial_playlist_refresh, unorganized_dir, crate, apply, verbose, record, results):
@@ -241,29 +249,34 @@ def _import_step(skip_initial_playlist_refresh, unorganized_dir, crate, apply, v
     """
     # When skip_initial_playlist_refresh is True, we skip import entirely
     if skip_initial_playlist_refresh:
-        record('import', True, skipped=True)  # Completely skip import step
+        record("import", True, skipped=True)  # Completely skip import step
     else:
         # Normal behavior: proceed if download was attempted (not skipped)
-        download_attempted = any(r['step'] == 'download' and not r['skipped'] for r in results)
+        download_attempted = any(r["step"] == "download" and not r["skipped"] for r in results)
         if download_attempted:
             print("=== step 3: import downloaded files ===")
             try:
-                import_result = run_import(
-                    input_dir=unorganized_dir,
-                    output_dir=crate,
-                    dry_run=not apply,
-                    verbose=verbose
-                )
-                ok = import_result.get('ok', False)
-                record('import', ok)
+                import_result = run_import(input_dir=unorganized_dir, output_dir=crate, dry_run=not apply, verbose=verbose)
+                ok = import_result.get("ok", False)
+                record("import", ok)
             except Exception as e:
-                record('import', False, error=str(e))
+                record("import", False, error=str(e))
         else:
-            record('import', True, skipped=True)  # Skip if download failed/skipped
+            record("import", True, skipped=True)  # Skip if download failed/skipped
 
 
-def _sync_playlists_step(service, crate, playlists_path_resolved, exports_dir_opt, apply, verbose,
-                        exclude_names, skip_initial_playlist_refresh, results, record):
+def _sync_playlists_step(
+    service,
+    crate,
+    playlists_path_resolved,
+    exports_dir_opt,
+    apply,
+    verbose,
+    exclude_names,
+    skip_initial_playlist_refresh,
+    results,
+    record,
+):
     """Handle the sync playlists step of the unmatched tracks processing pipeline.
 
     Args:
@@ -286,7 +299,7 @@ def _sync_playlists_step(service, crate, playlists_path_resolved, exports_dir_op
     # Only perform sync if we had a CSV to work from (step 1 was successful)
     if skip_initial_playlist_refresh:
         # Check if we had a CSV to work from (step 1 was successful)
-        had_csv = any(r['step'] == 'refresh-playlists' and r['ok'] for r in results)
+        had_csv = any(r["step"] == "refresh-playlists" and r["ok"] for r in results)
         if had_csv:
             print("=== step 4: refresh playlists (reindex only) [SYNC ONLY] ===")
             try:
@@ -294,28 +307,28 @@ def _sync_playlists_step(service, crate, playlists_path_resolved, exports_dir_op
                 build_playlists(
                     apply=apply,
                     rescrape=False,  # Don't rescrape Spotify - use existing export data
-                    reindex=True,    # Rebuild local playlists to match current library
-                    names=[],        # No specific names - use scope (owned playlists)
+                    reindex=True,  # Rebuild local playlists to match current library
+                    names=[],  # No specific names - use scope (owned playlists)
                     exclude_names=[],  # When skipping initial refresh, don't apply exclude names to sync
                     service=service,
                     archive_path=crate,
                     playlists_path=playlists_path_resolved,
                     exports_dir=exports_dir_opt,
-                    verbose=verbose
+                    verbose=verbose,
                 )
                 # Check if this step succeeded by verifying no error was recorded
                 # build_playlists doesn't return success/failure, so we assume it worked
                 # unless an exception was thrown
-                record('refresh-playlists-sync', True, skipped=True)  # Execute but record as skipped
+                record("refresh-playlists-sync", True, skipped=True)  # Execute but record as skipped
                 print("  synced playlists with library")
             except Exception as e:
-                record('refresh-playlists-sync', False, error=str(e))
+                record("refresh-playlists-sync", False, error=str(e))
         else:
             # No CSV to work from, skip the sync step entirely
-            record('refresh-playlists-sync', True, skipped=True)  # Skip if no CSV to sync from
+            record("refresh-playlists-sync", True, skipped=True)  # Skip if no CSV to sync from
     else:
         # Normal behavior: proceed if import was successful
-        import_success = any(r['step'] == 'import' and r['ok'] and not r['skipped'] for r in results)
+        import_success = any(r["step"] == "import" and r["ok"] and not r["skipped"] for r in results)
         if import_success:
             print("=== step 4: refresh playlists (reindex only) ===")
             try:
@@ -323,41 +336,41 @@ def _sync_playlists_step(service, crate, playlists_path_resolved, exports_dir_op
                 build_playlists(
                     apply=apply,
                     rescrape=False,  # Don't rescrape Spotify - use existing export data
-                    reindex=True,    # Rebuild local playlists to match current library
-                    names=[],        # No specific names - use scope (owned playlists)
+                    reindex=True,  # Rebuild local playlists to match current library
+                    names=[],  # No specific names - use scope (owned playlists)
                     exclude_names=exclude_names or [],
                     service=service,
                     archive_path=crate,
                     playlists_path=playlists_path_resolved,
                     exports_dir=exports_dir_opt,
-                    verbose=verbose
+                    verbose=verbose,
                 )
                 # Check if this step succeeded by verifying no error was recorded
                 # build_playlists doesn't return success/failure, so we assume it worked
                 # unless an exception was thrown
-                record('refresh-playlists-sync', True)
+                record("refresh-playlists-sync", True)
                 print("  synced playlists with library")
             except Exception as e:
-                record('refresh-playlists-sync', False, error=str(e))
+                record("refresh-playlists-sync", False, error=str(e))
         else:
-            record('refresh-playlists-sync', True, skipped=True)  # Skip if import failed/skipped
+            record("refresh-playlists-sync", True, skipped=True)  # Skip if import failed/skipped
 
 
 def run_process_unmatched(
     archive_path_opt=None,
     playlists_path_opt=None,
     exports_dir_opt=None,
-    service='spotify',
+    service="spotify",
     exclude_names=None,
     apply=False,
-    format='mp3',
-    bitrate='320k',
+    format="mp3",
+    bitrate="320k",
     cookies_file=None,
     pre_skip_existing=False,
     retries=0,
     manual=False,
     verbose=False,
-    skip_initial_playlist_refresh=False
+    skip_initial_playlist_refresh=False,
 ):
     """
     Execute the full unmatched tracks processing pipeline.
@@ -367,11 +380,13 @@ def run_process_unmatched(
     """
     # Handle environment variables that serve as defaults for command-line options
     exclude_names, pre_skip_existing, cookies_file, retries = _handle_environment_variables(
-        exclude_names, pre_skip_existing, cookies_file, retries)
+        exclude_names, pre_skip_existing, cookies_file, retries
+    )
 
     # Resolve paths (same as in playlists.build)
     playlists_path_resolved, exports_dir_resolved, service_exports_dir, unorganized_dir, crate = _resolve_paths(
-        archive_path_opt, playlists_path_opt, exports_dir_opt, service)
+        archive_path_opt, playlists_path_opt, exports_dir_opt, service
+    )
 
     # Ensure directories exist
     os.makedirs(unorganized_dir, exist_ok=True)
@@ -379,41 +394,66 @@ def run_process_unmatched(
     results = []
 
     def record(step, ok, error=None, skipped=False):
-        results.append({'step': step, 'ok': ok, 'error': error, 'skipped': skipped})
+        results.append({"step": step, "ok": ok, "error": error, "skipped": skipped})
 
     # Step 1: Refresh playlists to generate unmatched CSV
     _refresh_playlists_step(
-        service_exports_dir, skip_initial_playlist_refresh, apply, verbose,
-        exclude_names, service, crate, playlists_path_resolved, exports_dir_opt, record
+        service_exports_dir,
+        skip_initial_playlist_refresh,
+        apply,
+        verbose,
+        exclude_names,
+        service,
+        crate,
+        playlists_path_resolved,
+        exports_dir_opt,
+        record,
     )
     print()
 
     # Step 2: Download from unmatched CSV (if it exists and we're not in dry-run or it exists)
     # When skip_initial_playlist_refresh is True, we skip download entirely
     _download_step(
-        skip_initial_playlist_refresh, service_exports_dir, unorganized_dir, format, bitrate,
-        cookies_file, pre_skip_existing, retries, apply, verbose, manual, record, results
+        skip_initial_playlist_refresh,
+        service_exports_dir,
+        unorganized_dir,
+        format,
+        bitrate,
+        cookies_file,
+        pre_skip_existing,
+        retries,
+        apply,
+        verbose,
+        manual,
+        record,
+        results,
     )
     print()
 
     # Step 3: Import downloaded files
     # When skip_initial_playlist_refresh is True, we skip import entirely
-    _import_step(
-        skip_initial_playlist_refresh, unorganized_dir, crate, apply, verbose, record, results
-    )
+    _import_step(skip_initial_playlist_refresh, unorganized_dir, crate, apply, verbose, record, results)
     print()
 
     # Step 4: Refresh playlists (reindex only) to sync with updated library
     _sync_playlists_step(
-        service, crate, playlists_path_resolved, exports_dir_opt, apply, verbose,
-        exclude_names, skip_initial_playlist_refresh, results, record
+        service,
+        crate,
+        playlists_path_resolved,
+        exports_dir_opt,
+        apply,
+        verbose,
+        exclude_names,
+        skip_initial_playlist_refresh,
+        results,
+        record,
     )
     print()
 
     # Overall result
     overall_ok = _calculate_overall_result(results)
     print("done." if overall_ok else "completed with errors - see steps above.")
-    return {'steps': results, 'ok': overall_ok}
+    return {"steps": results, "ok": overall_ok}
 
 
 def _calculate_overall_result(results):
@@ -425,4 +465,4 @@ def _calculate_overall_result(results):
     Returns:
         bool: True if all non-skipped steps were successful, False otherwise
     """
-    return all(r['ok'] for r in results if not r['skipped'])
+    return all(r["ok"] for r in results if not r["skipped"])

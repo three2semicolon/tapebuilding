@@ -355,7 +355,7 @@ on the retirement of --resplit.
 
 the `normalize_artists` beets plugin rewrites artist strings to a
 consistent `"A, B & C"` form at import (handles `feat.`/`ft.`, collab `x`,
-`and`); enabled via `organize/config.yaml`'s `plugins` list +
+`and`); enabled via `library_config.yaml`'s `plugins` list +
 `pluginpath`.
 
 ## playlists - rebuild local playlists from spotify

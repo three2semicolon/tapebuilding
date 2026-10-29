@@ -21,6 +21,8 @@ from lib.tags import (
     scan_audio,
 )
 from lib.text import group_key, split_artists
+from lib import config
+
 from organize.journal import Journal
 
 from .common import resolve_crate
@@ -95,11 +97,8 @@ def rebuild_db(crate, config_path):
 
 
 def config_path():
-    """config.yaml sits in organize/, one level up from this file - this
-    module moved into the organize/cleanup/ subpackage during the
-    cleanup.py split, so unlike the old single-file cleanup.py this
-    needs dirname() twice, not once."""
-    return os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.yaml')
+    """library config path, centralized in lib.config (LIBRARY_CONFIG_PATH)."""
+    return config.LIBRARY_CONFIG_PATH
 
 
 # Known label albumartists that are legitimate for compilations/remix albums

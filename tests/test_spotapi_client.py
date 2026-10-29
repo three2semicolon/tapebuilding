@@ -2,7 +2,7 @@
 the real graphql response shapes (trimmed from actual probe dumps)."""
 
 from lib import spotapi_client as c
-
+import pytest
 
 def _track_data(**over):
     d = {
@@ -37,7 +37,9 @@ def test_non_track_items_are_skipped():
 
 def test_saved_item_uses_wrapper_uri_and_has_no_added_by():
     data = _track_data(uri=None, contentRating={'label': 'EXPLICIT'})
-    data.pop('uri'); data.pop('trackDuration'); data.pop('playcount')
+    data.pop('uri')
+    data.pop('trackDuration')
+    data.pop('playcount')
     data['duration'] = {'totalMilliseconds': 193740}
     m = c._map_saved_item({'addedAt': {'isoString': '2026-10-04T19:04:43Z'},
                            'track': {'_uri': 'spotify:track:1CbxG199T0fzfUV5EO7aPV', 'data': data}})
@@ -104,8 +106,6 @@ def test_album_track_item_maps_to_simplified_track():
 
 # --- change detection / cache / resilience ----------------------------------------------
 
-import pytest
-
 
 class _Stub(c.SpotApiClient):
     """no network: counts page fetches, serves canned playlist/liked pages."""
@@ -137,7 +137,10 @@ def _pl_item(n):
 
 
 def _liked(n):
-    d = _track_data(); d.pop('uri'); d.pop('trackDuration'); d['duration'] = {'totalMilliseconds': 1}
+    d = _track_data()
+    d.pop('uri')
+    d.pop('trackDuration')
+    d['duration'] = {'totalMilliseconds': 1}
     return {'addedAt': {'isoString': f'2026-01-{n:02d}T00:00:00Z'}, 'track': {'_uri': f'spotify:track:l{n}', 'data': d}}
 
 
@@ -162,13 +165,15 @@ def test_cache_disabled_by_env(cache_dir, monkeypatch):
     monkeypatch.setenv('SPOTAPI_NO_CACHE', '1')
     sp = _Stub({'p1': [_pl_item(1)]}, [])
     sp._snapshots['p1'] = 'rev1'
-    sp.playlist_tracks('p1'); sp.playlist_tracks('p1')
+    sp.playlist_tracks('p1')
+    sp.playlist_tracks('p1')
     assert sp.playlist_fetches == 2
 
 
 def test_no_snapshot_means_no_caching(cache_dir):
     sp = _Stub({'p1': [_pl_item(1)]}, [])
-    sp.playlist_tracks('p1'); sp.playlist_tracks('p1')
+    sp.playlist_tracks('p1')
+    sp.playlist_tracks('p1')
     assert sp.playlist_fetches == 2
 
 

@@ -22,50 +22,12 @@ import glob
 import time
 
 
+from lib import config
 from lib.paths import archive_path, ffmpeg_path
 from lib.text import normalize_key
 from download.existing import build_library_index, scan_existing_fuzzy, resolve_output_dir
 from download.manifest import predict_output_filename, read_csv_metadata
 from download import fallback
-
-
-def _apply_env_bool(env_var, current_value):
-    """Apply environment variable boolean default if current value is still default."""
-    env_val = os.environ.get(env_var, '')
-    if env_val:
-        # Convert to boolean - common true values
-        if env_val.lower() in ('true', '1', 'yes', 'on'):
-            env_val_bool = True
-        elif env_val.lower() in ('false', '0', 'no', 'off'):
-            env_val_bool = False
-        else:
-            # Default to False if unrecognized value
-            env_val_bool = False
-        if current_value is False or current_value is None:  # Only apply env var if still at default
-            return env_val_bool
-    return current_value
-
-
-def _apply_env_string(env_var, current_value):
-    """Apply environment variable string default if current value is still default."""
-    env_val = os.environ.get(env_var, '')
-    if env_val and (current_value is None or current_value == ''):
-        return env_val
-    return current_value
-
-
-def _apply_env_int(env_var, current_value, default_value):
-    """Apply environment variable integer default if current value is still default."""
-    env_val = os.environ.get(env_var, '')
-    if env_val:
-        try:
-            env_val_int = int(env_val)
-            if current_value == default_value:  # Only apply env var if still at default
-                return env_val_int
-        except ValueError:
-            # If not a valid integer, ignore the environment variable
-            pass
-    return current_value
 
 
 def _read_urls_from_source(url_file, verbose):
@@ -75,13 +37,13 @@ def _read_urls_from_source(url_file, verbose):
         if os.path.isdir(url_file):
             # spotify_manifest.csv is already deduplicated across liked songs + playlists;
             # using it avoids triple-counting urls
-            manifest = os.path.join(url_file, 'spotify_manifest.csv')
+            manifest = os.path.join(url_file, "spotify_manifest.csv")
             if os.path.exists(manifest):
                 if verbose:
                     print("  using manifest: spotify_manifest.csv")
                 urls.extend(_extract_urls_from_csv(manifest))
             else:
-                csv_files = glob.glob(os.path.join(url_file, '*.csv'))
+                csv_files = glob.glob(os.path.join(url_file, "*.csv"))
                 if not csv_files:
                     print(f"no csv files found in directory: {url_file}")
                     return []
@@ -89,10 +51,10 @@ def _read_urls_from_source(url_file, verbose):
                     if verbose:
                         print(f"  reading urls from: {os.path.basename(csv_file)}")
                     urls.extend(_extract_urls_from_csv(csv_file))
-        elif url_file.lower().endswith('.csv'):
+        elif url_file.lower().endswith(".csv"):
             urls = _extract_urls_from_csv(url_file)
         else:
-            with open(url_file, 'r', encoding='utf-8') as f:
+            with open(url_file, "r", encoding="utf-8") as f:
                 urls = [line.strip() for line in f if line.strip()]
     except Exception as e:
         print(f"error reading url source: {e}")
@@ -111,8 +73,7 @@ def _deduplicate_urls(urls):
     return deduped_urls
 
 
-def _process_manual_mode(urls, metadata, output_dir, format, overwrite_errors,
-                        batch_size, cookies_from_browser, verbose):
+def _process_manual_mode(urls, metadata, output_dir, format, overwrite_errors, batch_size, cookies_from_browser, verbose):
     """Process URLs in manual mode via fallback."""
     # Process URLs in batches via fallback
     overall_success = True
@@ -141,13 +102,13 @@ def _process_manual_mode(urls, metadata, output_dir, format, overwrite_errors,
             cookies_from_browser=cookies_from_browser,
             resolved_ffmpeg=resolved_ffmpeg,
             library_index={},  # manual mode doesn't use library index
-            is_spotify=True
+            is_spotify=True,
         )
 
         if not batch_succeeded:
             overall_success = False
             # Log the failed URLs from fallback
-            fallback._log_urls('soft_failures.txt', fallback_failed, reason='manual_fallback_failed')
+            fallback._log_urls("soft_failures.txt", fallback_failed, reason="manual_fallback_failed")
         else:
             print(f"  Batch {batch_num} succeeded via fallback.")
 
@@ -169,7 +130,7 @@ def _check_existing(urls, metadata, output_dir, fmt):
     no_meta = 0
     for url in urls:
         meta = metadata.get(url) or {}
-        artist_names, track_name = meta.get('artist', ''), meta.get('track', '')
+        artist_names, track_name = meta.get("artist", ""), meta.get("track", "")
         if not artist_names or not track_name:
             no_meta += 1
         else:
@@ -200,15 +161,38 @@ def _validate_and_prepare_urls(url_file, verbose):
     return urls, url_count
 
 
-def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
-                   overwrite_errors=False, skip_existing=False,
-                   validate_only=False, batch_size=1, pre_skip_existing=False,
-                   retries=3, retry_delay=3, cookies_from_browser=None, cookie_file=None,
-                   debug=False, spotdl_fallback=False, manual=False, verbose=False, clean=False):
+def download_spotify(
+    url_file,
+    output_dir=None,
+    format="mp3",
+    bitrate="320k",
+    overwrite_errors=False,
+    skip_existing=False,
+    validate_only=False,
+    batch_size=1,
+    pre_skip_existing=False,
+    retries=3,
+    retry_delay=3,
+    cookies_from_browser=None,
+    cookie_file=None,
+    debug=False,
+    spotdl_fallback=False,
+    manual=False,
+    verbose=False,
+    clean=False,
+):
     # Apply environment variable defaults
-    pre_skip_existing = _apply_env_bool('DOWNLOAD_PRE_SKIP_EXISTING', pre_skip_existing)
-    cookie_file = _apply_env_string('DOWNLOAD_COOKIES_FILE', cookie_file)
-    retries = _apply_env_int('DOWNLOAD_RETRIES', retries, 3)
+    pre_skip_existing = (
+        config.DOWNLOAD_PRE_SKIP_EXISTING
+        if pre_skip_existing is False and config.DOWNLOAD_PRE_SKIP_EXISTING is not None
+        else pre_skip_existing
+    )
+    cookie_file = (
+        config.DOWNLOAD_COOKIES_FILE
+        if (cookie_file is None or cookie_file == "") and config.DOWNLOAD_COOKIES_FILE
+        else cookie_file
+    )
+    retries = config.DOWNLOAD_RETRIES if retries == 3 and config.DOWNLOAD_RETRIES is not None else retries
 
     if verbose:
         print(f"processing spotify source: {url_file}")
@@ -228,9 +212,7 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
 
     # Pre-skip existence check
     if pre_skip_existing and metadata:
-        should_continue, urls, url_count = _handle_pre_skip_existence(
-            urls, metadata, output_dir, format, validate_only, verbose
-        )
+        should_continue, urls, url_count = _handle_pre_skip_existence(urls, metadata, output_dir, format, validate_only, verbose)
         if not should_continue:
             return True  # Either validated only or no URLs left to process
     elif validate_only:
@@ -239,23 +221,37 @@ def download_spotify(url_file, output_dir=None, format='mp3', bitrate='320k',
 
     # If manual, process via fallback and return
     if manual:
-        return _process_manual_mode(urls, metadata, output_dir, format, overwrite_errors,
-                                  batch_size, cookies_from_browser, verbose)
+        return _process_manual_mode(
+            urls, metadata, output_dir, format, overwrite_errors, batch_size, cookies_from_browser, verbose
+        )
 
     # Otherwise, proceed with spotdl processing (original logic)
-    return _process_spotdl_mode(urls, metadata, output_dir, format, bitrate, overwrite_errors,
-                              skip_existing, batch_size, retries, retry_delay,
-                              cookies_from_browser, cookie_file, debug, spotdl_fallback, verbose)
-
+    return _process_spotdl_mode(
+        urls,
+        metadata,
+        output_dir,
+        format,
+        bitrate,
+        overwrite_errors,
+        skip_existing,
+        batch_size,
+        retries,
+        retry_delay,
+        cookies_from_browser,
+        cookie_file,
+        debug,
+        spotdl_fallback,
+        verbose,
+    )
 
 
 def _extract_urls_from_csv(csv_path):
     urls = []
     try:
-        with open(csv_path, 'r', encoding='utf-8') as f:
+        with open(csv_path, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                url = row.get('spotify_url')
+                url = row.get("spotify_url")
                 if url and url.strip():
                     urls.append(url.strip())
     except Exception as e:
@@ -288,7 +284,7 @@ def _handle_pre_skip_existence(urls, metadata, output_dir, format, validate_only
     new_urls = []
     for url in urls:
         meta = metadata.get(url) or {}
-        a, t = meta.get('artist', ''), meta.get('track', '')
+        a, t = meta.get("artist", ""), meta.get("track", "")
         if not a or not t:
             new_urls.append(url)
         else:
@@ -303,8 +299,9 @@ def _handle_pre_skip_existence(urls, metadata, output_dir, format, validate_only
     return True, new_urls, len(new_urls)  # Continue processing with new URLs
 
 
-def _build_spotdl_command(batch, format, bitrate, output_dir, overwrite_errors, skip_existing,
-                         cookie_file, cookies_from_browser, debug):
+def _build_spotdl_command(
+    batch, format, bitrate, output_dir, overwrite_errors, skip_existing, cookie_file, cookies_from_browser, debug
+):
     """Build the spotdl command with all necessary options."""
     cmd = [sys.executable, "-m", "spotdl", "download"] + batch
     cmd.extend(["--format", format, "--bitrate", bitrate])
@@ -325,15 +322,14 @@ def _build_spotdl_command(batch, format, bitrate, output_dir, overwrite_errors, 
     )
     cmd.append("--lyrics")
     log_level = "DEBUG" if debug else "INFO"
-    cmd.extend(["--log-level",log_level,"--print-errors","--yt-dlp-args",yt_dlp_extra_args])
+    cmd.extend(["--log-level", log_level, "--print-errors", "--yt-dlp-args", yt_dlp_extra_args])
     resolved_ffmpeg = ffmpeg_path()
     if resolved_ffmpeg:
         cmd.extend(["--ffmpeg", resolved_ffmpeg])
     return cmd
 
 
-def _execute_spotdl_batch(cmd, batch, batch_num, retries, retry_delay, verbose,
-                         hard_failure_patterns, soft_failure_patterns):
+def _execute_spotdl_batch(cmd, batch, batch_num, retries, retry_delay, verbose, hard_failure_patterns, soft_failure_patterns):
     """Execute a single batch of URLs with spotdl and handle retries."""
     attempt = 0
     batch_succeeded = False
@@ -386,7 +382,7 @@ def _is_soft_failure(combined_output, soft_failure_patterns, verbose, batch, max
                 print(f"soft failure detected, retrying ({current_attempt + 1}/{max_retries})...")
             return False  # Continue retrying
         else:
-            reason = next((p for p in soft_failure_patterns if p in combined_output), 'soft_failure')
+            reason = next((p for p in soft_failure_patterns if p in combined_output), "soft_failure")
             if verbose:
                 print(f"soft failure after {max_retries} retries ({reason}): {batch}")
             return True  # Stop retrying, proceed to fallback
@@ -397,39 +393,52 @@ def _run_spotdl_process(cmd):
     """Run spotdl process and return returncode and combined output."""
     try:
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding='utf-8', errors='replace'
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace"
         )
         captured_lines = []
         for line in proc.stdout:
-            print(line, end='', flush=True)
+            print(line, end="", flush=True)
             captured_lines.append(line)
         proc.wait()
         returncode = proc.returncode
-        combined_output = ''.join(captured_lines)
+        combined_output = "".join(captured_lines)
         return returncode, combined_output
     except Exception as e:
         print(f"error running spotdl: {e}")
         return None, None  # Indicate error occurred
 
 
-def _process_spotdl_mode(urls, metadata, output_dir, format, bitrate, overwrite_errors,
-                         skip_existing, batch_size, retries, retry_delay,
-                         cookies_from_browser, cookie_file, debug, spotdl_fallback, verbose):
+def _process_spotdl_mode(
+    urls,
+    metadata,
+    output_dir,
+    format,
+    bitrate,
+    overwrite_errors,
+    skip_existing,
+    batch_size,
+    retries,
+    retry_delay,
+    cookies_from_browser,
+    cookie_file,
+    debug,
+    spotdl_fallback,
+    verbose,
+):
     """Process URLs using spotdl (original logic)."""
     # spotdl exits 0 even when nothing downloads - scan output for these markers
     SOFT_FAILURE_PATTERNS = [
-        'AudioProviderError',
-        'LookupError',
-        'PermissionError',
-        'No results found',
-        'YT-DLP download error',
-        'returned no usable results',
+        "AudioProviderError",
+        "LookupError",
+        "PermissionError",
+        "No results found",
+        "YT-DLP download error",
+        "returned no usable results",
     ]
     # track is genuinely gone, no point retrying
     HARD_FAILURE_PATTERNS = [
-        'Track no longer exists',
-        'SongError',
+        "Track no longer exists",
+        "SongError",
     ]
 
     # resolve once so it matches whatever the pre-skip existence check used
@@ -458,7 +467,7 @@ def _process_spotdl_mode(urls, metadata, output_dir, format, bitrate, overwrite_
             skip_existing=skip_existing,
             cookie_file=cookie_file,
             cookies_from_browser=cookies_from_browser,
-            debug=debug
+            debug=debug,
         )
 
         print(f"running spotdl for: {batch}")
@@ -471,7 +480,7 @@ def _process_spotdl_mode(urls, metadata, output_dir, format, bitrate, overwrite_
             retry_delay=retry_delay,
             verbose=verbose,
             hard_failure_patterns=HARD_FAILURE_PATTERNS,
-            soft_failure_patterns=SOFT_FAILURE_PATTERNS
+            soft_failure_patterns=SOFT_FAILURE_PATTERNS,
         )
 
         overall_success = _handle_batch_result(
@@ -488,9 +497,8 @@ def _process_spotdl_mode(urls, metadata, output_dir, format, bitrate, overwrite_
             overwrite_errors=overwrite_errors,
             cookies_from_browser=cookies_from_browser,
             resolved_ffmpeg=resolved_ffmpeg,
-            fallback=fallback
+            fallback=fallback,
         )
-
 
     if overall_success:
         if verbose:
@@ -508,9 +516,22 @@ def _resolve_paths_and_ffmpeg(output_dir):
     return resolved_output_dir, resolved_ffmpeg
 
 
-def _handle_batch_result(hard_failure_detected, batch_succeeded, spotdl_fallback, verbose,
-                        batch, batch_num, overall_success, metadata, resolved_output_dir,
-                        format, overwrite_errors, cookies_from_browser, resolved_ffmpeg, fallback):
+def _handle_batch_result(
+    hard_failure_detected,
+    batch_succeeded,
+    spotdl_fallback,
+    verbose,
+    batch,
+    batch_num,
+    overall_success,
+    metadata,
+    resolved_output_dir,
+    format,
+    overwrite_errors,
+    cookies_from_browser,
+    resolved_ffmpeg,
+    fallback,
+):
     """Handle the result of a batch processing attempt."""
     # Handle hard failures specially - log to failed_downloads.txt and skip fallback
     if hard_failure_detected:
@@ -518,7 +539,7 @@ def _handle_batch_result(hard_failure_detected, batch_succeeded, spotdl_fallback
             print(f"  Batch {batch_num} had hard failure (track unavailable).")
         overall_success = False
         # Log the failed URLs to failed_downloads.txt with track_unavailable reason
-        fallback._log_urls('failed_downloads.txt', batch, reason='track_unavailable')
+        fallback._log_urls("failed_downloads.txt", batch, reason="track_unavailable")
     elif not batch_succeeded and spotdl_fallback:
         # Process fallback using the fallback module
         fallback_succeeded, fallback_failed, batch_succeeded = fallback.process_fallback(
@@ -530,13 +551,13 @@ def _handle_batch_result(hard_failure_detected, batch_succeeded, spotdl_fallback
             cookies_from_browser=cookies_from_browser,
             resolved_ffmpeg=resolved_ffmpeg,
             library_index={},  # Note: using empty library_index for consistency with manual mode?
-            is_spotify=True
+            is_spotify=True,
         )
         # Update overall_success based on fallback results
         if not batch_succeeded:
             overall_success = False
             # Log the failed URLs from fallback
-            fallback._log_urls('soft_failures.txt', fallback_failed, reason='spotdl_fallback_failed')
+            fallback._log_urls("soft_failures.txt", fallback_failed, reason="spotdl_fallback_failed")
     elif not batch_succeeded:
         # No fallback or fallback not enabled, log failure
         if verbose:
@@ -544,6 +565,6 @@ def _handle_batch_result(hard_failure_detected, batch_succeeded, spotdl_fallback
         overall_success = False
         # Determine if it was hard or soft failure? We don't have reason here.
         # For simplicity, log to soft_failures.txt (could be either)
-        fallback._log_urls('soft_failures.txt', batch, reason='spotdl_exhausted_retries')
+        fallback._log_urls("soft_failures.txt", batch, reason="spotdl_exhausted_retries")
 
     return overall_success

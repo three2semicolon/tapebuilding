@@ -12,8 +12,9 @@ no logic was extracted or changed, this is a thin promotion.
 from playlists.build import build_playlists
 
 
-def run_sync(names=None, exclude_names=None, covers=False, verbose=False, playlists_path=None,
-            archive_path=None, exports_dir=None):
+def run_sync(
+    names=None, exclude_names=None, covers=False, verbose=False, playlists_path=None, archive_path=None, exports_dir=None
+):
     """rescrape spotify + rebuild every (or named) playlist's .m3u8, in one
     call. plain, import-safe entry point - mirrors
     `playlists --apply --rescrape [--covers] [-p NAME ...]` exactly. no
@@ -23,14 +24,14 @@ def run_sync(names=None, exclude_names=None, covers=False, verbose=False, playli
     directly instead (optionally with rescrape=True if you also want a
     fresh export first)."""
     # Handle PLAYLISTS_EXCLUDE environment variable as standing default for --exclude
-    import os
-    env_exclude = os.environ.get('PLAYLISTS_EXCLUDE', '')
+    from lib import config
+
+    env_exclude = config.PLAYLISTS_EXCLUDE
     if env_exclude:
-        env_exclude_list = [item.strip() for item in env_exclude.split(',') if item.strip()]
         if exclude_names:
-            exclude_names = list(exclude_names) + env_exclude_list
+            exclude_names = list(exclude_names) + env_exclude
         else:
-            exclude_names = env_exclude_list
+            exclude_names = env_exclude
 
     return build_playlists(
         apply=True,

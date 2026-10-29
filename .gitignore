@@ -9,6 +9,8 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+.pytest_cache/
+.ruff_cache/
 
 # Data / manifests (can contain personal library info)
 *.csv
@@ -42,8 +44,8 @@ soft_failures.txt
 retry_list.txt
 
 # organizing
-*config.yaml
-!organize/config.yaml.example
+*library_config.yaml
+!library_config.yaml.example
 dryrun.out*
 
 # downloading
