@@ -27,10 +27,20 @@ into split_group().
 
 import collections
 import os
+import unicodedata
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
-from lib.tags import artist_tokens, canonical_albumartist, dominant_album, sanitize, split_group
+from lib.tags import (
+    artist_tokens,
+    canonical_albumartist,
+    dominant_album,
+    find_duplicates,
+    sanitize,
+    same_path,
+    split_group,
+    unique_name,
+)
 from lib.text import normalize_key, group_album_key, render_credit
 
 
@@ -166,6 +176,7 @@ class Plan:
     va_groups: List[Tuple[str, int, List[str]]]  # (album, track_count, src_skewed_folders)
     split_groups: List[Tuple[str, int]]      # (album, track_count) - false-VA collisions split apart
     ambiguous_groups: List[Tuple[str, int, List[str]]] = field(default_factory=list)  # (album, n, artists)
+    dup_moves: List[Tuple[str, str]] = field(default_factory=list)  # (src, dst) - true duplicates -> duplicates/
 
 
 def group_files(files):
@@ -197,6 +208,7 @@ def build_plan(groups, crate):
     singles_dir = os.path.join(crate, 'singles')
 
     album_moves, singleton_moves = [], []
+    dup_moves = []
     tag_writes, album_tag_writes = [], []
     va_groups, split_groups, ambiguous_groups = [], [], []
     noop_count = 0
@@ -206,30 +218,89 @@ def build_plan(groups, crate):
         # no album tag / lone track / empty key (Bug 4: never merge on emptiness)
         if kind == 'single' or len(members) == 1 or not (
                 members[0]['album'] and group_album_key(members[0]['album'])):
-            noop_ref = [0]  # mutable counter for nested function
-            for f in members:
-                _add_singleton(f, albums_dir, singles_dir, seen_singletons, singleton_moves, noop_ref)
-            noop_count += noop_ref[0]
+            noop_count += _plan_singletons(members, albums_dir, singles_dir,
+                                           seen_singletons, singleton_moves)
             continue
 
-        status, album, artists_list, components = _handle_group_status(members, resolve_group, dominant_album)
+        status, album, artists_list, components = _handle_group_status(
+            members, resolve_group, dominant_album)
         if status == 'split':
             split_groups.append((album, len(members), artists_list))
         elif status == 'ambiguous':
             ambiguous_groups.append((album, len(members), artists_list))
 
-        noop_singleton_ref = [0]  # mutable counter for nested function
         for component in components:
             if len(component) == 1:
-                _add_singleton(component[0], albums_dir, singles_dir, seen_singletons, singleton_moves, noop_singleton_ref)
+                noop_ref = [0]
+                _add_singleton(component[0], albums_dir, singles_dir,
+                               seen_singletons, singleton_moves, noop_ref)
+                noop_count += noop_ref[0]
             else:
                 _add_album(component, albums_dir, singles_dir, seen_singletons,
                            album_moves, singleton_moves, tag_writes, album_tag_writes,
-                           va_groups, heal_va=(status == 'split'))
-        noop_count += noop_singleton_ref[0]
+                           va_groups, heal_va=(status == 'split'), dup_moves=dup_moves)
+
+    # De-duplicate quarantine destinations: two same-cased basenames from
+    # different components must not collide in duplicates/ (Fix 6).
+    dup_moves = _deduplicate_dup_moves(dup_moves)
+
+    # Planner assertions: no two moves share a destination, and no source has
+    # conflicting tag writes.
+    _assert_unique_destinations(album_moves, singleton_moves, dup_moves)
+    _assert_no_conflicting_tag_writes(tag_writes, album_tag_writes)
 
     return Plan(album_moves, singleton_moves, noop_count, tag_writes, album_tag_writes,
-                va_groups, split_groups, ambiguous_groups)
+                va_groups, split_groups, ambiguous_groups, dup_moves)
+
+
+def _plan_singletons(members, albums_dir, singles_dir, seen_singletons,
+                     singleton_moves):
+    """Add singleton moves for every member; returns how many are already in
+    place (noop)."""
+    noop_ref = [0]
+    for f in members:
+        _add_singleton(f, albums_dir, singles_dir, seen_singletons,
+                       singleton_moves, noop_ref)
+    return noop_ref[0]
+
+
+def _deduplicate_dup_moves(dup_moves):
+    """Re-suffix same-cased basenames so quarantine destinations never
+    collide in duplicates/ (Fix 6)."""
+    seen_dup = set()
+    deduped = []
+    for src, dst in dup_moves:
+        name = os.path.basename(dst)
+        if name.lower() in seen_dup:
+            name = unique_name(seen_dup, name)
+        seen_dup.add(name.lower())
+        deduped.append((src, os.path.join(os.path.dirname(dst), name)))
+    return deduped
+
+
+def _assert_unique_destinations(album_moves, singleton_moves, dup_moves):
+    """Planner assertion: no two moves share a destination
+    (case-insensitively)."""
+    all_dsts = ([dst for _, dst, _ in album_moves]
+                + [dst for _, dst in singleton_moves]
+                + [dst for _, dst in dup_moves])
+    all_dsts_lower = [d.lower() for d in all_dsts]
+    if len(all_dsts_lower) != len(set(all_dsts_lower)):
+        from collections import Counter
+        dupes = [d for d, n in Counter(all_dsts_lower).items() if n > 1]
+        raise AssertionError(f"build_plan: two moves share destination(s) "
+                             f"(case-insensitively): {dupes}")
+
+
+def _assert_no_conflicting_tag_writes(tag_writes, album_tag_writes):
+    """Planner assertion: no two tag writes to the same source with
+    different values."""
+    for writes in (tag_writes, album_tag_writes):
+        write_map = {}
+        for src, val in writes:
+            if src in write_map and write_map[src] != val:
+                raise AssertionError(f"build_plan: conflicting tag writes for {src}")
+            write_map[src] = val
 
 
 def _track_label(idx_in_group, f):
@@ -249,15 +320,49 @@ def _add_singleton(f, albums_dir, singles_dir, seen_singletons, singleton_moves,
         c += 1
     seen_singletons.add(os.path.normpath(os.path.join(singles_dir, name)).lower())
     dst = os.path.join(singles_dir, name)
-    if os.path.normpath(dst) != os.path.normpath(f['path']):
+    if not same_path(dst, f['path']):
         singleton_moves.append((f['path'], dst))
     else:
         noop_ref[0] += 1
 
 
+def _folder_case_key(name):
+    """casefold + NFC key for keep-existing-folder comparisons (Bug 6.4)."""
+    return unicodedata.normalize('NFC', name.casefold())
+
+
+def _existing_folder_exact(albums_dir, folder):
+    """Keep-existing-folder rule (Bug 6.4): if an existing subdirectory of
+    albums_dir matches `folder` case-insensitively (casefold + NFC, exact
+    otherwise), return its exact on-disk string. Case alone never triggers a
+    rename of an already-correct folder, which kills the
+    `Citizen - Youth` <-> `youth` ping-pong. Deliberately not `group_key`-
+    based: `group_key` ignores punctuation/spacing, which would block the
+    rename of `MndsgnDevonwho - Episodes` -> `Mndsgn, Devonwho - Episodes`."""
+    if not os.path.isdir(albums_dir):
+        return None
+    target = _folder_case_key(folder)
+    for d in os.listdir(albums_dir):
+        full = os.path.join(albums_dir, d)
+        if os.path.isdir(full) and _folder_case_key(d) == target:
+            return d
+    return None
+
+
+def _dupe_preference(f):
+    """sort key: best copy of a duplicate group first - lossless, then larger."""
+    ext = os.path.splitext(f['path'])[1].lower()
+    lossless = ext in ('.flac', '.wav', '.alac', '.aiff', '.aif')
+    try:
+        size = os.path.getsize(f['path'])
+    except OSError:
+        size = 0
+    return (not lossless, -size)
+
+
 def _add_album(component, albums_dir, singles_dir, seen_singletons,
                album_moves, singleton_moves, tag_writes, album_tag_writes,
-               va_groups, heal_va):
+               va_groups, heal_va, dup_moves):
     """Add an album component to the plan."""
     # in a group we decided to split, an explicit 'Various Artists'
     # albumartist is self-inflicted (an earlier wrong merge), not a signal -
@@ -268,26 +373,69 @@ def _add_album(component, albums_dir, singles_dir, seen_singletons,
     aa = canonical_albumartist(basis)
     album = dominant_album(component)
     folder = sanitize(f"{render_credit(aa)} - {album}") or 'Unknown Album'
+    # Fix 4: keep-existing-folder - reuse an existing folder's exact string
+    # when it matches case-insensitively; case alone never renames.
+    keep = _existing_folder_exact(albums_dir, folder)
+    if keep:
+        folder = keep
     src_folders = {os.path.basename(os.path.dirname(m['path'])) for m in component}
     if aa == 'Various Artists':
         va_groups.append((album or folder, len(component), sorted(src_folders)))
+    crate = os.path.dirname(albums_dir)
+    quarantined = _quarantine_duplicates(component, crate, dup_moves)
+    _plan_tag_writes(component, aa, album, quarantined, tag_writes,
+                     album_tag_writes)
+    _plan_album_moves(component, aa, albums_dir, folder, quarantined,
+                      album_moves)
+
+
+def _quarantine_duplicates(component, crate, dup_moves):
+    """Fix 2: true duplicates (same normalized artist + title, duration within
+    ~2 s) are quarantined to duplicates/ with the best copy kept, rather
+    than being suffixed into (2), (3), ... forever. returns the set of
+    quarantined source paths."""
+    quarantined = set()
+    for dup_group in find_duplicates(component):
+        dup_group = sorted(dup_group, key=_dupe_preference)
+        for dup in dup_group[1:]:
+            quarantined.add(dup['path'])
+            dst = os.path.join(crate, 'duplicates', os.path.basename(dup['path']))
+            dup_moves.append((dup['path'], dst))
+    return quarantined
+
+
+def _plan_tag_writes(component, aa, album, quarantined, tag_writes,
+                     album_tag_writes):
+    """Tag-write plan for the non-quarantined members of an album component."""
     for m in component:
-        if normalize_key(m['albumartist'] or '') != normalize_key(aa):
+        if m['path'] in quarantined:
+            continue
+        if (m['albumartist'] or '') != aa:
             tag_writes.append((m['path'], aa))
-        if normalize_key(m['album'] or '') != normalize_key(album):
+        if (m['album'] or '') != album:
             album_tag_writes.append((m['path'], album))
+
+
+def _plan_album_moves(component, aa, albums_dir, folder, quarantined,
+                      album_moves):
+    """Per-file move plan for the non-quarantined members of an album
+    component."""
     seen_names = set()
     for idx, m in enumerate(component):
+        if m['path'] in quarantined:
+            continue
         ext = os.path.splitext(m['path'])[1]
-        name = f"{_track_label(idx, m)} - {sanitize(m['artist'])} - {sanitize(m['title'])}{ext}"
-        base, sfx = os.path.splitext(name)
-        c = 2
-        while name.lower() in seen_names:
-            name = f"{base} ({c}){sfx}"
-            c += 1
+        wanted = f"{_track_label(idx, m)} - {sanitize(m['artist'])} - {sanitize(m['title'])}{ext}"
+        cur_base = os.path.basename(m['path'])
+        # Incumbent-keeps-name: if current basename already equals the wanted
+        # name and it's not taken, keep it (noop). Otherwise get a unique name.
+        if cur_base == wanted and wanted.lower() not in seen_names:
+            name = wanted
+        else:
+            name = unique_name(seen_names, wanted)
         seen_names.add(name.lower())
         dst = os.path.join(albums_dir, folder, name)
-        if os.path.normpath(dst) != os.path.normpath(m['path']):
+        if not same_path(dst, m['path']):
             album_moves.append((m['path'], dst, aa))
 
 

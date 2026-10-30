@@ -421,11 +421,12 @@ def _run_sanity_checks():
     assert render_credit(None) == ''
 
     # normalize_artist: canonicalise artist string for use in file paths
-    assert normalize_artist('Artist feat. Other') == 'Artist feat.'
-    assert normalize_artist('Artist & Other') == 'Artist, Other'
+    assert normalize_artist('Artist feat. Other') == 'Artist feat. Other'
+    assert normalize_artist('Artist feat.') == 'Artist feat.'
+    assert normalize_artist('Artist & Other') == 'Artist & Other'
     assert normalize_artist('Artist x Other') == 'Artist, Other'
     assert normalize_artist('Artist and Other') == 'Artist, Other'
-    assert normalize_artist('Artist, Other & Third') == 'Artist, Other, Third'
+    assert normalize_artist('Artist, Other & Third') == 'Artist, Other & Third'
     assert normalize_artist('  Artist  ') == 'Artist'
     assert normalize_artist('& Artist &') == 'Artist'
     assert normalize_artist('Artist, , Other') == 'Artist, Other'

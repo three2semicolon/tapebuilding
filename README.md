@@ -355,6 +355,31 @@ includes the functionality to prevent new wrong merges and handle existing
 ones through the improved grouping logic. See `BUGFIX_PLAN.md` for details
 on the retirement of --resplit.
 
+### journal / undo / leftover report
+
+Every mutating step of an `organize cleanup --apply` run (each file move and
+each tag write) is appended to `<crate>/.organize_journal.jsonl` before it
+happens and marked done/failed afterward, with the old and new value. That
+gives:
+
+- **`organize undo`** — reverse a journaled run's completed operations,
+  newest first. Dry-run by default; pass `--apply` to actually revert moves
+  and restore tag values. `--run` targets a specific run ID; omitted, it
+  reverts the most recent run not already undone.
+- **`organize undo --list`** — list journaled runs with status (moves,
+  tags, skipped tags, failed ops) and whether each run completed,
+  interrupted, or failed.
+- **`organize cleanup --check-tags`** (leftover report) — scans `singles/`
+  and `albums/` for corrupted `albumartist` tags left by past wrong merges
+  (a single tagged with another artist's albumartist, or an album file whose
+  `albumartist` disagrees with its folder's canonical value). Dry-run by
+  default; `--apply` writes the canonical value.
+
+Journal run IDs are printed at the end of every apply run (`journal:
+<crate>/.organize_journal.jsonl (run <id>; revert with `organize undo`)`).
+Dry runs never touch the journal. Note that `beets.db` goes stale after any
+apply — rebuild it with `organize cleanup --rebuild-db` (or `core sync`).
+
 the `normalize_artists` beets plugin rewrites artist strings to a
 consistent `"A, B & C"` form at import (handles `feat.`/`ft.`, collab `x`,
 `and`); enabled via `library_config.yaml`'s `plugins` list +

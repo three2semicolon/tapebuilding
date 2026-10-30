@@ -176,7 +176,13 @@ class MatchIndex:
         # Get candidates - for Spotify: exact match only; for SoundCloud: also try variations
         ascii_title_candidates = self._get_soundcloud_candidates(title_key, _row_title(row))
 
-        return _pick_best(ascii_title_candidates, pred, want_dur, _TOLERANCE[3])
+        result = _pick_best(ascii_title_candidates, pred, want_dur, _TOLERANCE[3])
+        # Bug 11/D6: hard duration gate for tier 3 — no "closest anyway" fallback
+        # when both durations are known. Tier 3 has no artist check beyond the
+        # contradiction veto, so a far-off duration must not match.
+        if result and want_dur and not _duration_close(want_dur, result.get('length'), _TOLERANCE[3]):
+            return None
+        return result
 
     def _tier4_initial_setup(self, row, title_key):
         """Perform initial setup and validation for _tier4.

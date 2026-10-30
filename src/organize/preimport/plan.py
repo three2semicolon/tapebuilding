@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import List, Tuple
 
 from lib.tags import EXTENSIONS, canonical_album, canonical_albumartist, dominant_album, find_duplicates, read_tags, sanitize
-from lib.text import normalize_album, normalize_key, render_credit
+from lib.text import normalize_album, render_credit
 from organize.cleanup import is_unrelated_va_collision
 
 
@@ -75,22 +75,22 @@ def _track_label(i, m):
     return f"{int(n) if n else i + 1:02d}"
 
 
-def _existing_titles(folder):
-    """set of normalized titles for every audio file already in <folder>, so a
-    merge into an existing album can skip tracks the crate already has (e.g. an
-    mp3 straggler of a track present as flac) instead of parking a second-format
-    copy beside the original (beets' duplicate_action:skip wouldn't catch a
-    same-album intra-folder duplicate)."""
-    titles = set()
+def _read_crate_folder(folder):
+    """read tags for every audio file in <folder>, used by Bug 14 duplicate
+    detection to compare incoming members against existing crate files via
+    find_duplicates() (artist+title+duration within ~2s) instead of a
+    normalize_key(title) set, which false-positives on non-Latin titles
+    that key to ''."""
+    files = []
     for dp, dirs, fns in os.walk(folder):
         dirs[:] = [d for d in dirs if d != '__pycache__']
         for fn in sorted(fns):
             if not fn.lower().endswith(EXTENSIONS):
                 continue
             t = read_tags(os.path.join(dp, fn))
-            if t and t['title']:
-                titles.add(normalize_key(t['title']))
-    return titles
+            if t:
+                files.append(t)
+    return files
 
 
 def _member_name(i, m, folder_path, seen):
@@ -140,7 +140,6 @@ def build_plan(groups, unorganized, crate, idx):
     noop = 0              # number of files already in place
     seen = {}             # folder -> set of lowercased names (collision guard within folder)
     seen_staged = set()   # set of lowercased staged folder names (collision guard)
-    existing_titles_cache = {}  # folder_path -> set(norm(title)) (lazy, merge targets only)
     seen_singletons = set()  # Track lowercase destination paths for singleton collision detection
     report = {
         'scanned': sum(len(v) for v in groups.values()),
@@ -189,7 +188,7 @@ def build_plan(groups, unorganized, crate, idx):
             _handle_merge_group(
                 members, entry, existing_folder_match, aa, album, crate, idx,
                 staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes,
-                report, seen, existing_titles_cache
+                report, seen
             )
         elif len(members) >= 2:
             # Bug 5: remove Various Artists override - do not override Various Artists based on raw artist tags
@@ -247,7 +246,7 @@ def _find_existing_folder_match(idx, album_raw, aa_raw):
 
 
 def _handle_merge_group(members, entry, existing_folder_match, aa, album, crate, idx,
-                       staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes, report, seen, existing_titles_cache):
+                       staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes, report, seen):
     """Handle merging a group into an existing crate album folder."""
     if entry is not None:
         folder_path, existing_aa, existing_album = entry
@@ -257,32 +256,44 @@ def _handle_merge_group(members, entry, existing_folder_match, aa, album, crate,
     # Bug 3b: compute canonical_album() over incoming ∪ existing
     all_albums = [m['album'] or '' for m in members] + [existing_album]
     canonical_album_val = canonical_album([{'album': alb} for alb in all_albums if alb])
-    have = existing_titles_cache.setdefault(
-        folder_path, _existing_titles(folder_path))
+    # Bug 14: compare incoming members against existing folder files using
+    # find_duplicates() (artist+title+duration within ~2s) instead of a
+    # normalize_key(title) set, which false-positives on non-Latin titles
+    # that key to ''.
+    existing_files = _read_crate_folder(folder_path)
+    existing_paths = {ef['path'] for ef in existing_files}
+    dup_groups = find_duplicates(existing_files + list(members))
+    existing_dup_paths = set()
+    for dg in dup_groups:
+        if any(f['path'] in existing_paths for f in dg):
+            for f in dg:
+                if f['path'] not in existing_paths:
+                    existing_dup_paths.add(f['path'])
     merged_here = 0
     for i, m in enumerate(members):
         _process_member_for_merge(
-            i, m, members, have, folder_path, seen,
+            i, m, members, existing_dup_paths, folder_path, seen,
             aa_for_tag, canonical_album_val, album,
             merged_moves, dup_moves, tag_writes, album_tag_writes, report
         )
         merged_here += 1
     # album tag writes: enforce the dominant album string so all files in group agree
     for m in members:
-        if normalize_key(m['album'] or '') != normalize_key(album):
+        if (m['album'] or '') != album:
             album_tag_writes.append((m['path'], album))
     if merged_here:
         report['merged_folders'].append(folder_path)
     report['merged_tracks'] += merged_here
 
 
-def _process_member_for_merge(i, m, members, have, folder_path, seen,
+def _process_member_for_merge(i, m, members, existing_dup_paths, folder_path, seen,
                              aa_for_tag, canonical_album_val, album,
                              merged_moves, dup_moves, tag_writes, album_tag_writes, report):
     """Process a single member for merge handling.
     Checks for duplicates and adds appropriate moves/tags to the provided lists."""
-    # Bug 14: replace preimport duplicate check with find_duplicates()
-    # Check for duplicates within the incoming group first
+    # Bug 14: duplicate detection uses find_duplicates() (artist+title+duration
+    # within ~2s) instead of normalize_key(title), which false-positives on
+    # non-Latin titles that key to ''.
     incoming_duplicates = find_duplicates(members)
     # Flatten the duplicate groups to get a set of duplicate file paths
     duplicate_paths = set()
@@ -290,11 +301,10 @@ def _process_member_for_merge(i, m, members, have, folder_path, seen,
         for dup_file in dup_group:
             duplicate_paths.add(dup_file['path'])
 
-    # skip tracks the album already owns (e.g. an mp3 straggler of a
-    # track present as flac) - quarantine rather than create a
-    # cross-format dup beside the original.
-    # Also skip tracks that are duplicates within the incoming group
-    if normalize_key(m['title']) in have or m['path'] in duplicate_paths:
+    # skip tracks the album already owns (duplicate of an existing crate file)
+    # or duplicates within the incoming group - quarantine rather than create
+    # a cross-format dup beside the original.
+    if m['path'] in existing_dup_paths or m['path'] in duplicate_paths:
         dup_moves.append((m['path'],))
         report['duplicates'].append(
             (m['path'], folder_path, m['title']))
@@ -302,9 +312,9 @@ def _process_member_for_merge(i, m, members, have, folder_path, seen,
     dst = os.path.join(folder_path, _member_name(i, m, folder_path, seen))
     if os.path.normpath(dst) != os.path.normpath(m['path']):
         merged_moves.append((m['path'], dst, aa_for_tag))
-    if normalize_key(m['albumartist'] or '') != normalize_key(aa_for_tag):
+    if (m['albumartist'] or '') != aa_for_tag:
         tag_writes.append((m['path'], aa_for_tag))
-    if normalize_key(m['album'] or '') != normalize_key(canonical_album_val):
+    if (m['album'] or '') != canonical_album_val:
         album_tag_writes.append((m['path'], canonical_album_val))
 
 
@@ -324,11 +334,11 @@ def _handle_stage_group(members, aa, album, staging_root, idx,
         c += 1
     seen_staged.add(os.path.normpath(os.path.join(staging_root, name)).lower())
 
-    have = set()
     staged_here = 0
     for i, m in enumerate(members):
-        # Bug 14: replace preimport duplicate check with find_duplicates()
-        # Check for duplicates within the incoming group first
+        # Bug 14: duplicate detection uses find_duplicates() (artist+title+duration
+        # within ~2s) instead of normalize_key(title), which false-positives on
+        # non-Latin titles that key to ''.
         incoming_duplicates = find_duplicates(members)
         # Flatten the duplicate groups to get a set of duplicate file paths
         duplicate_paths = set()
@@ -336,11 +346,9 @@ def _handle_stage_group(members, aa, album, staging_root, idx,
             for dup_file in dup_group:
                 duplicate_paths.add(dup_file['path'])
 
-        # skip tracks the album already owns (e.g. an mp3 straggler of a
-        # track present as flac) - quarantine rather than create a
-        # cross-format dup beside the original.
-        # Also skip tracks that are duplicates within the incoming group
-        if normalize_key(m['title']) in have or m['path'] in duplicate_paths:
+        # skip tracks that are duplicates within the incoming group -
+        # quarantine rather than create a cross-format dup beside the original.
+        if m['path'] in duplicate_paths:
             dup_moves.append((m['path'],))
             report['duplicates'].append(
                 (m['path'], folder_path, m['title']))
@@ -348,11 +356,10 @@ def _handle_stage_group(members, aa, album, staging_root, idx,
         dst = os.path.join(folder_path, _member_name(i, m, folder_path, seen))
         if os.path.normpath(dst) != os.path.normpath(m['path']):
             staged_moves.append((m['path'], dst, aa))
-        if normalize_key(m['albumartist'] or '') != normalize_key(aa):
+        if (m['albumartist'] or '') != aa:
             tag_writes.append((m['path'], aa))
-        if normalize_key(m['album'] or '') != normalize_key(album):
+        if (m['album'] or '') != album:
             album_tag_writes.append((m['path'], album))
-        have.add(normalize_key(m['title']))
         staged_here += 1
     if staged_here:
         report['staged_folders'].append(folder_path)
