@@ -414,7 +414,7 @@ fallback (`ARCHIVE_PATH`/`archive_path`) has been dropped.
 
 Full documentation (this README expanded into per-package guides) is published with [Zensical](https://zensical.org/) and hosted on GitHub Pages:
 
-- Site: https://three2semicolon.github.io/tapebuilding/
+- Site: https://tapebuilding.whitfija.com/
 - Source: [`docs/`](https://github.com/three2semicolon/tapebuilding/tree/main/docs) in this repo
 
 Preview locally:
