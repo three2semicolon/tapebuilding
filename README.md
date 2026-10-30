@@ -355,7 +355,7 @@ on the retirement of --resplit.
 
 the `normalize_artists` beets plugin rewrites artist strings to a
 consistent `"A, B & C"` form at import (handles `feat.`/`ft.`, collab `x`,
-`and`); enabled via `organize/config.yaml`'s `plugins` list +
+`and`); enabled via `library_config.yaml`'s `plugins` list +
 `pluginpath`.
 
 ## playlists - rebuild local playlists from spotify
@@ -404,7 +404,24 @@ fallback (`ARCHIVE_PATH`/`archive_path`) has been dropped.
 - `TAPEDECK_PATH` - sync target for `tapedeck`. defaults to
   `~/music/tapedeck`.
 - `FFMPEG_PATH` - ffmpeg executable, if not already on `PATH`.
-- `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` - spotify api creds.
+- `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` - spotify api creds (official web api oauth flow).
 - `SPOTIFY_REDIRECT_URI` - oauth redirect (default
   `http://127.0.0.1:8888/callback`).
+- `SPOTIFY_SP_DC` - your browser's `sp_dc` cookie (obtained after logging into Spotify). when set, auth uses spotapi instead of oauth — no spotify premium needed. when unset, falls back to the official web api oauth flow above.
 - `FIREBASE_PROJECT_ID`, `FIREBASE_CREDENTIALS_PATH` - for `download soundbyte`.
+
+## documentation
+
+Full documentation (this README expanded into per-package guides) is published with [Zensical](https://zensical.org/) and hosted on GitHub Pages:
+
+- Site: https://three2semicolon.github.io/tapebuilding/
+- Source: [`docs/`](https://github.com/three2semicolon/tapebuilding/tree/main/docs) in this repo
+
+Preview locally:
+
+```bash
+uv sync --dev
+uv run zensical serve
+```
+
+Then open <http://localhost:8000>. Pushes to `main` build and deploy the site via `.github/workflows/docs.yml`.

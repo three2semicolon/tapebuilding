@@ -51,7 +51,7 @@ def _plain_move(src, dst):
 
 def _lines(tmp_path):
     with open(journal_path(str(tmp_path)), encoding='utf-8') as f:
-        return [json.loads(l) for l in f if l.strip()]
+        return [json.loads(line) for line in f if line.strip()]
 
 
 def test_move_is_written_before_and_after(tmp_path):

@@ -13,10 +13,13 @@ dependencies = [
     "click>=8.1.0",
     "deno>=2.9.1",
     "firebase-admin>=7.5.0",
-    "pytest>=9.1.1",
+    "pymongo>=4.17.0",
     "python-dotenv>=1.2.2",
+    "redis>=8.0.1",
+    "spotapi==1.2.8",
     "spotdl>=4.5.0",
     "spotipy>=2.26.0",
+    "websocket>=0.2.1",
     "yt-dlp[default]>=2026.8.19",
 ]
 
@@ -24,13 +27,28 @@ dependencies = [
 package-dir = {"" = "src"}
 packages = ["lib", "lib.catalog", "download", "organize", "playlists", "tapedeck", "core"]
 
+[dependency-groups]
+dev = [
+    "ruff>=0.17.0",
+    "pytest>=9.1.1",
+    "zensical>=0.0.73",
+]
+[tool.ruff]
+line-length = 130
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "C90"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
 [project.scripts]
 download = "download.cli:download"
 organize = "organize.cli:organize"
 playlists = "playlists.cli:playlists"
 tapedeck = "tapedeck.cli:tapedeck"
 core = "core.cli:core"
-
-[project.optional-dependencies]
-test = ["pytest"]
     

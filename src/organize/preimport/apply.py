@@ -8,7 +8,7 @@ import os
 import sys
 
 from lib.tags import scan_audio
-from organize.cleanup import group_files, resolve_crate
+from organize.cleanup import group_files
 from organize.journal import Journal
 
 from .plan import build_plan, index_existing_albums
@@ -26,9 +26,11 @@ def duplicates_dir(crate):
 def prune_unorganized(unorganized):
     """remove now-empty stray dirs left under <input> after moves, but keep the
     input root and the staging albums/ root (even if empty)."""
-    staging = os.path.join(unorganized, 'albums')
+    unorganized_norm = os.path.normpath(unorganized)
+    staging_norm = os.path.normpath(os.path.join(unorganized, 'albums'))
     for dp, dirs, fns in os.walk(unorganized, topdown=False):
-        if dp in (unorganized, staging):
+        dp_norm = os.path.normpath(dp)
+        if dp_norm in (unorganized_norm, staging_norm):
             continue
         if not dirs and not fns:
             try:
@@ -46,42 +48,64 @@ def _apply(staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes,
     moved = {}
     quarantined = set()  # normalized *source* paths sent to duplicates/ - no tag writes for these
     with Journal(crate, 'preimport') as j:
-        for src, dst, _aa in staged_moves + merged_moves:
-            try:
-                moved[os.path.normpath(src)] = j.move(src, dst)
-            except OSError as e:
-                print(f"  move failed: {src} ({e})", file=sys.stderr)
-
-        if dup_moves:
-            dest = duplicates_dir(crate)
-            for (src,) in dup_moves:
-                try:
-                    moved[os.path.normpath(src)] = j.move(
-                        src, os.path.join(dest, os.path.basename(src)))
-                    quarantined.add(os.path.normpath(src))
-                except OSError as e:
-                    print(f"  dup move failed: {src} ({e})", file=sys.stderr)
-
-        prune_unorganized(unorganized)
-
-        if no_tag_write:
-            print("(--no-tag-write: albumartist tags left as-is - beets may still split)")
-        else:
-            print(f"writing albumartist tags on {len(tag_writes)} files...")
-            for src, aa in tag_writes:
-                if os.path.normpath(src) in quarantined:
-                    continue
-                path = moved.get(os.path.normpath(src), src)
-                j.tag(path, albumartist=aa)
-
-            if album_tag_writes:
-                print(f"writing album tags on {len(album_tag_writes)} files...")
-                for src, album in album_tag_writes:
-                    if os.path.normpath(src) in quarantined:
-                        continue
-                    path = moved.get(os.path.normpath(src), src)
-                    j.tag(path, album=album)
+        _apply_stage_and_merged_moves(staged_moves, merged_moves, moved, j)
+        _apply_duplicate_moves(dup_moves, moved, quarantined, crate, j)
+        _prune_and_handle_tags(unorganized, no_tag_write, tag_writes, album_tag_writes, moved, quarantined, j)
     print(f"journal: {j.path}  (run {j.run_id}; revert with `organize undo`)")
+
+
+def _apply_stage_and_merged_moves(staged_moves, merged_moves, moved, j):
+    """Apply staged and merged moves through the journal."""
+    for src, dst, _aa in staged_moves + merged_moves:
+        try:
+            moved[os.path.normpath(src)] = j.move(src, dst)
+        except OSError as e:
+            print(f"  move failed: {src} ({e})", file=sys.stderr)
+
+
+def _apply_duplicate_moves(dup_moves, moved, quarantined, crate, j):
+    """Apply duplicate moves to the duplicates directory through the journal."""
+    if dup_moves:
+        dest = duplicates_dir(crate)
+        for (src,) in dup_moves:
+            try:
+                moved[os.path.normpath(src)] = j.move(
+                    src, os.path.join(dest, os.path.basename(src)))
+                quarantined.add(os.path.normpath(src))
+            except OSError as e:
+                print(f"  dup move failed: {src} ({e})", file=sys.stderr)
+
+
+def _prune_and_handle_tags(unorganized, no_tag_write, tag_writes, album_tag_writes, moved, quarantined, j):
+    """Prune unorganized directories and handle tag writes."""
+    prune_unorganized(unorganized)
+
+    if no_tag_write:
+        print("(--no-tag-write: albumartist tags left as-is - beets may still split)")
+    else:
+        _write_albumartist_tags(tag_writes, moved, quarantined, j)
+        _write_album_tags(album_tag_writes, moved, quarantined, j)
+
+
+def _write_albumartist_tags(tag_writes, moved, quarantined, j):
+    """Write albumartist tags to files."""
+    print(f"writing albumartist tags on {len(tag_writes)} files...")
+    for src, aa in tag_writes:
+        if os.path.normpath(src) in quarantined:
+            continue
+        path = moved.get(os.path.normpath(src), src)
+        j.tag(path, albumartist=aa)
+
+
+def _write_album_tags(album_tag_writes, moved, quarantined, j):
+    """Write album tags to files."""
+    if album_tag_writes:
+        print(f"writing album tags on {len(album_tag_writes)} files...")
+        for src, album in album_tag_writes:
+            if os.path.normpath(src) in quarantined:
+                continue
+            path = moved.get(os.path.normpath(src), src)
+            j.tag(path, album=album)
 
 
 def _report_import_leftovers(unorganized):
@@ -103,31 +127,33 @@ def _report_import_leftovers(unorganized):
     return len(leftovers), leftovers
 
 
-def stage(unorganized, crate, apply=False, merge_existing=True,
-          verbose=False, no_tag_write=False):
-    """stage <unorganized> for a clean beets import. returns a report dict;
-    beets_import.py reads report['merged_folders'] to flag stale-db merges."""
-    sys.stdout.reconfigure(encoding='utf-8')  # non-ASCII artist/album names
-    sys.stderr.reconfigure(encoding='utf-8')
-
-    if not os.path.isdir(unorganized):
-        print(f"input : {unorganized}  (not found - nothing to stage)")
-        return {'staged_folders': [], 'merged_folders': [], 'merged_tracks': 0,
-                'singletons': 0, 'tag_writes': 0, 'ambiguous': [], 'scanned': 0,
-                'split_groups': []}
-
+def _print_header(unorganized, crate, apply, merge_existing):
+    """Print header information: input, crate, mode, and merge settings."""
     print(f"input : {unorganized}")
     print(f"crate : {crate}")
     print(f"mode  : {'apply (files move, tags written)' if apply else 'dry run (nothing moves)'}")
     print(f"merge : {'existing album folders' if merge_existing else 'new folders only (no merge)'}")
     print()
 
+
+def _scan_and_plan(unorganized, crate, merge_existing):
+    """Scan audio files, group them, and build a plan for organizing.
+
+    Returns tuple of (files, groups, idx, plan_result).
+    """
     files = scan_audio(unorganized, subdirs=None)  # whole-tree walk of <input>
     print(f"scanned {len(files)} audio files")
     groups = group_files(files)
     idx = index_existing_albums(crate) if merge_existing else {}
     plan_result = build_plan(groups, unorganized, crate, idx)
+    return files, groups, idx, plan_result
 
+
+def _prepare_report(plan_result, no_tag_write, unorganized, verbose):
+    """Extract values from Plan dataclass and prepare the report dictionary.
+
+    Returns the report dictionary.
+    """
     # Extract values from Plan dataclass
     report = plan_result.report
     staged_moves = plan_result.staged_moves
@@ -145,6 +171,14 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
     if verbose:
         report['leftover_paths'] = leftover_paths
 
+    return report, staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes
+
+
+def _print_plan_summary(report, groups, idx, unorganized, crate, verbose, staged_moves):
+    """Print the plan summary including album groups and various counts.
+
+    Handles the main plan output and the first import leftovers report.
+    """
     album_groups = sum(1 for k, m in groups.items() if k[0] == 'album' and len(m) >= 2)
     print()
     print("=== plan ===")
@@ -162,32 +196,11 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
     if idx:
         print(f"  existing albums scanned for merge: {len(idx)}")
 
-    if report['duplicates']:
-        print("\n  duplicates (crate already has them - quarantined, not merged):")
-        for src, folder, title in report['duplicates'][:25]:
-            print(f"    {title!r}  <-  {os.path.relpath(src, unorganized)}  "
-                  f"(already in {os.path.relpath(folder, crate)})")
+def _print_verbose_moves(staged_moves, merged_moves, unorganized, verbose, crate):
+    """Print detailed move information when verbose mode is enabled.
 
-    if report['ambiguous']:
-        print("\n  ambiguous merges (multiple existing folders match - staged as new):")
-        for _aa, album in report['ambiguous'][:25]:
-            print(f"    {album!r}")
-
-    if report['split_groups']:
-        print("\n  split apart (Bug 2 - same-titled but unrelated singles, left as"
-              " singletons instead of staged/merged as 'Various Artists'):")
-        for album, n in sorted(report['split_groups'], key=lambda x: -x[1])[:25]:
-            print(f"    {n:>4} files  {album!r}")
-
-    # Bug 11 equivalent: report import leftovers
-    if report['leftover_count'] > 0:
-        print(f"\n  import leftovers ({report['leftover_count']} files):")
-        if verbose and 'leftover_paths' in report:
-            for path in report['leftover_paths'][:25]:
-                print(f"    {os.path.relpath(path, unorganized)}")
-        elif not verbose:
-            print(f"    (use --verbose to see paths)")
-
+    Handles the verbose output for staging and merge moves.
+    """
     if verbose:
         if staged_moves:
             print("\n  staging moves:")
@@ -200,25 +213,115 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
                 print(f"    {os.path.relpath(src, unorganized)}  ->  "
                       f"{os.path.relpath(dst, crate)}  [albumartist={aa!r}]")
 
+
+def _print_merged_folders(report, crate):
+    """Print list of merged folders into existing crate albums.
+
+    Handles the output showing which existing crate albums were merged into.
+    """
     if report['merged_folders']:
         print("\n  merges into existing crate albums:")
         for f in sorted(set(report['merged_folders'])):
             print(f"    {os.path.relpath(f, crate)}")
 
-    if not apply:
-        print("\ndry run - re-run with --apply to stage folders and write tags.")
-        if tag_writes:
-            print(f"(would write albumartist tags on {len(tag_writes)} files; pass --no-tag-write to skip)")
-        if album_tag_writes:
-            print(f"(would write album tags on {len(album_tag_writes)} files; pass --no-tag-write to skip)")
-        return report
 
+def _handle_dry_run(report, tag_writes, album_tag_writes):
+    """Handle dry run mode - print messages and return early without applying changes.
+
+    Returns the report dictionary for early exit.
+    """
+    print("\ndry run - re-run with --apply to stage folders and write tags.")
+    if tag_writes:
+        print(f"(would write albumartist tags on {len(tag_writes)} files; pass --no-tag-write to skip)")
+    if album_tag_writes:
+        print(f"(would write album tags on {len(album_tag_writes)} files; pass --no-tag-write to skip)")
+    return report
+
+
+def _print_apply_operations(staged_moves, merged_moves, dup_moves):
+    """Print messages about staging, merging, and quarantining operations.
+
+    Handles the output showing what operations will be performed during apply mode.
+    """
     if staged_moves:
         print(f"\nstaging {len(staged_moves)} files into <input>/albums/...")
     if merged_moves:
         print(f"merging {len(merged_moves)} files into existing crate albums...")
     if dup_moves:
         print(f"quarantining {len(dup_moves)} duplicates -> crate/duplicates/...")
+
+
+def _print_duplicates(report, unorganized, crate):
+    """Print duplicate files that are already in the crate."""
+    if report['duplicates']:
+        print("\n  duplicates (crate already has them - quarantined, not merged):")
+        for src, folder, title in report['duplicates'][:25]:
+            print(f"    {title!r}  <-  {os.path.relpath(src, unorganized)}  "
+                  f"(already in {os.path.relpath(folder, crate)})")
+
+
+def _print_ambiguous(report):
+    """Print ambiguous merges where multiple existing folders match."""
+    if report['ambiguous']:
+        print("\n  ambiguous merges (multiple existing folders match - staged as new):")
+        for _aa, album in report['ambiguous'][:25]:
+            print(f"    {album!r}")
+
+
+def _print_split_groups(report):
+    """Print split groups (same-titled but unrelated singles)."""
+    if report['split_groups']:
+        print("\n  split apart (Bug 2 - same-titled but unrelated singles, left as"
+              " singletons instead of staged/merged as 'Various Artists'):")
+        for album, n in sorted(report['split_groups'], key=lambda x: -x[1])[:25]:
+            print(f"    {n:>4} files  {album!r}")
+
+
+def _print_import_leftovers(report, verbose, unorganized):
+    """Print import leftovers (Bug 11 equivalent)."""
+    if report['leftover_count'] > 0:
+        print(f"\n  import leftovers ({report['leftover_count']} files):")
+        if verbose and 'leftover_paths' in report:
+            for path in report['leftover_paths'][:25]:
+                print(f"    {os.path.relpath(path, unorganized)}")
+        elif not verbose:
+            print("    (use --verbose to see paths)")
+
+
+def stage(unorganized, crate, apply=False, merge_existing=True,
+          verbose=False, no_tag_write=False):
+    """stage <unorganized> for a clean beets import. returns a report dict;
+    beets_import.py reads report['merged_folders'] to flag stale-db merges."""
+    sys.stdout.reconfigure(encoding='utf-8')  # non-ASCII artist/album names
+    sys.stderr.reconfigure(encoding='utf-8')
+
+    if not os.path.isdir(unorganized):
+        print(f"input : {unorganized}  (not found - nothing to stage)")
+        return {'staged_folders': [], 'merged_folders': [], 'merged_tracks': 0,
+                'singletons': 0, 'tag_writes': 0, 'ambiguous': [], 'scanned': 0,
+                'split_groups': []}
+
+    _print_header(unorganized, crate, apply, merge_existing)
+
+    files, groups, idx, plan_result = _scan_and_plan(unorganized, crate, merge_existing)
+
+    report, staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes = _prepare_report(
+        plan_result, no_tag_write, unorganized, verbose)
+
+    _print_plan_summary(report, groups, idx, unorganized, crate, verbose, staged_moves)
+
+    _print_duplicates(report, unorganized, crate)
+    _print_ambiguous(report)
+    _print_split_groups(report)
+    _print_import_leftovers(report, verbose, unorganized)
+
+    _print_verbose_moves(staged_moves, merged_moves, unorganized, verbose, crate)
+    _print_merged_folders(report, crate)
+
+    if not apply:
+        return _handle_dry_run(report, tag_writes, album_tag_writes)
+
+    _print_apply_operations(staged_moves, merged_moves, dup_moves)
     _apply(staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes, no_tag_write,
            unorganized, crate)
 

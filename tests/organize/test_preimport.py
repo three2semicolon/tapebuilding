@@ -10,7 +10,6 @@ wouldn't exercise the actual decision path the way it matters here.
 """
 import os
 
-import pytest
 
 from organize.preimport import stage, index_existing_albums
 from lib.tags import read_tags

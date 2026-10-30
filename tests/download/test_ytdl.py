@@ -3,11 +3,10 @@ Written against the actual current source.
 """
 import sys
 import types
-from unittest import mock
 
 import pytest
 
-from download.ytdl import is_playlist_url, download_ytdl, OUTTMPL_SINGLE, OUTTMPL_PLAYLIST
+from download.ytdl import is_playlist_url, download_ytdl, OUTTMPL_SINGLE
 
 
 class TestIsPlaylistUrl:

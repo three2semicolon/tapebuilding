@@ -172,14 +172,22 @@ def _norm_rel(rel):
     return os.path.normpath(rel).replace('\\', '/')
 
 
-def unstage(items, crate, tapedeck, kind, dry_run=False, verbose=False):
-    """remove the tapedeck mirror of each resolved file, pruning empty dirs. for
-    kind=='playlist', skip any audio file a still-staged m3u8 also references.
-    returns a summary dict {removed, protected, missing, errors, m3u8_removed}."""
-    summary = {'removed': 0, 'protected': 0, 'missing': 0, 'errors': 0, 'm3u8_removed': 0}
+def _calculate_protected_files(plan, kind, tapedeck):
+    """Calculate which files should be protected from removal.
 
-    plan = _collect(items, crate)
-    is_m3u8 = lambda rel: os.path.splitext(rel)[1].lower() in M3U_EXT
+    For playlist kind, protects audio files that are referenced by remaining
+    staged m3u8 files (to prevent removing shared tracks).
+
+    Args:
+        plan: List of (src_abs, rel) tuples to be processed
+        kind: Type of items ('playlist' or other)
+        tapedeck: Path to tapedeck root
+
+    Returns:
+        Set of normalized relative paths that should be protected
+    """
+    def is_m3u8(rel):
+        return os.path.splitext(rel)[1].lower() in M3U_EXT
 
     # playlist refcount: protect audio files a remaining m3u8 still references.
     protected = set()
@@ -187,41 +195,164 @@ def unstage(items, crate, tapedeck, kind, dry_run=False, verbose=False):
         removing_m3u8_rels = {_norm_rel(r) for _, r in plan if is_m3u8(r)}
         protected = _remaining_playlist_refs(tapedeck, removing_m3u8_rels)
 
+    return protected
+
+
+def unstage(items, crate, tapedeck, kind, dry_run=False, verbose=False):
+    """remove the tapedeck mirror of each resolved file, pruning empty dirs. for
+    kind=='playlist', skip any audio file a still-staged m3u8 also references.
+    returns a summary dict {removed, protected, missing, errors, m3u8_removed}."""
+    summary = {'removed': 0, 'protected': 0, 'missing': 0, 'errors': 0, 'm3u8_removed': 0}
+
+    plan = _collect(items, crate)
+
+    # Calculate which files should be protected from removal
+    protected = _calculate_protected_files(plan, kind, tapedeck)
+
     for src, rel in plan:
         dst = _dst(src, crate, tapedeck)
-        is_audio = not is_m3u8(rel)
+        is_audio = not _is_m3u8(rel)
+        is_m3u8_rel = _is_m3u8(rel)
         why = ''
-        if kind == 'playlist' and is_audio and _norm_rel(rel) in protected:
+        should_protect, reason = _should_protect_item(rel, is_audio, kind, protected)
+        if should_protect:
             summary['protected'] += 1
-            why = ' (protected by another playlist)'
+            why = reason
             if dry_run or verbose:
                 print(f"  keep  {rel}{why}")
             continue
 
+        # Log the action (for dry-run or verbose)
+        mark = 'rm' if os.path.exists(dst) else 'absent'
         if dry_run or verbose:
-            mark = 'rm' if os.path.exists(dst) else 'absent'
             print(f"  {mark:<5} {rel}{why}")
 
         if dry_run:
-            if os.path.exists(dst):
-                summary['m3u8_removed' if is_m3u8(rel) else 'removed'] += 1
-            else:
-                summary['missing'] += 1
+            _process_dry_run_item(dst, is_m3u8_rel, summary)
             continue
 
-        if not os.path.exists(dst):
-            summary['missing'] += 1
-            continue
-        try:
-            os.remove(dst)
-            if is_m3u8(rel):
-                summary['m3u8_removed'] += 1
-            else:
-                summary['removed'] += 1
-        except OSError as e:
-            summary['errors'] += 1
-            print(f"  warning: could not remove {rel}: {e}")
+        _process_actual_removal(dst, is_m3u8_rel, summary)
 
     if not dry_run:
         _prune_empty_dirs(tapedeck)
     return summary
+
+
+def _is_m3u8(rel):
+    """Check if a relative path represents an m3u8 file.
+
+    Args:
+        rel: Relative path to check
+
+    Returns:
+        True if the path has an m3u8 extension, False otherwise
+    """
+    return os.path.splitext(rel)[1].lower() in M3U_EXT
+
+
+def _should_protect_item(rel, is_audio, kind, protected):
+    """Check if an item should be protected from removal.
+
+    Args:
+        rel: Relative path of the item
+        is_audio: Whether the item is an audio file (not m3u8)
+        kind: Type of items ('playlist' or other)
+        protected: Set of protected relative paths
+
+    Returns:
+        Tuple of (should_protect: bool, reason: str)
+    """
+    if kind == 'playlist' and is_audio and _norm_rel(rel) in protected:
+        return True, ' (protected by another playlist)'
+    return False, ''
+
+
+def _process_dry_run_item(dst, is_m3u8_rel, summary):
+    """Process an item in dry-run mode.
+
+    Args:
+        dst: Destination path
+        is_m3u8_rel: Whether the item is an m3u8 file
+        summary: Summary dictionary to update
+    """
+    if os.path.exists(dst):
+        summary['m3u8_removed' if is_m3u8_rel else 'removed'] += 1
+    else:
+        summary['missing'] += 1
+
+
+def _process_actual_removal(dst, is_m3u8_rel, summary):
+    """Process an item for actual removal.
+
+    Args:
+        dst: Destination path
+        is_m3u8_rel: Whether the item is an m3u8 file
+        summary: Summary dictionary to update
+    """
+    if not os.path.exists(dst):
+        summary['missing'] += 1
+        return
+
+    try:
+        os.remove(dst)
+        if is_m3u8_rel:
+            summary['m3u8_removed'] += 1
+        else:
+            summary['removed'] += 1
+    except OSError as e:
+        summary['errors'] += 1
+        print(f"  warning: could not remove {dst}: {e}")
+
+
+def _should_protect_item(rel, is_audio, kind, protected):
+    """Check if an item should be protected from removal.
+
+    Args:
+        rel: Relative path of the item
+        is_audio: Whether the item is an audio file (not m3u8)
+        kind: Type of items ('playlist' or other)
+        protected: Set of protected relative paths
+
+    Returns:
+        Tuple of (should_protect: bool, reason: str)
+    """
+    if kind == 'playlist' and is_audio and _norm_rel(rel) in protected:
+        return True, ' (protected by another playlist)'
+    return False, ''
+
+
+def _process_dry_run_item(dst, is_m3u8_rel, summary):
+    """Process an item in dry-run mode.
+
+    Args:
+        dst: Destination path
+        is_m3u8_rel: Whether the item is an m3u8 file
+        summary: Summary dictionary to update
+    """
+    if os.path.exists(dst):
+        summary['m3u8_removed' if is_m3u8_rel else 'removed'] += 1
+    else:
+        summary['missing'] += 1
+
+
+def _process_actual_removal(dst, is_m3u8_rel, summary):
+    """Process an item for actual removal.
+
+    Args:
+        dst: Destination path
+        is_m3u8_rel: Whether the item is an m3u8 file
+        summary: Summary dictionary to update
+    """
+    if not os.path.exists(dst):
+        summary['missing'] += 1
+        return
+
+    try:
+        os.remove(dst)
+        if is_m3u8_rel:
+            summary['m3u8_removed'] += 1
+        else:
+            summary['removed'] += 1
+    except OSError as e:
+        summary['errors'] += 1
+        print(f"  warning: could not remove {dst}: {e}")

@@ -19,7 +19,6 @@ condition would fail loudly here even without a dedicated pagination test.
 """
 import csv
 
-import pytest
 
 from download.spotify.spotify_export import (
     extract_playlist_id_from_url,

@@ -180,31 +180,71 @@ def list_runs(crate):
     for r in _read_records(crate):
         rid = r.get('run')
         if r['t'] == 'run':
-            runs[rid] = {'run': rid, 'label': r.get('label'), 'ts': r.get('ts'),
-                         'moves': 0, 'tags': 0, 'skipped_tags': 0, 'failed': 0,
-                         'ended': False, 'ok': None, 'undone': False}
-            order.append(rid)
+            _handle_run_record(runs, order, r, rid)
         elif r['t'] == 'undone':
-            if r.get('of') in runs:
-                runs[r['of']]['undone'] = True
+            _handle_undone_record(runs, r)
         elif rid in runs:
-            info = runs[rid]
-            if r['t'] == 'move':
-                if r['st'] == 'done':
-                    info['moves'] += 1
-                elif r['st'] == 'failed':
-                    info['failed'] += 1
-            elif r['t'] == 'tag':
-                if r['st'] == 'done':
-                    info['tags'] += 1
-                elif r['st'] == 'skipped':
-                    info['skipped_tags'] += 1
-                elif r['st'] == 'failed':
-                    info['failed'] += 1
-            elif r['t'] == 'end':
-                info['ended'] = True
-                info['ok'] = r.get('ok')
+            _handle_existing_run_record(runs, r, rid)
     return [runs[i] for i in order]
+
+
+def _handle_run_record(runs, order, record, run_id):
+    """Handle a 'run' type record by initializing a new run entry."""
+    runs[run_id] = {
+        'run': run_id,
+        'label': record.get('label'),
+        'ts': record.get('ts'),
+        'moves': 0,
+        'tags': 0,
+        'skipped_tags': 0,
+        'failed': 0,
+        'ended': False,
+        'ok': None,
+        'undone': False
+    }
+    order.append(run_id)
+
+
+def _handle_undone_record(runs, record):
+    """Handle an 'undone' type record by marking the original run as undone."""
+    original_run_id = record.get('of')
+    if original_run_id in runs:
+        runs[original_run_id]['undone'] = True
+
+
+def _handle_existing_run_record(runs, record, run_id):
+    """Handle move/tag/end records for an existing run."""
+    info = runs[run_id]
+    if record['t'] == 'move':
+        _handle_move_record(info, record)
+    elif record['t'] == 'tag':
+        _handle_tag_record(info, record)
+    elif record['t'] == 'end':
+        _handle_end_record(info, record)
+
+
+def _handle_move_record(info, record):
+    """Handle a move record by updating move/failed counts."""
+    if record['st'] == 'done':
+        info['moves'] += 1
+    elif record['st'] == 'failed':
+        info['failed'] += 1
+
+
+def _handle_tag_record(info, record):
+    """Handle a tag record by updating tag/skipped/failed counts."""
+    if record['st'] == 'done':
+        info['tags'] += 1
+    elif record['st'] == 'skipped':
+        info['skipped_tags'] += 1
+    elif record['st'] == 'failed':
+        info['failed'] += 1
+
+
+def _handle_end_record(info, record):
+    """Handle an end record by updating ended status and ok flag."""
+    info['ended'] = True
+    info['ok'] = record.get('ok')
 
 
 def _run_ops(crate, run_id):
@@ -256,21 +296,50 @@ def undo_run(crate, run_id=None, apply=False, write_fn=None):
     undone. returns a summary dict. in-flight moves (planned, never
     resolved) are treated as done when the destination exists and the
     source doesn't."""
+    run_id = _get_run_id(crate, run_id)
+    if run_id is None:
+        return {'run': None, 'reverted': 0, 'blocked': 0}
+
+    ops = _get_valid_operations(crate, run_id)
+    if not ops:
+        return {'run': run_id, 'reverted': 0, 'blocked': 0}
+
+    _print_undo_header(run_id, apply)
+    todo = _build_todo_list(ops)
+    reverted, blocked = _process_todo_list(todo, apply, write_fn or _write_field_exact)
+    _print_undo_summary(reverted, blocked, apply, crate, run_id)
+
+    return {'run': run_id, 'reverted': reverted, 'blocked': blocked}
+
+
+def _get_run_id(crate, run_id):
+    """Get the run ID to process, defaulting to the most recent un-undone run."""
     runs = [r for r in list_runs(crate) if not r['undone']]
     if run_id is None:
         if not runs:
             print('nothing to undo - no un-undone runs in the journal.')
-            return {'run': None, 'reverted': 0, 'blocked': 0}
+            return None
         run_id = runs[-1]['run']
+    return run_id
+
+
+def _get_valid_operations(crate, run_id):
+    """Get operations for the specified run ID, or return empty list if none."""
     ops = _run_ops(crate, run_id)
     if not ops:
         print(f'no operations recorded for run {run_id}.')
-        return {'run': run_id, 'reverted': 0, 'blocked': 0}
+        return []
+    return ops
 
-    write_fn = write_fn or _write_field_exact
+
+def _print_undo_header(run_id, apply):
+    """Print the undo header information."""
     print(f"run   : {run_id}")
     print(f"mode  : {'apply (reverting)' if apply else 'dry run (nothing changes)'}")
 
+
+def _build_todo_list(ops):
+    """Build the list of operations to revert from the raw operations."""
     todo = []
     for op in ops:
         if op['t'] == 'move':
@@ -282,7 +351,11 @@ def undo_run(crate, run_id=None, apply=False, write_fn=None):
             todo.append(op)
         elif op['t'] == 'tag' and op['st'] == 'done':
             todo.append(op)
+    return todo
 
+
+def _process_todo_list(todo, apply, write_fn):
+    """Process the todo list of operations to revert."""
     reverted = blocked = 0
     for op in reversed(todo):
         if op['t'] == 'move':
@@ -308,7 +381,11 @@ def undo_run(crate, run_id=None, apply=False, write_fn=None):
         else:
             blocked += 1
             print(f"  SKIPPED ({msg}): {label}")
+    return reverted, blocked
 
+
+def _print_undo_summary(reverted, blocked, apply, crate, run_id):
+    """Print the undo summary information."""
     if apply:
         with open(journal_path(crate), 'a', encoding='utf-8') as f:
             f.write(json.dumps({'t': 'undone', 'run': 'undo-' + uuid.uuid4().hex[:6],
@@ -318,5 +395,4 @@ def undo_run(crate, run_id=None, apply=False, write_fn=None):
               "(`organize cleanup --rebuild-db`, then a playlists reindex).")
     else:
         print(f"\ndry run - {reverted} operation(s) would be reverted. re-run with --apply.")
-    return {'run': run_id, 'reverted': reverted, 'blocked': blocked}
 

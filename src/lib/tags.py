@@ -305,20 +305,19 @@ def same_path(path1, path2):
                         with open(upper_path, 'w') as f:
                             f.write('test')
                         # If both succeeded, case-insensitive
-                        import os
                         os.unlink(lower_path)
                         os.unlink(upper_path)
                         return os.path.normcase(real1) == os.path.normcase(real2)
                     except FileExistsError:
                         # Case-sensitive filesystem
                         return real1 == real2
-                    except:
+                    except (OSError, IOError):
                         # Fallback to normcase
                         return os.path.normcase(real1) == os.path.normcase(real2)
-            except:
+            except (OSError, IOError):
                 # Ultimate fallback
                 return os.path.normcase(real1) == os.path.normcase(real2)
-    except:
+    except (OSError, IOError):
         # Fallback to simple comparison
         return path1 == path2
 

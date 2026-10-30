@@ -356,12 +356,7 @@ class SoundcloudLooseIndex:
         for v in variants:
             for t in set(v):
                 add(self.by_first.get(t, ()))
-            n = len(v)
-            for size in (1, 2, 3, 4):
-                for i in range(n - size + 1):
-                    span = v[i:i + size]
-                    add(self.by_artist.get(' '.join(span), ()))
-                    add(self.by_artist_c.get(_sig_collapsed(span), ()))
+            self._add_variant_spans(v, add)
         up_c = _sig_collapsed(up_toks)
         if len(up_c) >= 3:
             exact = self.by_artist_c.get(up_c)
@@ -371,6 +366,15 @@ class SoundcloudLooseIndex:
                 for k in difflib.get_close_matches(up_c, self._artist_keys, n=3, cutoff=FUZZY_ARTIST_RATIO):
                     add(self.by_artist_c[k])
         return out
+
+    def _add_variant_spans(self, variant, add):
+        """Add artist lookups for all spans of a variant."""
+        n = len(variant)
+        for size in (1, 2, 3, 4):
+            for i in range(n - size + 1):
+                span = variant[i:i + size]
+                add(self.by_artist.get(' '.join(span), ()))
+                add(self.by_artist_c.get(_sig_collapsed(span), ()))
 
     def _artist_options(self, left, ent, up_toks, up_str):
         """every plausible reading of `left` once the artist is accounted for:
@@ -401,6 +405,60 @@ class SoundcloudLooseIndex:
             opts.append((left, 'uploader'))
         return opts
 
+    def _score_clean_left(self, ent, left):
+        """Clean left token tuple for scoring.
+
+        Args:
+            ent: The entry being scored against
+            left: Left token tuple to clean
+
+        Returns:
+            tuple: Cleaned left token tuple
+        """
+        if ent.remix:
+            left = tuple(t for t in left if t not in _REMIX_MARKERS)
+        left = tuple(t for t in left if t not in ent.paren_toks)
+        left = _strip_album(left, ent.album)
+        return tuple(t for t in left if t not in _FREE_LEFTOVER)
+
+    def _score_consider(self, best, res):
+        """Consider a scoring result and update best if better.
+
+        Args:
+            best: Current best score tuple or None
+            res: Result tuple to consider or None
+
+        Returns:
+            Updated best score tuple
+        """
+        if res and (best is None or (res[1], -res[0]) < (best[1], -best[0])):
+            best = res
+        return best
+
+    def _score_tier9(self, variants, row_remix, want_dur):
+        """Score tier 9: the row text IS a distinctive local title that occurs exactly once.
+
+        Args:
+            variants: List of variant token tuples
+            row_remix: Whether the row is a remix
+            want_dur: Desired duration
+
+        Returns:
+            tuple: (score, tier, kind) or None
+        """
+        for v in variants:
+            key = ' '.join(v)
+            ents = [e for e in self.by_title.get(key, ()) if e.remix == row_remix]
+            if len(ents) != 1:
+                continue
+            e = ents[0]
+            if len(key) < TITLE_ONLY_MIN_CHARS or len(v) < TITLE_ONLY_MIN_TOKENS:
+                continue   # must be BOTH long and multi-word, or it's not distinctive
+            if want_dur and e.length and abs(want_dur - e.length) > MAX_DURATION_DIFF:
+                continue
+            return (1.0, 9, '')  # Tier 9 match with score 1.0
+        return None
+
     # -- scoring one (variant, entry) pair -----------------------------------
     def _score(self, variant, ent, up_toks, up_str, row_remix, want_dur):
         """-> (score, tier, kind) or None. kind in {'', 'prefix', 'subseq'}.
@@ -409,26 +467,40 @@ class SoundcloudLooseIndex:
             return None
         if row_remix and not ent.remix:
             return None                       # a remix row must never land on the original
-        remix_gap = ent.remix and not row_remix   # row dropped the "remix" word (truncated slug)
         if want_dur and ent.length and abs(want_dur - ent.length) > MAX_DURATION_DIFF:
             return None
 
-        def clean_left(left):
-            if ent.remix:
-                left = tuple(t for t in left if t not in _REMIX_MARKERS)
-            left = tuple(t for t in left if t not in ent.paren_toks)
-            left = _strip_album(left, ent.album)
-            return tuple(t for t in left if t not in _FREE_LEFTOVER)
-
         best = None
 
-        def consider(res):
+        def consider_wrapper(res):
             nonlocal best
-            if res and (best is None or (res[1], -res[0]) < (best[1], -best[0])):
-                best = res
+            best = self._score_consider(best, res)
+
+        def clean_left_wrapper(left):
+            return self._score_clean_left(ent, left)
+
+        # Score all three tiers
+        tier7_result = self._score_tier7(variant, ent, up_toks, up_str, row_remix, want_dur, consider_wrapper, clean_left_wrapper)
+        tier8_result = self._score_tier8(variant, ent, up_toks, up_str, row_remix, want_dur, consider_wrapper, clean_left_wrapper)
+        tier9_result = self._score_tier9(variant, row_remix, want_dur)
+
+        # Consider all results and return the best
+        best = self._score_consider(best, tier7_result)
+        best = self._score_consider(best, tier8_result)
+        best = self._score_consider(best, tier9_result)
+        return best
+
+    def _score_tier7(self, variant, ent, up_toks, up_str, row_remix, want_dur, consider, clean_left):
+        """Score tier 7: local title contiguous inside the row text."""
+        if not ent.bases:
+            return
+        if row_remix and not ent.remix:
+            return  # a remix row must never land on the original
+        remix_gap = ent.remix and not row_remix   # row dropped the "remix" word (truncated slug)
+        if want_dur and ent.length and abs(want_dur - ent.length) > MAX_DURATION_DIFF:
+            return
 
         for base in ent.bases:
-            base_str = ' '.join(base)
             # --- tier 7: local title contiguous inside the row text -----------------
             i = _find(variant, base)
             if i >= 0 and not remix_gap:
@@ -441,6 +513,17 @@ class SoundcloudLooseIndex:
                     short = len(base) == 1 and len(base[0]) <= 3
                     if len(left) <= allowed and not (short and left):
                         consider((1.0 - 0.08 * len(left) + (0.03 if how == 'title' else 0.0), 7, ''))
+
+    def _score_tier8(self, variant, ent, up_toks, up_str, row_remix, want_dur, consider, clean_left):
+        """Score tier 8: fuzzy / prefix / subsequence, after the artist is accounted for."""
+        if not ent.bases:
+            return
+        if row_remix and not ent.remix:
+            return  # a remix row must never land on the original
+        remix_gap = ent.remix and not row_remix   # row dropped the "remix" word (truncated slug)
+        if want_dur and ent.length and abs(want_dur - ent.length) > MAX_DURATION_DIFF:
+            return
+
         # --- tier 8: fuzzy / prefix / subsequence, after the artist is accounted for ----
         for rest0, how in self._artist_options(variant, ent, up_toks, up_str):
             r1 = _trim_free(_strip_album(rest0, ent.album))
@@ -454,33 +537,81 @@ class SoundcloudLooseIndex:
                 rest_str = ' '.join(rest)
                 for base in ent.bases:
                     base_str = ' '.join(base)
-                    if not remix_gap and len(rest_str) >= 5 and len(base_str) >= 5:
-                        if rest_str.replace(' ', '') == base_str.replace(' ', ''):
-                            consider((0.95, 7, ''))               # "on my mind" == "OnMyMind"
-                        else:
-                            ratio = difflib.SequenceMatcher(None, rest_str, base_str).ratio()
-                            if ratio >= FUZZY_TITLE_RATIO:
-                                consider((ratio - 0.1, 8, ''))
-                    if len(rest) >= len(base):
-                        continue
-                    missing = len(base) - len(rest)
-                    # truncated slug: row text is a PREFIX of the local title
-                    # ("living off the" -> "Living Off the High")
-                    if len(rest_str) >= PREFIX_MIN_CHARS:
-                        head, last = base[:len(rest) - 1], base[len(rest) - 1]
-                        if rest[:-1] == head and rest[-1] == last and missing <= PREFIX_MAX_MISSING_WORDS:
-                            consider((0.80 - 0.05 * missing, 8, 'prefix'))
-                        elif (len(rest[-1]) >= 4 and rest[:-1] == head and last.startswith(rest[-1])
-                              and missing <= PREFIX_MAX_MISSING_WORDS - 1):
-                            consider((0.70 - 0.05 * missing, 8, 'prefix'))   # last word cut mid-way
-                    # abbreviated name inside the title: "contact kg remix" ->
-                    # "Contact - Karen Nyame KG Remix" (ordered subset, same first/last word)
-                    if (len(rest) >= 2 and rest[0] == base[0] and rest[-1] == base[-1]
-                            and (len(rest) >= 3 or len(rest_str) >= 10)):
-                        skipped = _ordered_subset_missing(rest, base)
-                        if 1 <= skipped <= SUBSEQ_MAX_SKIPPED_WORDS:
-                            consider((0.75 - 0.04 * skipped, 8, 'subseq'))
-        return best
+                    self._process_base_for_rest(rest_str, base_str, rest, base, not remix_gap, consider)
+
+    def _process_base_for_rest(self, rest_str, base_str, rest, base, valid_for_exact_fuzzy, consider):
+        """Process a single base against a rest for scoring."""
+        if valid_for_exact_fuzzy and len(rest_str) >= 5 and len(base_str) >= 5:
+            self._score_exact_fuzzy_match(rest_str, base_str, consider)
+        if len(rest) >= len(base):
+            return
+        missing = len(base) - len(rest)
+        # truncated slug: row text is a PREFIX of the local title
+        # ("living off the" -> "Living Off the High")
+        self._score_prefix_match(rest, base, missing, consider)
+        # abbreviated name inside the title: "contact kg remix" ->
+        # "Contact - Karen Nyame KG Remix" (ordered subset, same first/last word)
+        self._score_subseq_match(rest, base, consider)
+
+    def _score_prefix_match(self, rest, base, missing, consider):
+        """Score prefix match: row text is a prefix of the local title."""
+        rest_str = ' '.join(rest)
+        base_str = ' '.join(base)
+        if len(rest_str) >= PREFIX_MIN_CHARS and len(base_str) >= 5:
+            head, last = base[:len(rest) - 1], base[len(rest) - 1]
+            if rest[:-1] == head and rest[-1] == last and missing <= PREFIX_MAX_MISSING_WORDS:
+                consider((0.80 - 0.05 * missing, 8, 'prefix'))
+            elif (len(rest[-1]) >= 4 and rest[:-1] == head and last.startswith(rest[-1])
+                  and missing <= PREFIX_MAX_MISSING_WORDS - 1):
+                consider((0.70 - 0.05 * missing, 8, 'prefix'))   # last word cut mid-way
+
+    def _score_subseq_match(self, rest, base, consider):
+        """Score subsequence match: abbreviated name inside the title."""
+        if (len(rest) >= 2 and rest[0] == base[0] and rest[-1] == base[-1]
+                and (len(rest) >= 3 or len(' '.join(rest)) >= 10)):
+            skipped = _ordered_subset_missing(rest, base)
+            if 1 <= skipped <= SUBSEQ_MAX_SKIPPED_WORDS:
+                consider((0.75 - 0.04 * skipped, 8, 'subseq'))
+
+    def _score_exact_fuzzy_match(self, rest_str, base_str, consider):
+        """Score exact or fuzzy match between two strings."""
+        if rest_str.replace(' ', '') == base_str.replace(' ', ''):
+            consider((0.95, 7, ''))               # "on my mind" == "OnMyMind"
+        else:
+            ratio = difflib.SequenceMatcher(None, rest_str, base_str).ratio()
+            if ratio >= FUZZY_TITLE_RATIO:
+                consider((ratio - 0.1, 8, ''))
+
+    def _evaluate_candidate(self, ent, variants, up_toks, up_str, row_remix, want_dur):
+        """Evaluate a single candidate entry against all variants.
+        Returns (score, tier, kind, ent) or None if no valid score found."""
+        best_score = None
+        best_tier = None
+        best_kind = None
+
+        for v in variants:
+            res = self._score(v, ent, up_toks, up_str, row_remix, want_dur)
+            if res is None:
+                continue
+            score, tier, kind = res
+            if best_score is None or score > best_score:
+                best_score = score
+                best_tier = tier
+                best_kind = kind
+
+        if best_score is not None:
+            return (best_score, best_tier, best_kind, ent)
+        return None
+
+    def _handle_weak_match(self, best, soft, row_remix):
+        """Handle weak match logic: only trust it when unambiguous.
+        Returns (entry, tier) or continues to title-only check."""
+        pool = [e for _, e in soft.values()]
+        same = [e for e in pool if e.remix == row_remix]
+        pool = same or pool
+        if len(pool) == 1:
+            return pool[0].entry, 8
+        return None  # Continue to title-only check
 
     # -- public --------------------------------------------------------------
     def match(self, row):
@@ -497,32 +628,35 @@ class SoundcloudLooseIndex:
         best = None            # (tier, -score, entry, kind)
         soft = {}              # id(ent) -> (score, ent): entries reached only by weak prefix/subseq
         for ent in self._candidates(variants, up_toks, up_str):
-            for v in variants:
-                res = self._score(v, ent, up_toks, up_str, row_remix, want_dur)
-                if res is None:
-                    continue
-                score, tier, kind = res
-                if want_dur and ent.length and abs(want_dur - ent.length) <= 3:
-                    score += 0.1
-                if kind and (id(ent) not in soft or score > soft[id(ent)][0]):
-                    soft[id(ent)] = (score, ent)
-                cand = (tier, -score, ent.entry, kind)
-                if best is None or cand[:2] < best[:2]:
-                    best = cand
+            candidate_result = self._evaluate_candidate(ent, variants, up_toks, up_str, row_remix, want_dur)
+            best = self._process_candidate_result(candidate_result, want_dur, best, soft)
         if best is not None:
             if not best[3]:
                 return best[2], best[0]
             # weak match: only trust it when unambiguous. entries of the same kind as the
             # row (a plain row prefers the plain track over its [Instrumental]/remix) win
             # first; "pretty" must not pick between "Pretty Thoughts" and "Pretty Girl".
-            pool = [e for _, e in soft.values()]
-            same = [e for e in pool if e.remix == row_remix]
-            pool = same or pool
-            if len(pool) == 1:
-                return pool[0].entry, 8
+            weak_match_result = self._handle_weak_match(best, soft, row_remix)
+            if weak_match_result is not None:
+                return weak_match_result
         if ALLOW_TITLE_ONLY:
             return self._title_only(variants, row_remix, want_dur)
         return None, None
+
+    def _process_candidate_result(self, candidate_result, want_dur, best, soft):
+        """Process a single candidate result and update best/soft tracking.
+        Returns updated best."""
+        if candidate_result is None:
+            return best
+        score, tier, kind, ent_obj = candidate_result
+        if want_dur and ent_obj.length and abs(want_dur - ent_obj.length) <= 3:
+            score += 0.1
+        if kind and (id(ent_obj) not in soft or score > soft[id(ent_obj)][0]):
+            soft[id(ent_obj)] = (score, ent_obj)
+        cand = (tier, -score, ent_obj.entry, kind)
+        if best is None or cand[:2] < best[:2]:
+            best = cand
+        return best
 
     def _title_only(self, variants, row_remix, want_dur):
         """tier 9: the row text IS a distinctive local title that occurs exactly once."""

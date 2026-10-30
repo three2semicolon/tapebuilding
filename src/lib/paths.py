@@ -5,13 +5,16 @@ single source of truth for ARCHIVE_PATH / TAPEDECK_PATH / PLAYLISTS_PATH /
 FFMPEG_PATH. uppercase-only - the old dual-case (ARCHIVE_PATH / archive_path)
 fallback has been dropped in favor of one canonical env var name per root.
 
-config lives at the repo root: .env, and organize/config.yaml, sit next to
-each other there. this module doesn't load .env itself - the calling cli.py
+config lives at the repo root: .env and library_config.yaml sit next to
+each other there. the library config path (LIBRARY_CONFIG_PATH) is owned by
+lib.config; this module doesn't load .env itself - the calling cli.py
 is responsible for calling dotenv.load_dotenv() once at startup, same as any
 other environment setup.
 """
 
 import os
+
+from lib import config
 
 
 def resolve(env_name, cli=None, default=None, required=False):
@@ -79,3 +82,9 @@ def ffmpeg_path(cli=None):
     """ffmpeg executable, if not already on PATH - FFMPEG_PATH. no default:
     None means "let the tool find it on PATH itself"."""
     return resolve('FFMPEG_PATH', cli, required=False)
+
+
+def config_path(cli=None):
+    """config file path - LIBRARY_CONFIG_PATH env var, defaulting to
+    project root/library_config.yaml. cli flag wins, then env, then default."""
+    return cli or config.LIBRARY_CONFIG_PATH

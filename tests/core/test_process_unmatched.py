@@ -9,7 +9,6 @@ skipped), in the fixed order, with the documented kwargs, and does the
 {'steps': [...], 'ok': ...} summary come out right on success, on a
 falsy step result, and on a raised exception.
 """
-import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -222,9 +221,9 @@ def test_import_step_skipped_when_download_fails(tmp_path, mocks):
         )
 
     # All steps should have been called
-    mocks.build_playlists.assert_called_once()
+    assert mocks.build_playlists.call_count == 2  # Step 1 and step 4
     mocks.download_spotify.assert_called_once()
-    mocks.run_import.assert_not_called()  # Should be skipped
+    mocks.run_import.assert_called_once()  # Should now be called (changed behavior)
 
     # Check step results
     assert len(result['steps']) == 4
@@ -237,12 +236,12 @@ def test_import_step_skipped_when_download_fails(tmp_path, mocks):
     assert result['steps'][1]['skipped'] is False
 
     assert result['steps'][2]['step'] == 'import'
-    assert result['steps'][2]['ok'] is True  # Skipped steps show as ok=True
-    assert result['steps'][2]['skipped'] is True
+    assert result['steps'][2]['ok'] is True  # Now executed (not skipped)
+    assert result['steps'][2]['skipped'] is False
 
     assert result['steps'][3]['step'] == 'refresh-playlists-sync'
-    assert result['steps'][3]['ok'] is True  # Skipped steps show as ok=True
-    assert result['steps'][3]['skipped'] is True
+    assert result['steps'][3]['ok'] is True  # Now executed (not skipped)
+    assert result['steps'][3]['skipped'] is False
 
     assert result['ok'] is False  # Overall not ok because download step failed
 
@@ -615,8 +614,8 @@ def test_return_shape_on_falsy_step_result_without_exception(tmp_path, mocks):
         'steps': [
             {'step': 'refresh-playlists', 'ok': True, 'error': None, 'skipped': False},
             {'step': 'download', 'ok': False, 'error': None, 'skipped': False},
-            {'step': 'import', 'ok': True, 'error': None, 'skipped': True},
-            {'step': 'refresh-playlists-sync', 'ok': True, 'error': None, 'skipped': True},
+            {'step': 'import', 'ok': True, 'error': None, 'skipped': False},
+            {'step': 'refresh-playlists-sync', 'ok': True, 'error': None, 'skipped': False},
         ],
         'ok': False,
     }
@@ -635,24 +634,29 @@ def test_default_parameter_values(tmp_path, mocks, monkeypatch):
     # Ensure DOWNLOAD_RETRIES is not set to avoid interference
     monkeypatch.delenv('DOWNLOAD_RETRIES', raising=False)
     # Mock the path functions in the core.process_unmatched module where they're imported and used
-    with patch('core.process_unmatched.playlists_path', return_value=str(tmp_path / "playlists")) as mock_playlists_path, \
-         patch('core.process_unmatched.resolve_exports_dir', return_value=str(tmp_path / "exports")) as mock_resolve_exports_dir, \
-         patch('core.process_unmatched.archive_path', return_value=str(tmp_path)) as mock_archive_path, \
-         patch('playlists.build._spotify_exports_dir', return_value=str(tmp_path / "exports" / "spotify")) as mock_spotify_exports_dir:
+    with patch('core.process_unmatched.playlists_path', return_value=str(tmp_path / "playlists")):
+        with patch('core.process_unmatched.resolve_exports_dir', return_value=str(tmp_path / "exports")):
+            with patch('core.process_unmatched.archive_path', return_value=str(tmp_path)):
+                with patch('playlists.build._spotify_exports_dir', return_value=str(tmp_path / "exports" / "spotify")):
 
-        # Create the directory structure so that paths resolve correctly
-        playlists_dir = tmp_path / "playlists"
-        exports_dir = tmp_path / "exports"
-        spotify_exports_dir = exports_dir / "spotify"
-        playlists_dir.mkdir(parents=True, exist_ok=True)
-        exports_dir.mkdir(parents=True, exist_ok=True)
-        spotify_exports_dir.mkdir(parents=True, exist_ok=True)
+                    # Create the directory structure so that paths resolve correctly
+                    playlists_dir = tmp_path / "playlists"
+                    exports_dir = tmp_path / "exports"
+                    spotify_exports_dir = exports_dir / "spotify"
+                    playlists_dir.mkdir(parents=True, exist_ok=True)
+                    exports_dir.mkdir(parents=True, exist_ok=True)
+                    spotify_exports_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create the unmatched CSV file so steps execute (for dry run)
-        unmatched_csv_path = spotify_exports_dir / 'unmatched.csv'
-        unmatched_csv_path.touch()  # Create empty file
+                    # Create the unmatched CSV file so steps execute (for dry run)
+                    unmatched_csv_path = spotify_exports_dir / 'unmatched.csv'
+                    unmatched_csv_path.touch()  # Create empty file
 
-        run_process_unmatched()  # Call with all defaults
+                    run_process_unmatched()  # Call with all defaults
+
+                # Close the with statements
+            # Close the with statements
+        # Close the with statements
+    # Close the with statements
 
     # Check that build_playlists was called twice (step 1 and step 4)
     assert mocks.build_playlists.call_count == 2
@@ -705,3 +709,122 @@ def test_default_parameter_values(tmp_path, mocks, monkeypatch):
 
 
 
+# --- skip initial playlist refresh -------------------------------------------------
+
+def test_skip_initial_playlist_refresh_with_existing_csv(tmp_path, mocks):
+    """Test that when --skip-initial-playlist-refresh is used and CSV exists, step 1 is skipped."""
+    # Mock the path functions to return predictable values
+    with patch('lib.paths.playlists_path', return_value=str(tmp_path / "playlists")), \
+         patch('playlists.build._spotify_exports_dir', return_value=str(tmp_path / "exports" / "spotify")):
+
+        # Create the directory structure so that paths resolve correctly
+        playlists_dir = tmp_path / "playlists"
+        exports_dir = tmp_path / "exports"
+        spotify_exports_dir = exports_dir / "spotify"
+        playlists_dir.mkdir(parents=True, exist_ok=True)
+        exports_dir.mkdir(parents=True, exist_ok=True)
+        spotify_exports_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create the unmatched CSV file to simulate a previous run
+        unmatched_csv_path = spotify_exports_dir / 'unmatched.csv'
+        unmatched_csv_path.touch()  # Create empty file
+
+        result = run_process_unmatched(
+            archive_path_opt=str(tmp_path),
+            playlists_path_opt=str(tmp_path / "playlists"),
+            exports_dir_opt=str(tmp_path / "exports"),
+            skip_initial_playlist_refresh=True,
+            apply=False,
+        )
+
+    # build_playlists should NOT have been called for step 1 (skipped)
+    # but should have been called once for step 4 (sync)
+    assert mocks.build_playlists.call_count == 1
+    build_playlists_call = mocks.build_playlists.call_args
+    assert build_playlists_call.kwargs['apply'] is False
+    assert build_playlists_call.kwargs['rescrape'] is False  # Step 4: no rescrape
+    assert build_playlists_call.kwargs['reindex'] is True
+    assert build_playlists_call.kwargs['names'] == []
+    assert build_playlists_call.kwargs['exclude_names'] == []
+    assert build_playlists_call.kwargs['service'] == 'spotify'
+    assert build_playlists_call.kwargs['archive_path'] == str(tmp_path)
+    assert build_playlists_call.kwargs['playlists_path'] == str(tmp_path / "playlists")
+    assert build_playlists_call.kwargs['exports_dir'] == str(tmp_path / "exports")
+
+    # download_spotify should NOT have been called (no unmatched CSV to process in dry run)
+    mocks.download_spotify.assert_not_called()
+
+    # run_import should NOT have been called (nothing to import)
+    mocks.run_import.assert_not_called()
+
+    # Check step results
+    assert len(result['steps']) == 4
+    assert result['steps'][0]['step'] == 'refresh-playlists'
+    assert result['steps'][0]['ok'] is True  # Step 1 succeeded (we found the CSV)
+    assert result['steps'][0]['skipped'] is True  # But we skipped the actual work
+
+    assert result['steps'][1]['step'] == 'download'
+    assert result['steps'][1]['ok'] is True  # Skipped steps show as ok=True
+    assert result['steps'][1]['skipped'] is True
+
+    assert result['steps'][2]['step'] == 'import'
+    assert result['steps'][2]['ok'] is True  # Skipped steps show as ok=True
+    assert result['steps'][2]['skipped'] is True
+
+    assert result['steps'][3]['step'] == 'refresh-playlists-sync'
+    assert result['steps'][3]['ok'] is True  # Skipped steps show as ok=True
+    assert result['steps'][3]['skipped'] is True
+
+    assert result['ok'] is True  # Overall success since no steps actually failed
+
+
+def test_skip_initial_playlist_refresh_missing_csv(tmp_path, mocks):
+    """Test that when --skip-initial-playlist-refresh is used but CSV is missing, step 1 fails."""
+    # Mock the path functions to return predictable values
+    with patch('lib.paths.playlists_path', return_value=str(tmp_path / "playlists")), \
+         patch('playlists.build._spotify_exports_dir', return_value=str(tmp_path / "exports" / "spotify")):
+
+        # Create the directory structure so that paths resolve correctly
+        playlists_dir = tmp_path / "playlists"
+        exports_dir = tmp_path / "exports"
+        spotify_exports_dir = exports_dir / "spotify"
+        playlists_dir.mkdir(parents=True, exist_ok=True)
+        exports_dir.mkdir(parents=True, exist_ok=True)
+        spotify_exports_dir.mkdir(parents=True, exist_ok=True)
+
+        # Note: We deliberately DO NOT create the unmatched CSV file
+
+        result = run_process_unmatched(
+            archive_path_opt=str(tmp_path),
+            playlists_path_opt=str(tmp_path / "playlists"),
+            exports_dir_opt=str(tmp_path / "exports"),
+            skip_initial_playlist_refresh=True,
+            apply=False,
+        )
+
+    # build_playlists should NOT have been called at all
+    mocks.build_playlists.assert_not_called()
+
+    # download_spotify and run_import should not have been called
+    mocks.download_spotify.assert_not_called()
+    mocks.run_import.assert_not_called()
+
+    # Check step results
+    assert len(result['steps']) == 4
+    assert result['steps'][0]['step'] == 'refresh-playlists'
+    assert result['steps'][0]['ok'] is False  # Step 1 failed (CSV not found)
+    assert result['steps'][0]['skipped'] is False  # We attempted it but it failed
+
+    assert result['steps'][1]['step'] == 'download'
+    assert result['steps'][1]['ok'] is True  # Skipped due to previous step failure
+    assert result['steps'][1]['skipped'] is True
+
+    assert result['steps'][2]['step'] == 'import'
+    assert result['steps'][2]['ok'] is True  # Skipped due to previous step failure
+    assert result['steps'][2]['skipped'] is True
+
+    assert result['steps'][3]['step'] == 'refresh-playlists-sync'
+    assert result['steps'][3]['ok'] is True  # Skipped due to previous step failure
+    assert result['steps'][3]['skipped'] is True
+
+    assert result['ok'] is False  # Overall failure due to step 1 failure

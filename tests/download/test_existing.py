@@ -4,7 +4,6 @@ written against the patched source.
 """
 import os
 
-import pytest
 
 from download.existing import resolve_output_dir, build_library_index, scan_existing_fuzzy
 

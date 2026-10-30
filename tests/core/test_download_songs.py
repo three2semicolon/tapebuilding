@@ -1,10 +1,10 @@
-"""Tests for core.download_songs - TEST_PLANS.md 'core/download_songs.py'
+"""Tests for core.download - TEST_PLANS.md 'core/download.py'
 section.
 
 The three domain steps (download.spotify_download.download_spotify,
 organize.beets_import.run_import, playlists.build.build_playlists) are
 mocked throughout - each already has its own real tests in its own
-package. What matters here is core.download_songs's own wiring: is each
+package. What matters here is core.download's own wiring: is each
 step actually invoked (in its own no-op mode on a dry run, never
 skipped), in the fixed order, with the documented kwargs, and does the
 {'steps': [...], 'ok': ...} summary come out right on success, on a
@@ -16,8 +16,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import core.download_songs as ds_mod
-from core.download_songs import _resolve_source, run_download_songs
+import core.download as ds_mod
+from core.download import _resolve_source, run_download_songs
 
 
 SPOTIFY_URL = "https://open.spotify.com/playlist/abc123"

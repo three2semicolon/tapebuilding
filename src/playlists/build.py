@@ -37,6 +37,7 @@ import os
 import sys
 
 from lib.spotify_auth import authenticate_user
+from lib import config
 from download.spotify.spotify_api import get_playlist_tracks
 from download.spotify.spotify_export import export_all_data, extract_playlist_id_from_url
 
@@ -50,19 +51,38 @@ from lib.catalog.matcher import MatchIndex, match_rows
 from lib.m3u import safe_name, write_m3u8
 
 try:
-    sys.stdout.reconfigure(encoding='utf-8')  # non-ascii artist names on windows
+    sys.stdout.reconfigure(encoding="utf-8")  # non-ascii artist names on windows
 except Exception:
     pass
 
 
 PLAYLIST_TRACKS_FIELDS = (
-    'playlist_id', 'playlist_name', 'track_id', 'track_name', 'artist_names',
-    'album_name', 'duration_ms', 'explicit', 'popularity', 'added_at',
-    'added_by', 'spotify_url', 'track_number', 'disc_number', 'is_local',
+    "playlist_id",
+    "playlist_name",
+    "track_id",
+    "track_name",
+    "artist_names",
+    "album_name",
+    "duration_ms",
+    "explicit",
+    "popularity",
+    "added_at",
+    "added_by",
+    "spotify_url",
+    "track_number",
+    "disc_number",
+    "is_local",
 )
 
 PLAYLIST_META_FIELDS = (
-    'id', 'name', 'description', 'owner', 'owner_id', 'public', 'track_count', 'playlist_url',
+    "id",
+    "name",
+    "description",
+    "owner",
+    "owner_id",
+    "public",
+    "track_count",
+    "playlist_url",
 )
 
 
@@ -70,17 +90,17 @@ def _read_csv(path):
     """read a csv into a list of dicts, or [] if missing."""
     if not os.path.exists(path):
         return []
-    with open(path, 'r', encoding='utf-8-sig', newline='') as f:
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
         return list(csv.DictReader(f))
 
 
 def _write_csv(path, rows, fields):
     """atomic, non-fatal csv write. mirrors _write_unmatched: a locked target
     (editor/scanner holding it) warns rather than aborting the build."""
-    tmp = path + '.tmp'
+    tmp = path + ".tmp"
     try:
-        with open(tmp, 'w', encoding='utf-8-sig', newline='') as f:
-            w = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
+        with open(tmp, "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
             w.writeheader()
             w.writerows(rows)
         os.replace(tmp, path)
@@ -94,7 +114,7 @@ def _group_tracks_by_playlist(rows):
     groups = {}
     order = []
     for r in rows:
-        pid = r.get('playlist_id')
+        pid = r.get("playlist_id")
         if not pid:
             continue
         if pid not in groups:
@@ -104,7 +124,7 @@ def _group_tracks_by_playlist(rows):
     return groups
 
 
-def _select_playlists(playlists_csv, names, all_playlists, exclude_names=None, service='spotify'):
+def _select_playlists(playlists_csv, names, all_playlists, exclude_names=None, service="spotify"):
     """apply scope (names over all_playlists over the 'mine' default) ->
     [(meta_row), ...], then filter out any playlist whose name or id
     matches an exclude_names token.
@@ -123,67 +143,142 @@ def _select_playlists(playlists_csv, names, all_playlists, exclude_names=None, s
 
     For soundcloud service, the 'mine' filter is disabled since SoundCloud
     doesn't use Spotify user IDs."""
+    # Read and validate playlists CSV
+    rows = _read_and_validate_playlists_csv(playlists_csv)
+
+    # Apply scope resolution
+    if names:
+        selected = _handle_names_scope(rows, names)
+    elif all_playlists:
+        selected = _handle_all_playlists_scope(rows)
+    else:
+        selected = _handle_default_scope(rows, service)
+
+    # Apply exclude filter
+    selected = _apply_exclude_filter(selected, exclude_names)
+
+    return selected
+
+
+def _read_and_validate_playlists_csv(playlists_csv):
+    """Read and validate the playlists CSV file.
+
+    Args:
+        playlists_csv: Path to the playlists CSV file
+
+    Returns:
+        List of dictionaries representing the CSV rows
+
+    Raises:
+        ValueError: If the playlists CSV file is not found or empty
+    """
     rows = _read_csv(playlists_csv)
     if not rows:
         raise ValueError(f"no playlists.csv found at {playlists_csv} - run `export` or --rescrape first")
+    return rows
 
-    if names:
-        wanted = []
-        for token in names:
-            as_id = extract_playlist_id_from_url(token)
-            is_id = len(as_id) >= 16          # bare id, or id extracted from a url
-            wanted.append((token, as_id, is_id))
-        selected = []
-        for meta in rows:
-            for token, as_id, is_id in wanted:
-                if is_id and meta.get('id') == as_id:
-                    selected.append(meta); break
-                if not is_id and meta.get('name') == token:
-                    selected.append(meta); break
-    elif all_playlists:
-        selected = rows
-    else:
-        # default: only your own playlists (for spotify) or all (for soundcloud)
-        if service == 'soundcloud':
-            # For SoundCloud, we don't have Spotify user IDs, so show all playlists
-            selected = rows
-        else:
-            # default: only your own playlists
-            user_id = os.getenv('SPOTIFY_USER_ID')
-            if not user_id:
-                print("warning: SPOTIFY_USER_ID not set - can't filter to your playlists; building all.")
-                selected = rows
-            else:
-                selected = [r for r in rows if (r.get('owner_id') or '') == user_id]
 
-    # apply exclude filter after scope resolution
-    if exclude_names:
-        exclude_tokens = []
-        for token in exclude_names:
-            as_id = extract_playlist_id_from_url(token)
-            is_id = len(as_id) >= 16
-            exclude_tokens.append((token, as_id, is_id))
-        matched_tokens = set()
-        filtered = []
-        for meta in selected:
-            excluded = False
-            for token, as_id, is_id in exclude_tokens:
-                if is_id and meta.get('id') == as_id:
-                    excluded = True
-                    matched_tokens.add(token)
-                    break
-                if not is_id and meta.get('name') == token:
-                    excluded = True
-                    matched_tokens.add(token)
-                    break
-            if not excluded:
-                filtered.append(meta)
-        for token, as_id, is_id in exclude_tokens:
-            if token not in matched_tokens:
-                print(f"warning: --exclude '{token}' did not match any playlist (skipped).")
-        selected = filtered
+def _handle_names_scope(rows, names):
+    """Handle scope resolution when specific playlist names/IDs are provided.
 
+    Args:
+        rows: List of playlist dictionaries from CSV
+        names: List of playlist names or IDs to select
+
+    Returns:
+        List of selected playlist dictionaries
+    """
+    wanted = []
+    for token in names:
+        as_id = extract_playlist_id_from_url(token)
+        is_id = len(as_id) >= 16  # bare id, or id extracted from a url
+        wanted.append((token, as_id, is_id))
+
+    selected = []
+    for meta in rows:
+        for token, as_id, is_id in wanted:
+            if is_id and meta.get("id") == as_id:
+                selected.append(meta)
+                break
+            if not is_id and meta.get("name") == token:
+                selected.append(meta)
+                break
     return selected
+
+
+def _handle_all_playlists_scope(rows):
+    """Handle scope resolution when all playlists are requested.
+
+    Args:
+        rows: List of playlist dictionaries from CSV
+
+    Returns:
+        List of all playlist dictionaries (unchanged)
+    """
+    return rows
+
+
+def _handle_default_scope(rows, service):
+    """Handle scope resolution for the default case (mine vs all).
+
+    Args:
+        rows: List of playlist dictionaries from CSV
+        service: Service type ('spotify' or 'soundcloud')
+
+    Returns:
+        List of filtered playlist dictionaries based on service and user ID
+    """
+    # default: only your own playlists (for spotify) or all (for soundcloud)
+    if service == "soundcloud":
+        # For SoundCloud, we don't have Spotify user IDs, so show all playlists
+        return rows
+    else:
+        # default: only your own playlists
+        user_id = config.SPOTIFY_USER_ID
+        if not user_id:
+            print("warning: SPOTIFY_USER_ID not set - can't filter to your playlists; building all.")
+            return rows
+        else:
+            return [r for r in rows if (r.get("owner_id") or "") == user_id]
+
+
+def _apply_exclude_filter(selected, exclude_names):
+    """Apply exclude filter to remove specified playlists from selection.
+
+    Args:
+        selected: List of selected playlist dictionaries
+        exclude_names: List of playlist names or IDs to exclude
+
+    Returns:
+        List of playlist dictionaries with exclusions applied
+    """
+    if not exclude_names:
+        return selected
+
+    exclude_tokens = []
+    for token in exclude_names:
+        as_id = extract_playlist_id_from_url(token)
+        is_id = len(as_id) >= 16
+        exclude_tokens.append((token, as_id, is_id))
+    matched_tokens = set()
+    filtered = []
+    for meta in selected:
+        excluded = False
+        for token, as_id, is_id in exclude_tokens:
+            if is_id and meta.get("id") == as_id:
+                excluded = True
+                matched_tokens.add(token)
+                break
+            if not is_id and meta.get("name") == token:
+                excluded = True
+                matched_tokens.add(token)
+                break
+        if not excluded:
+            filtered.append(meta)
+    for token, as_id, is_id in exclude_tokens:
+        if token not in matched_tokens:
+            print(f"warning: --exclude '{token}' did not match any playlist (skipped).")
+    return filtered
 
 
 def _read_existing_index(archive_path, exports_dir, reindex, verbose):
@@ -195,21 +290,22 @@ def _read_existing_index(archive_path, exports_dir, reindex, verbose):
 
 def _download_cover(sp, playlist_id, dest_path):
     import requests
+
     try:
-        data = sp.playlist(playlist_id, fields='images')
+        data = sp.playlist(playlist_id, fields="images")
     except Exception as e:
         print(f"  warning: could not fetch cover for {playlist_id}: {e}")
         return False
-    images = data.get('images') or []
+    images = data.get("images") or []
     url = None
     if images:
-        url = max(images, key=lambda im: im.get('width') or 0).get('url')
+        url = max(images, key=lambda im: im.get("width") or 0).get("url")
     if not url:
         return False
     resp = requests.get(url, timeout=30)
     resp.raise_for_status()
-    tmp = dest_path + '.tmp'
-    with open(tmp, 'wb') as f:
+    tmp = dest_path + ".tmp"
+    with open(tmp, "wb") as f:
         f.write(resp.content)
     os.replace(tmp, dest_path)
     return True
@@ -219,10 +315,10 @@ def _spotify_exports_dir(exports_dir):
     """spotify's csvs live in <exports>/spotify/ (export_* writes them there, same as
     soundcloud's <exports>/soundcloud/). falls back to the old flat <exports>/ layout
     only when that's where a playlists.csv actually is and the new one isn't."""
-    new = os.path.join(exports_dir, 'spotify')
-    if os.path.isfile(os.path.join(new, 'playlists.csv')):
+    new = os.path.join(exports_dir, "spotify")
+    if os.path.isfile(os.path.join(new, "playlists.csv")):
         return new
-    if os.path.isfile(os.path.join(exports_dir, 'playlists.csv')):
+    if os.path.isfile(os.path.join(exports_dir, "playlists.csv")):
         return exports_dir
     return new
 
@@ -236,18 +332,18 @@ def _scope_rescrape(sp, names, exports_dir):
     learn it); a url or bare id fetches directly."""
     exports_dir = _spotify_exports_dir(exports_dir)
     os.makedirs(exports_dir, exist_ok=True)
-    playlists_csv = os.path.join(exports_dir, 'playlists.csv')
-    tracks_csv = os.path.join(exports_dir, 'playlist_tracks.csv')
-    metas = _read_csv(playlists_csv)          # [] on a first run
+    playlists_csv = os.path.join(exports_dir, "playlists.csv")
+    tracks_csv = os.path.join(exports_dir, "playlist_tracks.csv")
+    metas = _read_csv(playlists_csv)  # [] on a first run
     tracks = _read_csv(tracks_csv)
-    name_to_id = {m.get('name'): m.get('id') for m in metas if m.get('name') and m.get('id')}
+    name_to_id = {m.get("name"): m.get("id") for m in metas if m.get("name") and m.get("id")}
 
     to_fetch, missing = [], []
     for token in names:
         as_id = extract_playlist_id_from_url(token)
-        if len(as_id) >= 16:                         # bare id, or id extracted from a url
+        if len(as_id) >= 16:  # bare id, or id extracted from a url
             to_fetch.append((token, as_id))
-        elif token in name_to_id:                    # a name we already know
+        elif token in name_to_id:  # a name we already know
             to_fetch.append((token, name_to_id[token]))
         else:
             missing.append(token)
@@ -260,7 +356,7 @@ def _scope_rescrape(sp, names, exports_dir):
 
     print(f"rescraping {len(to_fetch)} playlist(s) (--rescrape -p) into {exports_dir}")
     fetch_ids = {pid for _, pid in to_fetch}
-    out_tracks = [r for r in tracks if r.get('playlist_id') not in fetch_ids]
+    out_tracks = [r for r in tracks if r.get("playlist_id") not in fetch_ids]
 
     for token, pid in to_fetch:
         try:
@@ -268,20 +364,20 @@ def _scope_rescrape(sp, names, exports_dir):
         except Exception as e:
             print(f"  warning: could not fetch playlist {token}: {e}")
             continue
-        name = pl.get('name') or token
+        name = pl.get("name") or token
         meta = {
-            'id': pl.get('id', ''),
-            'name': name,
-            'description': pl.get('description', '') or '',
-            'owner': (pl.get('owner') or {}).get('display_name', '') or '',
-            'owner_id': (pl.get('owner') or {}).get('id', '') or '',
-            'public': pl.get('public', False),
-            'track_count': (pl.get('tracks') or {}).get('total', 0),
-            'playlist_url': (pl.get('external_urls') or {}).get('spotify', ''),
+            "id": pl.get("id", ""),
+            "name": name,
+            "description": pl.get("description", "") or "",
+            "owner": (pl.get("owner") or {}).get("display_name", "") or "",
+            "owner_id": (pl.get("owner") or {}).get("id", "") or "",
+            "public": pl.get("public", False),
+            "track_count": (pl.get("tracks") or {}).get("total", 0),
+            "playlist_url": (pl.get("external_urls") or {}).get("spotify", ""),
         }
         # replace in place to keep playlists.csv row order; else append
         for i, m in enumerate(metas):
-            if m.get('id') == pid:
+            if m.get("id") == pid:
                 metas[i] = meta
                 break
         else:
@@ -295,10 +391,20 @@ def _scope_rescrape(sp, names, exports_dir):
     _write_csv(tracks_csv, out_tracks, PLAYLIST_TRACKS_FIELDS)
 
 
-def build_playlists(apply=False, all_playlists=False, names=None, exclude_names=None, rescrape=False,
-                     covers=False, reindex=False, verbose=False,
-                     playlists_path=None, archive_path=None, exports_dir=None,
-                     service='spotify'):
+def build_playlists(
+    apply=False,
+    all_playlists=False,
+    names=None,
+    exclude_names=None,
+    rescrape=False,
+    covers=False,
+    reindex=False,
+    verbose=False,
+    playlists_path=None,
+    archive_path=None,
+    exports_dir=None,
+    service="spotify",
+):
     """build/refresh local .m3u8s from current playlist membership (spotify or soundcloud).
 
     plain, import-safe entry point - cli.py resolves click options into
@@ -312,14 +418,62 @@ def build_playlists(apply=False, all_playlists=False, names=None, exclude_names=
     before matching: an excluded playlist never generates unmatched rows
     or triggers a cover download. Same id/name resolution as `names`.
     """
+    playlists_path_resolved, exports_dir_resolved = _handle_basic_setup(names, playlists_path, exports_dir)
+
+    sp = _handle_authentication(rescrape, covers)
+    _handle_rescrape(sp, names, exports_dir_resolved, exclude_names, rescrape)
+
+    playlists_csv, tracks_csv, service_exports_dir = _determine_file_paths(service, exports_dir_resolved)
+    selected, grouped = _select_and_group_playlists(playlists_csv, tracks_csv, names, all_playlists, exclude_names, service)
+
+    _print_build_info(selected, tracks_csv, verbose)
+
+    index, mindex = _setup_index_and_matcher(archive_path, exports_dir_resolved, reindex, verbose)
+
+    total_tracks, total_matched, total_unmatched, total_written, unmatched_rows = _initialize_counters()
+
+    total_tracks, total_matched, total_unmatched, total_written, unmatched_rows = _process_playlists(
+        selected,
+        grouped,
+        index,
+        mindex,
+        apply,
+        covers,
+        sp,
+        playlists_path_resolved,
+        service_exports_dir,
+        total_tracks,
+        total_matched,
+        total_unmatched,
+        total_written,
+        unmatched_rows,
+        verbose,
+    )
+
+    _finalize_and_report(
+        service_exports_dir, unmatched_rows, total_written, selected, total_matched, total_unmatched, total_tracks
+    )
+
+
+def _handle_basic_setup(names, playlists_path, exports_dir):
+    """Handle basic setup: parameter validation and directory creation."""
     names = names or []
     playlists_path_resolved = resolve_playlists_path(playlists_path)
     exports_dir_resolved = resolve_exports_dir(playlists_path_resolved, exports_dir)
     os.makedirs(playlists_path_resolved, exist_ok=True)
+    return playlists_path_resolved, exports_dir_resolved
 
+
+def _handle_authentication(rescrape, covers):
+    """Handle authentication setup if needed."""
     sp = None
     if rescrape or covers:
         sp = authenticate_user()
+    return sp
+
+
+def _handle_rescrape(sp, names, exports_dir_resolved, exclude_names, rescrape):
+    """Handle rescrape functionality."""
     if rescrape:
         if names:
             _scope_rescrape(sp, names, exports_dir_resolved)
@@ -327,107 +481,157 @@ def build_playlists(apply=False, all_playlists=False, names=None, exclude_names=
             print("rescraping spotify (--rescrape) into " + exports_dir_resolved)
             export_all_data(sp, exports_dir_resolved, my_playlists_only=True, exclude_names=exclude_names)
 
-    # Determine file paths based on service
-    if service == 'soundcloud':
-        playlists_csv = os.path.join(exports_dir_resolved, 'soundcloud', 'playlists.csv')
-        tracks_csv = os.path.join(exports_dir_resolved, 'soundcloud', 'playlist_tracks.csv')
-        service_exports_dir = os.path.join(exports_dir_resolved, 'soundcloud')
+
+def _determine_file_paths(service, exports_dir_resolved):
+    """Determize file paths based on service type."""
+    if service == "soundcloud":
+        playlists_csv = os.path.join(exports_dir_resolved, "soundcloud", "playlists.csv")
+        tracks_csv = os.path.join(exports_dir_resolved, "soundcloud", "playlist_tracks.csv")
+        service_exports_dir = os.path.join(exports_dir_resolved, "soundcloud")
     else:  # spotify (default)
         service_exports_dir = _spotify_exports_dir(exports_dir_resolved)
-        playlists_csv = os.path.join(service_exports_dir, 'playlists.csv')
-        tracks_csv = os.path.join(service_exports_dir, 'playlist_tracks.csv')
+        playlists_csv = os.path.join(service_exports_dir, "playlists.csv")
+        tracks_csv = os.path.join(service_exports_dir, "playlist_tracks.csv")
+    return playlists_csv, tracks_csv, service_exports_dir
+
+
+def _select_and_group_playlists(playlists_csv, tracks_csv, names, all_playlists, exclude_names, service):
+    """Select and group playlists based on parameters."""
     selected = _select_playlists(playlists_csv, names, all_playlists, exclude_names=exclude_names, service=service)
     grouped = _group_tracks_by_playlist(_read_csv(tracks_csv))
+    return selected, grouped
 
+
+def _print_build_info(selected, tracks_csv, verbose):
+    """Print build information if verbose or few playlists."""
     print(f"\nbuilding {len(selected)} playlist(s) from {tracks_csv}")
     if len(selected) <= 12 or verbose:
         for m in selected:
             print(f"  - {m.get('name')} ({m.get('track_count')} tracks on spotify)")
 
+
+def _setup_index_and_matcher(archive_path, exports_dir_resolved, reindex, verbose):
+    """Setup index and matcher for playlist processing."""
     index = _read_existing_index(archive_path, exports_dir_resolved, reindex, verbose)
     mindex = MatchIndex(index)
+    return index, mindex
 
+
+def _initialize_counters():
+    """Initialize counters for the processing loop."""
     total_tracks = total_matched = total_unmatched = total_written = 0
     unmatched_rows = []
+    return total_tracks, total_matched, total_unmatched, total_written, unmatched_rows
 
+
+def _process_playlists(
+    selected,
+    grouped,
+    index,
+    mindex,
+    apply,
+    covers,
+    sp,
+    playlists_path_resolved,
+    service_exports_dir,
+    total_tracks,
+    total_matched,
+    total_unmatched,
+    total_written,
+    unmatched_rows,
+    verbose,
+):
+    """Process each playlist in the selection."""
     for i, meta in enumerate(selected, 1):
-        pid = meta.get('id')
-        name = meta.get('name') or meta.get('id') or 'Unknown'
+        pid = meta.get("id")
+        name = meta.get("name") or meta.get("id") or "Unknown"
         rows = grouped.get(pid, [])
         results = match_rows(rows, index=mindex, verbose=verbose)
 
         matched_entries = []
         for rec in results:
             total_tracks += 1
-            row = rec['row']
-            if rec['path']:
+            row = rec["row"]
+            if rec["path"]:
                 total_matched += 1
-                matched_entries.append({
-                    'track_id': row.get('track_id', ''),
-                    'artist': row.get('artist_names', ''),
-                    'title': row.get('track_name', ''),
-                    'length': rec['length'],
-                    'path': rec['path'],
-                })
+                matched_entries.append(
+                    {
+                        "track_id": row.get("track_id", ""),
+                        "artist": row.get("artist_names", ""),
+                        "title": row.get("track_name", ""),
+                        "length": rec["length"],
+                        "path": rec["path"],
+                    }
+                )
             else:
                 total_unmatched += 1
-                unmatched_rows.append({
-                    'playlist_name': name,
-                    'track_id': row.get('track_id', ''),
-                    'track_name': row.get('track_name', ''),
-                    'artist_names': row.get('artist_names', ''),
-                    'album_name': row.get('album_name', ''),
-                    'tier_tried': rec['tier'],
-                    'spotify_url': row.get('spotify_url', ''),
-                })
+                unmatched_rows.append(
+                    {
+                        "playlist_name": name,
+                        "track_id": row.get("track_id", ""),
+                        "track_name": row.get("track_name", ""),
+                        "artist_names": row.get("artist_names", ""),
+                        "album_name": row.get("album_name", ""),
+                        "tier_tried": rec["tier"],
+                        "spotify_url": row.get("spotify_url", ""),
+                    }
+                )
 
         unmatched_count = len(rows) - len(matched_entries)
         print(f"\n[{i}/{len(selected)}] {name} - {len(matched_entries)}/{len(rows)} matched ({unmatched_count} unmatched)")
 
         if apply and matched_entries:
-            m3u8_path = os.path.join(playlists_path_resolved, safe_name(name) + '.m3u8')
+            m3u8_path = os.path.join(playlists_path_resolved, safe_name(name) + ".m3u8")
             write_m3u8(m3u8_path, matched_entries)
             total_written += 1
             print(f"  wrote {m3u8_path}")
             if covers:
-                cover = os.path.join(playlists_path_resolved, safe_name(name) + '.jpg')
+                cover = os.path.join(playlists_path_resolved, safe_name(name) + ".jpg")
                 got = _download_cover(sp, pid, cover)
                 if got:
                     print(f"  wrote {cover}")
 
+    return total_tracks, total_matched, total_unmatched, total_written, unmatched_rows
+
+
+def _finalize_and_report(
+    service_exports_dir, unmatched_rows, total_written, selected, total_matched, total_unmatched, total_tracks
+):
+    """Finalize processing and print final report."""
     # Ensure service-specific exports directory exists
     os.makedirs(service_exports_dir, exist_ok=True)
     _write_unmatched(service_exports_dir, unmatched_rows)
 
-    print(f"\ndone. {total_written}/{len(selected)} playlists written "
-          f"({total_matched} matched / {total_unmatched} unmatched of {total_tracks} tracks)")
-    print(f"unmatched -> {os.path.join(service_exports_dir, 'unmatched.csv')}, "
-          f"{os.path.join(service_exports_dir, 'unmatched_urls.txt')}")
-    return True
+    print(
+        f"\ndone. {total_written}/{len(selected)} playlists written "
+        f"({total_matched} matched / {total_unmatched} unmatched of {total_tracks} tracks)"
+    )
+    print(
+        f"unmatched -> {os.path.join(service_exports_dir, 'unmatched.csv')}, "
+        f"{os.path.join(service_exports_dir, 'unmatched_urls.txt')}"
+    )
 
 
 def _write_unmatched(exports_dir, rows):
     """atomic, non-fatal: the handoff is a convenience sidecar, so a locked target
     (file open in an editor, a scanner holding it) should warn, not abort the build."""
-    csv_path = os.path.join(exports_dir, 'unmatched.csv')
-    txt_path = os.path.join(exports_dir, 'unmatched_urls.txt')
-    fields = ('playlist_name', 'track_id', 'track_name', 'artist_names',
-              'album_name', 'tier_tried', 'spotify_url')
+    csv_path = os.path.join(exports_dir, "unmatched.csv")
+    txt_path = os.path.join(exports_dir, "unmatched_urls.txt")
+    fields = ("playlist_name", "track_id", "track_name", "artist_names", "album_name", "tier_tried", "spotify_url")
     urls = []
     seen = set()
     body_lines = []
-    body_lines.append(','.join(fields))
+    body_lines.append(",".join(fields))
     for r in rows:
-        body_lines.append(','.join(_csv_escape(r.get(k, '')) for k in fields))
-        u = (r.get('spotify_url') or '').strip()
+        body_lines.append(",".join(_csv_escape(r.get(k, "")) for k in fields))
+        u = (r.get("spotify_url") or "").strip()
         if u and u not in seen:
             seen.add(u)
             urls.append(u)
-    for path, text in ((csv_path, '\n'.join(body_lines) + '\n'),
-                        (txt_path, '\n'.join(urls) + ('\n' if urls else ''))):
+    for path, text in ((csv_path, "\n".join(body_lines) + "\n"), (txt_path, "\n".join(urls) + ("\n" if urls else ""))):
         try:
-            tmp = path + '.tmp'
-            with open(tmp, 'w', encoding='utf-8-sig', newline='') as f:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8-sig", newline="") as f:
                 f.write(text)
             os.replace(tmp, path)
         except OSError as e:
@@ -437,6 +641,6 @@ def _write_unmatched(exports_dir, rows):
 
 def _csv_escape(v):
     v = str(v)
-    if ',' in v or '"' in v or '\n' in v:
+    if "," in v or '"' in v or "\n" in v:
         v = '"' + v.replace('"', '""') + '"'
     return v

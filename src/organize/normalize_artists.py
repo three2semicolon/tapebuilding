@@ -3,7 +3,7 @@ import re
 # organize/normalize_artists.py
 #
 # beets plugin: normalizes artist strings before they're used in path templates.
-# install: add 'normalize_artists' to plugins in config.yaml and set pluginpath
+# install: add 'normalize_artists' to plugins in library_config.yaml and set pluginpath
 #          to the organize/ directory.
 #
 # the pure function normalize_artist() is importable (and unit-testable)

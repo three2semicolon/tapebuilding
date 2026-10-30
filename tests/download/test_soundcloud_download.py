@@ -5,10 +5,7 @@ current source.
 subprocess.Popen is mocked throughout - these tests never shell out to a
 real ytdl.
 """
-import os
-from unittest import mock
 
-import pytest
 
 from download.soundcloud.soundcloud_download import download_soundcloud, _predict_soundcloud_filename
 
@@ -95,7 +92,7 @@ class TestDownloadSoundcloudFailureHandling:
 
         monkeypatch.setattr("download.soundcloud.soundcloud_download.download_ytdl", fake_download_ytdl)
 
-        result = download_soundcloud(str(url_file), output_dir=str(tmp_path / "out"))
+        result = download_soundcloud(str(url_file), output_dir=str(tmp_path / "out"), retry_delay=0)
         assert result is False
 
     def test_ytdl_success_results_in_true_return(self, tmp_path, monkeypatch):

@@ -3,11 +3,8 @@
 Extracted from matcher.py to reduce file size and improve organization.
 """
 
-import collections
-import difflib
-import re
 
-from lib.text import normalize_album, normalize_key, primary_artist, split_artists, strip_feat_clause, fold_key, group_key, group_album_key
+from lib.text import normalize_key, primary_artist, split_artists, fold_key
 from lib.catalog.row_access import _row_artist
 
 FUZZY_RATIO_THRESHOLD = 0.92
