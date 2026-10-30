@@ -12,6 +12,8 @@ from typing import List, Dict, Any, Optional
 from download.manifest import predict_output_filename
 from download.ytdl import download_ytdl
 from lib.text import normalize_key
+from lib.paths import archive_path
+from lib.catalog import links as manual_links
 from download.existing import resolve_output_dir
 
 
@@ -130,7 +132,13 @@ def _process_fallback_url(url, metadata, artist_key, track_key, is_spotify, form
         return fallback_succeeded, fallback_failed, fallback_skipped, skip_all_remaining
 
     if not artist or not track:
-        print(f"  Skipping fallback for URL with missing metadata: {url}")
+        if not metadata:
+            why = "no csv metadata was loaded at all (see the warning near the start of the run)"
+        elif url not in metadata:
+            why = "this url isn't in the loaded csv metadata (url mismatch?)"
+        else:
+            why = f"csv row has no {artist_key}/{track_key} values"
+        print(f"  Skipping fallback for URL with missing metadata: {url}\n    -> {why}")
         fallback_failed.append(url)
         return fallback_succeeded, fallback_failed, fallback_skipped, skip_all_remaining
 
@@ -250,18 +258,63 @@ def _process_fallback_input(user_input, artist, track, format, output_dir,
             print("  ytdl download failed.")
             fallback_failed.append(url)
     else:
-        # Treat as local file path
-        if not os.path.exists(user_input):
-            print(f"  Local file not found: {user_input}")
+        # Treat as local file path (strip the quotes Explorer's "Copy as path" adds)
+        local = os.path.expanduser(user_input.strip().strip('"\''))
+        if not os.path.isfile(local):
+            print(f"  Local file not found: {local}")
             fallback_failed.append(url)
             return fallback_succeeded, fallback_failed
-        # Copy file to output directory with predicted filename
-        try:
-            shutil.copy2(user_input, os.path.join(output_dir, predicted))
-            print(f"  Copied local file to: {predicted}")
-            fallback_succeeded.append(url)
-        except Exception as e:
-            print(f"  Failed to copy local file: {e}")
-            fallback_failed.append(url)
+
+        ok = _link_or_copy_local_file(local, url, artist, track, output_dir, predicted)
+        (fallback_succeeded if ok else fallback_failed).append(url)
 
     return fallback_succeeded, fallback_failed
+
+
+def _link_or_copy_local_file(local, url, artist, track, output_dir, predicted):
+    """associate a user-supplied local file with this track.
+
+    a file already inside the crate is LINKED (lib.catalog.links) - no copy,
+    so no duplicate; the matcher resolves the link as its first tier. a file
+    outside the crate is new content, so it's copied in as before, and the
+    copy is linked too when it landed somewhere the indexer can see.
+
+    returns True on success.
+    """
+    crate = archive_path()
+    try:
+        rel = manual_links.add_link(url, local, artist=artist, title=track, library_root=crate)
+        print(f"  Linked existing crate file: {rel}")
+        return True
+    except manual_links.OutsideCrate:
+        pass  # new to the crate: fall through to the copy below
+    except manual_links.LinksError as e:
+        print(f"  Can't update the manual links file: {e}")
+        return False
+    except manual_links.LinkRejected as e:
+        # e.g. the file sits in unorganized/ or duplicates/. copying it would
+        # recreate the duplicate this feature exists to avoid.
+        print(f"  Can't link {local}: {e}")
+        return False
+
+    # keep the source file's real extension: `predicted` carries the *target
+    # download format* (e.g. .mp3), which would mislabel a flac/m4a/etc.
+    dest = os.path.join(output_dir, os.path.splitext(predicted)[0] + os.path.splitext(local)[1])
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copy2(local, dest)
+    except Exception as e:
+        print(f"  Failed to copy local file: {e}")
+        return False
+    print(f"  Copied local file to: {os.path.relpath(dest, output_dir)}")
+
+    try:
+        rel = manual_links.add_link(url, dest, artist=artist, title=track, library_root=crate)
+        print(f"  Linked copy: {rel}")
+    except manual_links.LinkRejected as e:
+        # output_dir is outside the crate, or in unorganized/ (staging). not
+        # an error: once it's imported, re-running fallback can link it.
+        print(f"  (copy not linked yet: {e})")
+    except manual_links.LinksError as e:
+        print(f"  (copy not linked: {e})")
+    return True

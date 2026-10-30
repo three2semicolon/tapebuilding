@@ -48,6 +48,7 @@ from lib.paths import (
 )
 from lib.catalog.indexer import get_index
 from lib.catalog.matcher import MatchIndex, match_rows
+from lib.catalog.links import load_links_safe, links_path
 from lib.m3u import safe_name, write_m3u8
 
 try:
@@ -521,7 +522,13 @@ def _print_build_info(selected, tracks_csv, verbose):
 def _setup_index_and_matcher(archive_path, exports_dir_resolved, reindex, verbose):
     """Setup index and matcher for playlist processing."""
     index = _read_existing_index(archive_path, exports_dir_resolved, reindex, verbose)
-    mindex = MatchIndex(index)
+    # manual links live beside the index sidecar, so honor the same
+    # exports_dir override; paths resolve against the same crate root.
+    mindex = MatchIndex(
+        index,
+        links=load_links_safe(links_path(exports_dir_resolved)),
+        library_root=resolve_archive_path(archive_path),
+    )
     return index, mindex
 
 

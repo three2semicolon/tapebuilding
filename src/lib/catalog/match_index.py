@@ -22,6 +22,10 @@ from lib.text import (
 from .soundcloud_helpers import _soundcloud_title_variations, _is_soundcloud_like_title
 from .soundcloud_loose import SoundcloudLooseIndex
 from .row_access import _row_get
+from .links import link_key, load_links_safe, resolve_link, path_key
+from lib.paths import archive_path
+
+MANUAL_LINK_TIER = 10
 
 
 class MatchIndex:
@@ -29,8 +33,16 @@ class MatchIndex:
     lookup groups every tier needs, once per build run, instead of scanning
     the whole catalog per row."""
 
-    def __init__(self, catalog):
+    def __init__(self, catalog, links=None, library_root=None):
+        """links: manual track->file associations (lib.catalog.links); None
+        loads the default sidecar, {} disables them (tests). library_root is
+        what the links' crate-relative paths resolve against; None means
+        lib.paths.archive_path()."""
         self.catalog = catalog
+        self.links = load_links_safe() if links is None else links
+        self.library_root = library_root
+        self._by_path = None      # path_key(entry path) -> entry, built lazily on first link hit
+        self._warned_links = set()
         self.by_title = collections.defaultdict(list)       # normalize_key(title) -> [entry]  (never '' - see tier6 note)
         self.by_prefix = collections.defaultdict(list)       # normalize_key(title)[:4] -> [entry]
         self.by_core_title = collections.defaultdict(list)
@@ -125,6 +137,29 @@ class MatchIndex:
                     add_candidates_from_list(self.by_u_title.get(variation_u_key, []))
 
         return candidates
+
+    def _match_link(self, row):
+        """tier 0: an explicit user-made association beats any heuristic. a
+        stale link (file moved/deleted, or not in the catalog) warns once and
+        falls through to normal matching instead of failing the row."""
+        if not self.links:
+            return None
+        key = link_key(_row_get(row, 'spotify_url', default=''))
+        link = self.links.get(key) if key else None
+        if not link:
+            return None
+        full = resolve_link(link, self.library_root or archive_path())
+        entry = None
+        if full:
+            if self._by_path is None:
+                self._by_path = {path_key(e['path']): e for e in self.catalog if e.get('path')}
+            entry = self._by_path.get(path_key(full))
+        if entry is None and key not in self._warned_links:
+            self._warned_links.add(key)
+            print(f"  warning: manual link is stale: {link.get('artist', '')} - "
+                  f"{link.get('title', '')} -> {link.get('path')} "
+                  f"(run `links --check`); falling back to normal matching")
+        return entry
 
     # --- tiers, in order ------------------------------------------------
 
@@ -560,6 +595,9 @@ class MatchIndex:
 
     def match(self, row):
         """match a single spotify row -> (entry, tier_number) or (None, None)."""
+        linked = self._match_link(row)
+        if linked is not None:
+            return linked, MANUAL_LINK_TIER
         title_key = normalize_key(_row_title(row))
         want_dur = _row_duration_seconds(row)
         for tier_number, tier_fn in (

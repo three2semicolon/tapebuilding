@@ -227,7 +227,9 @@ def download_spotify(
         source = "single url" if urls is not None else (url_file or "<default manifest>")
         print(f"processing spotify source: {source}")
 
-    urls, url_count, metadata = _resolve_urls_and_metadata(url_file, urls, manual, pre_skip_existing, verbose)
+    urls, url_count, metadata = _resolve_urls_and_metadata(
+        url_file, urls, manual or spotdl_fallback, pre_skip_existing, verbose
+    )
     if urls is None:
         return False
 

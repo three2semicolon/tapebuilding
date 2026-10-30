@@ -38,6 +38,20 @@ def predict_output_filename(artist_names, track_name, fmt):
     return sanitize_filename(f"{artist_names} - {track_name}.{fmt}")
 
 
+def _detect_delimiter(header_line):
+    """pick the delimiter from the HEADER line only: whichever candidate
+    appears most. csv.Sniffer guesses from data rows and raises "Could not
+    determine delimiter" on ordinary exports whose names are full of commas,
+    quotes and punctuation - which silently emptied the whole metadata dict.
+    the header is just column names, so counting is reliable; comma wins ties."""
+    best, best_n = ',', header_line.count(',')
+    for d in (';', '\t', '|'):
+        n = header_line.count(d)
+        if n > best_n:
+            best, best_n = d, n
+    return best
+
+
 def read_csv_metadata_from_file(csv_path):
     """read one csv -> dict url -> {'artist', 'track', 'album'}. requires
     track_name/artist_names columns; if either is missing from the csv's
@@ -46,10 +60,11 @@ def read_csv_metadata_from_file(csv_path):
     csv)."""
     metadata = {}
     try:
-        with open(csv_path, 'r', encoding='utf-8') as f:
-            sample = f.read(1024)
+        # utf-8-sig: our own exports are written with a BOM, which would
+        # otherwise stick to the first header name.
+        with open(csv_path, 'r', encoding='utf-8-sig', newline='') as f:
+            delimiter = _detect_delimiter(f.readline())
             f.seek(0)
-            delimiter = csv.Sniffer().sniff(sample).delimiter
             reader = csv.DictReader(f, delimiter=delimiter)
             if reader.fieldnames:
                 reader.fieldnames = [name.strip() for name in reader.fieldnames]
