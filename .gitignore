@@ -52,3 +52,6 @@ dryrun.out*
 *firebase-adminsdk*
 *cookies.txt
 .spotify_token_cache
+
+# zensical docs build output
+site/

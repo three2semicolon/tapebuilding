@@ -409,3 +409,19 @@ fallback (`ARCHIVE_PATH`/`archive_path`) has been dropped.
   `http://127.0.0.1:8888/callback`).
 - `SPOTIFY_SP_DC` - your browser's `sp_dc` cookie (obtained after logging into Spotify). when set, auth uses spotapi instead of oauth — no spotify premium needed. when unset, falls back to the official web api oauth flow above.
 - `FIREBASE_PROJECT_ID`, `FIREBASE_CREDENTIALS_PATH` - for `download soundbyte`.
+
+## documentation
+
+Full documentation (this README expanded into per-package guides) is published with [Zensical](https://zensical.org/) and hosted on GitHub Pages:
+
+- Site: https://three2semicolon.github.io/tapebuilding/
+- Source: [`docs/`](https://github.com/three2semicolon/tapebuilding/tree/main/docs) in this repo
+
+Preview locally:
+
+```bash
+uv sync --dev
+uv run zensical serve
+```
+
+Then open <http://localhost:8000>. Pushes to `main` build and deploy the site via `.github/workflows/docs.yml`.

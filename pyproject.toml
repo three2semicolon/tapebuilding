@@ -31,6 +31,7 @@ packages = ["lib", "lib.catalog", "download", "organize", "playlists", "tapedeck
 dev = [
     "ruff>=0.17.0",
     "pytest>=9.1.1",
+    "zensical>=0.0.73",
 ]
 [tool.ruff]
 line-length = 130
