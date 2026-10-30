@@ -432,26 +432,34 @@ def build_playlists(
 
     total_tracks, total_matched, total_unmatched, total_written, unmatched_rows = _initialize_counters()
 
+    # Service-specific cover downloader (Spotify: uses the Spotify API).
+    cover_downloader = None
+    if covers and sp is not None:
+        def _spotify_cover_downloader(pid, dest_path):
+            return _download_cover(sp, pid, dest_path)
+        cover_downloader = _spotify_cover_downloader
+
     total_tracks, total_matched, total_unmatched, total_written, unmatched_rows = _process_playlists(
         selected,
         grouped,
         index,
         mindex,
         apply,
-        covers,
-        sp,
         playlists_path_resolved,
         service_exports_dir,
-        total_tracks,
-        total_matched,
-        total_unmatched,
-        total_written,
-        unmatched_rows,
-        verbose,
+        cover_downloader=cover_downloader,
+        url_field="spotify_url",
+        total_tracks=total_tracks,
+        total_matched=total_matched,
+        total_unmatched=total_unmatched,
+        total_written=total_written,
+        unmatched_rows=unmatched_rows,
+        verbose=verbose,
     )
 
     _finalize_and_report(
-        service_exports_dir, unmatched_rows, total_written, selected, total_matched, total_unmatched, total_tracks
+        service_exports_dir, unmatched_rows, total_written, selected,
+        total_matched, total_unmatched, total_tracks, url_field="spotify_url",
     )
 
 
@@ -530,18 +538,30 @@ def _process_playlists(
     index,
     mindex,
     apply,
-    covers,
-    sp,
-    playlists_path_resolved,
-    service_exports_dir,
-    total_tracks,
-    total_matched,
-    total_unmatched,
-    total_written,
-    unmatched_rows,
-    verbose,
+    playlists_path,
+    exports_dir,
+    cover_downloader=None,
+    url_field="spotify_url",
+    total_tracks=0,
+    total_matched=0,
+    total_unmatched=0,
+    total_written=0,
+    unmatched_rows=None,
+    verbose=False,
 ):
-    """Process each playlist in the selection."""
+    """Process each playlist in the selection: match tracks against the catalog,
+    write .m3u8 files for matched playlists, collect unmatched rows.
+
+    `cover_downloader` is an optional callable(pid, dest_path) -> bool; when
+    provided and a playlist is written, it's called to fetch cover art.
+    `url_field` names the key in each track row that holds the service-specific
+    URL (e.g. 'spotify_url') - it's stored in unmatched rows for the handoff.
+    This section is source-agnostic: it knows nothing about Spotify vs
+    SoundCloud auth, rescrape, or cover download - those live in the caller.
+    """
+    if unmatched_rows is None:
+        unmatched_rows = []
+
     for i, meta in enumerate(selected, 1):
         pid = meta.get("id")
         name = meta.get("name") or meta.get("id") or "Unknown"
@@ -573,7 +593,7 @@ def _process_playlists(
                         "artist_names": row.get("artist_names", ""),
                         "album_name": row.get("album_name", ""),
                         "tier_tried": rec["tier"],
-                        "spotify_url": row.get("spotify_url", ""),
+                        url_field: row.get(url_field, ""),
                     }
                 )
 
@@ -581,13 +601,13 @@ def _process_playlists(
         print(f"\n[{i}/{len(selected)}] {name} - {len(matched_entries)}/{len(rows)} matched ({unmatched_count} unmatched)")
 
         if apply and matched_entries:
-            m3u8_path = os.path.join(playlists_path_resolved, safe_name(name) + ".m3u8")
+            m3u8_path = os.path.join(playlists_path, safe_name(name) + ".m3u8")
             write_m3u8(m3u8_path, matched_entries)
             total_written += 1
             print(f"  wrote {m3u8_path}")
-            if covers:
-                cover = os.path.join(playlists_path_resolved, safe_name(name) + ".jpg")
-                got = _download_cover(sp, pid, cover)
+            if cover_downloader:
+                cover = os.path.join(playlists_path, safe_name(name) + ".jpg")
+                got = cover_downloader(pid, cover)
                 if got:
                     print(f"  wrote {cover}")
 
@@ -595,12 +615,13 @@ def _process_playlists(
 
 
 def _finalize_and_report(
-    service_exports_dir, unmatched_rows, total_written, selected, total_matched, total_unmatched, total_tracks
+    service_exports_dir, unmatched_rows, total_written, selected,
+    total_matched, total_unmatched, total_tracks, url_field="spotify_url",
 ):
     """Finalize processing and print final report."""
     # Ensure service-specific exports directory exists
     os.makedirs(service_exports_dir, exist_ok=True)
-    _write_unmatched(service_exports_dir, unmatched_rows)
+    _write_unmatched(service_exports_dir, unmatched_rows, url_field=url_field)
 
     print(
         f"\ndone. {total_written}/{len(selected)} playlists written "
@@ -612,19 +633,19 @@ def _finalize_and_report(
     )
 
 
-def _write_unmatched(exports_dir, rows):
+def _write_unmatched(exports_dir, rows, url_field="spotify_url"):
     """atomic, non-fatal: the handoff is a convenience sidecar, so a locked target
     (file open in an editor, a scanner holding it) should warn, not abort the build."""
     csv_path = os.path.join(exports_dir, "unmatched.csv")
     txt_path = os.path.join(exports_dir, "unmatched_urls.txt")
-    fields = ("playlist_name", "track_id", "track_name", "artist_names", "album_name", "tier_tried", "spotify_url")
+    fields = ("playlist_name", "track_id", "track_name", "artist_names", "album_name", "tier_tried", url_field)
     urls = []
     seen = set()
     body_lines = []
     body_lines.append(",".join(fields))
     for r in rows:
         body_lines.append(",".join(_csv_escape(r.get(k, "")) for k in fields))
-        u = (r.get("spotify_url") or "").strip()
+        u = (r.get(url_field) or "").strip()
         if u and u not in seen:
             seen.add(u)
             urls.append(u)
