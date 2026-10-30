@@ -198,9 +198,11 @@ scanned for soft/hard failure markers and logged to
 
 downloads from spotify urls (tracks, albums, playlists) via spotdl.
 `--url-file` accepts a `.txt` (one url per line), a `.csv` (must have a
-`spotify_url` column), or a directory of `.csv` files.
+`spotify_url` column), or a directory of `.csv` files. a single spotify url
+can also be passed directly as an argument.
 
 ```bash
+download spotify "https://open.spotify.com/track/..."       # download a single spotify url directly
 download spotify                                            # <exports>/spotify_manifest_urls.txt
 download spotify -u path/to/urls.txt
 download spotify -u /path/to/export/directory -o /path/to/music

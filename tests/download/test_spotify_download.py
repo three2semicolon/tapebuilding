@@ -230,3 +230,32 @@ class TestDownloadSpotifyPreSkipExisting:
         download_spotify(str(url_file), output_dir=str(tmp_path / "out"), pre_skip_existing=True)
         out = capsys.readouterr().out
         assert "skipping existence check" in out.lower()
+
+
+class TestDownloadSpotifySingleUrl:
+    def test_single_url_passes_through_to_spotdl(self, tmp_path, monkeypatch):
+        """A single URL passed directly should be downloaded via spotdl without needing a url_file."""
+        captured_cmds = []
+
+        def fake_popen(cmd, **kwargs):
+            captured_cmds.append(cmd)
+            proc = mock.Mock()
+            proc.stdout = iter(["batch downloaded successfully\n"])
+            proc.wait.return_value = None
+            proc.returncode = 0
+            return proc
+
+        monkeypatch.setattr("download.spotify.spotify_download.subprocess.Popen", fake_popen)
+
+        result = download_spotify(
+            urls=["https://open.spotify.com/track/AAA"],
+            output_dir=str(tmp_path / "out"),
+        )
+
+        assert result is True
+        assert len(captured_cmds) == 1
+        assert "https://open.spotify.com/track/AAA" in captured_cmds[0]
+
+    def test_empty_url_list_returns_false(self):
+        """Passing an empty list of urls should return False."""
+        assert download_spotify(urls=[]) is False

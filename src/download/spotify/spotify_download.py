@@ -161,8 +161,37 @@ def _validate_and_prepare_urls(url_file, verbose):
     return urls, url_count
 
 
+def _resolve_urls_and_metadata(url_file, urls, manual, pre_skip_existing, verbose):
+    """Determine the URL list and metadata, either from direct input or a file."""
+    if urls is not None:
+        urls = _deduplicate_urls(list(urls))
+        if not urls:
+            print("no urls provided")
+            return None, 0, {}
+        url_count = len(urls)
+        print(f"url validation complete: {url_count} unique urls.")
+        return urls, url_count, {}  # no csv metadata for direct url input
+
+    # File-based URL source
+    if not os.path.exists(url_file):
+        print(f"error: url file/path not found: {url_file}")
+        return None, 0, None
+    urls, url_count = _validate_and_prepare_urls(url_file, verbose)
+    if urls is None:
+        return None, 0, None
+
+    metadata = None
+    if manual or pre_skip_existing:
+        metadata = _read_metadata_if_needed(url_file, manual, pre_skip_existing)
+    if not metadata:
+        print("warning: no csv metadata available - skipping existence check and fallback metadata.")
+        metadata = {}
+    return urls, url_count, metadata
+
+
 def download_spotify(
-    url_file,
+    url_file=None,
+    urls=None,
     output_dir=None,
     format="mp3",
     bitrate="320k",
@@ -195,20 +224,12 @@ def download_spotify(
     retries = config.DOWNLOAD_RETRIES if retries == 3 and config.DOWNLOAD_RETRIES is not None else retries
 
     if verbose:
-        print(f"processing spotify source: {url_file}")
+        source = "single url" if urls is not None else (url_file or "<default manifest>")
+        print(f"processing spotify source: {source}")
 
-    # Validate and prepare URLs
-    urls, url_count = _validate_and_prepare_urls(url_file, verbose)
+    urls, url_count, metadata = _resolve_urls_and_metadata(url_file, urls, manual, pre_skip_existing, verbose)
     if urls is None:
         return False
-
-    metadata = None
-    # We need metadata for fallback (if manual) and for pre-skip existence check
-    if manual or pre_skip_existing:
-        metadata = _read_metadata_if_needed(url_file, manual, pre_skip_existing)
-        if not metadata:
-            print("warning: no csVs with track_name/artist_names columns found - skipping existence check and fallback metadata.")
-            metadata = {}
 
     # Pre-skip existence check
     if pre_skip_existing and metadata:

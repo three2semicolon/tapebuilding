@@ -32,6 +32,7 @@ with two or more `-p`/`--playlists-file` identifiers, the export scopes to just 
 downloads from spotify urls (tracks, albums, playlists) via spotdl.
 
 ```bash
+download spotify "https://open.spotify.com/track/..."       # download a single spotify url directly
 download spotify                                            # <exports>/spotify_manifest_urls.txt
 download spotify -u path/to/urls.txt
 download spotify -u /path/to/export/directory -o /path/to/music

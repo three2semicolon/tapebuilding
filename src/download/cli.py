@@ -211,6 +211,7 @@ def export_cmd(playlists, playlists_file, output, mine, service, export_type, se
 
 
 @download.command("spotify")
+@click.argument("url", required=False)
 @click.option(
     "--url-file",
     "-u",
@@ -251,6 +252,7 @@ def export_cmd(playlists, playlists_file, output, mine, service, export_type, se
 @click.option("--clean", is_flag=True, help="run organize validate --all after successful download to organize the crate.")
 @click.option("--verbose", "-v", is_flag=True)
 def spotify_cmd(
+    url,
     url_file,
     output,
     fmt,
@@ -270,15 +272,26 @@ def spotify_cmd(
     clean,
     verbose,
 ):
-    """download audio from spotify urls via spotdl."""
-    if not url_file:
-        export_dir = get_export_dir()
-        url_file = f"{export_dir}/spotify_manifest_urls.txt"
-        click.echo(f"using default url file: {url_file}")
+    """download audio from spotify urls via spotdl.
+
+    With a single SPOTIFY URL argument, downloads that one track/album/playlist
+    directly via spotdl. Without it, reads urls from --url-file (defaults to the
+    exported spotify_manifest_urls.txt).
+    """
+    if url:
+        urls = [url]
+        url_file = None
+    else:
+        urls = None
+        if not url_file:
+            export_dir = get_export_dir()
+            url_file = f"{export_dir}/spotify_manifest_urls.txt"
+            click.echo(f"using default url file: {url_file}")
 
     try:
         success = download_spotify(
             url_file=url_file,
+            urls=urls,
             output_dir=output,
             format=fmt,
             bitrate=bitrate,
