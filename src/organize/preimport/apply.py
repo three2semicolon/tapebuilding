@@ -40,7 +40,7 @@ def prune_unorganized(unorganized):
 
 
 def _apply(staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes,
-           no_tag_write, unorganized, crate):
+           no_tag_write, crate):
     """perform the moves (stage + merge), quarantine duplicates, then resolve
     moved paths for the tag writes. every move and tag write goes through
     the organize journal (<crate>/.organize_journal.jsonl) so the run can be
@@ -50,7 +50,7 @@ def _apply(staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes,
     with Journal(crate, 'preimport') as j:
         _apply_stage_and_merged_moves(staged_moves, merged_moves, moved, j)
         _apply_duplicate_moves(dup_moves, moved, quarantined, crate, j)
-        _prune_and_handle_tags(unorganized, no_tag_write, tag_writes, album_tag_writes, moved, quarantined, j)
+        _handle_tags(no_tag_write, tag_writes, album_tag_writes, moved, quarantined, j)
     print(f"journal: {j.path}  (run {j.run_id}; revert with `organize undo`)")
 
 
@@ -76,10 +76,8 @@ def _apply_duplicate_moves(dup_moves, moved, quarantined, crate, j):
                 print(f"  dup move failed: {src} ({e})", file=sys.stderr)
 
 
-def _prune_and_handle_tags(unorganized, no_tag_write, tag_writes, album_tag_writes, moved, quarantined, j):
-    """Prune unorganized directories and handle tag writes."""
-    prune_unorganized(unorganized)
-
+def _handle_tags(no_tag_write, tag_writes, album_tag_writes, moved, quarantined, j):
+    """Handle tag writes after moves are applied."""
     if no_tag_write:
         print("(--no-tag-write: albumartist tags left as-is - beets may still split)")
     else:
@@ -323,7 +321,7 @@ def stage(unorganized, crate, apply=False, merge_existing=True,
 
     _print_apply_operations(staged_moves, merged_moves, dup_moves)
     _apply(staged_moves, merged_moves, dup_moves, tag_writes, album_tag_writes, no_tag_write,
-           unorganized, crate)
+           crate)
 
     if report['merged_folders']:
         print("\nmerged tracks are on disk but NOT in beets.db yet. index them with:")

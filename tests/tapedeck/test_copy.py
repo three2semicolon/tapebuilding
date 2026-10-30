@@ -105,18 +105,9 @@ def test_unstage_prunes_empty_parent_directories(tmp_path):
 
     unstage(items, str(crate), str(deck), kind='album')
     assert not dst_nested.exists()
-    # Pinned current behavior, not necessarily ideal: os.walk(topdown=False)
-    # snapshots each dir's children before recursing, so a parent that only
-    # becomes empty *as a result of* this same pruning pass (its one child
-    # just got rmdir'd) isn't re-checked and survives this call - "Disc 1"
-    # goes, but "Artist - Album" (now empty) doesn't, until a later
-    # unload's pruning pass gets to it.
-    assert (deck / "albums" / "Artist - Album").exists()
-    assert not any((deck / "albums" / "Artist - Album").iterdir())
-
-    # a subsequent unload's prune pass (a no-op unload here, since nothing
-    # is left to remove) finishes the job.
-    unstage(items, str(crate), str(deck), kind='album')
+    # fixed-point loop: a parent that only became empty because its child was
+    # just removed is re-checked and pruned in the same call, so "Artist - Album"
+    # is gone too - no second unload needed to finish the job.
     assert not (deck / "albums" / "Artist - Album").exists()
     assert (deck / "albums").exists()  # the subtree root itself is never pruned
 

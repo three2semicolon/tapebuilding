@@ -82,20 +82,26 @@ def _collect(items, crate):
 
 
 def _prune_empty_dirs(tapedeck):
-    """bottom-up rmdir of empty dirs under each mirrored subtree, up to (not
-    including) the tapedeck root itself."""
+    """fixed-point bottom-up rmdir of empty dirs under each mirrored subtree,
+    up to (not including) the tapedeck root itself. repeats until a full pass
+    removes nothing, so a parent that only becomes empty *because* its child
+    was just removed in this same pass is re-checked and pruned too."""
     for sub in _PRUNE_SUBS:
         root = os.path.join(tapedeck, sub)
         if not os.path.isdir(root):
             continue
-        for dp, dirs, fns in os.walk(root, topdown=False):
-            if dp == root:
-                continue
-            try:
-                if not dirs and not fns:
-                    os.rmdir(dp)
-            except OSError:
-                pass
+        changed = True
+        while changed:
+            changed = False
+            for dp, dirs, fns in os.walk(root, topdown=False):
+                if dp == root:
+                    continue
+                try:
+                    if not dirs and not fns:
+                        os.rmdir(dp)
+                        changed = True
+                except OSError:
+                    pass
 
 
 # --- stage (load) -----------------------------------------------------------
