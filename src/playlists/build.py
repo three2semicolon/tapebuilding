@@ -421,13 +421,22 @@ def build_playlists(
     """
     playlists_path_resolved, exports_dir_resolved = _handle_basic_setup(names, playlists_path, exports_dir)
 
-    sp = _handle_authentication(rescrape, covers)
-    _handle_rescrape(sp, names, exports_dir_resolved, exclude_names, rescrape)
+    # SoundCloud doesn't use the Spotify API - skip auth, but still rescrape
+    if service == "soundcloud":
+        sp = None
+        if rescrape:
+            from download.soundcloud.soundcloud_export import export_all_data as sc_export_all_data
+            username = config.SOUNDCLOUD_USER
+            print(f"rescraping soundcloud (--rescrape) into {exports_dir_resolved}")
+            sc_export_all_data(None, username, exports_dir_resolved)
+    else:
+        sp = _handle_authentication(rescrape, covers)
+        _handle_rescrape(sp, names, exports_dir_resolved, exclude_names, rescrape)
 
     playlists_csv, tracks_csv, service_exports_dir = _determine_file_paths(service, exports_dir_resolved)
     selected, grouped = _select_and_group_playlists(playlists_csv, tracks_csv, names, all_playlists, exclude_names, service)
 
-    _print_build_info(selected, tracks_csv, verbose)
+    _print_build_info(selected, tracks_csv, verbose, service)
 
     index, mindex = _setup_index_and_matcher(archive_path, exports_dir_resolved, reindex, verbose)
 
@@ -511,12 +520,12 @@ def _select_and_group_playlists(playlists_csv, tracks_csv, names, all_playlists,
     return selected, grouped
 
 
-def _print_build_info(selected, tracks_csv, verbose):
+def _print_build_info(selected, tracks_csv, verbose, service="spotify"):
     """Print build information if verbose or few playlists."""
     print(f"\nbuilding {len(selected)} playlist(s) from {tracks_csv}")
     if len(selected) <= 12 or verbose:
         for m in selected:
-            print(f"  - {m.get('name')} ({m.get('track_count')} tracks on spotify)")
+            print(f"  - {m.get('name')} ({m.get('track_count')} tracks on {service})")
 
 
 def _setup_index_and_matcher(archive_path, exports_dir_resolved, reindex, verbose):

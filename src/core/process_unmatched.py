@@ -11,6 +11,7 @@ import os
 from lib.paths import archive_path, playlists_path, exports_dir as resolve_exports_dir
 from playlists.build import _spotify_exports_dir, build_playlists
 from download.spotify.spotify_download import download_spotify
+from download.soundcloud.soundcloud_download import download_soundcloud
 from organize.beets_import import run_import
 from lib import config
 
@@ -178,6 +179,7 @@ def _download_step(
     apply,
     verbose,
     manual,
+    service,
     record,
     results,
 ):
@@ -213,18 +215,33 @@ def _download_step(
             else:
                 try:
                     # Configure download options
-                    ok = download_spotify(
-                        url_file=unmatched_csv_path,
-                        output_dir=unorganized_dir,
-                        format=format,
-                        bitrate=bitrate,
-                        cookie_file=cookies_file,
-                        pre_skip_existing=pre_skip_existing,
-                        retries=retries,
-                        validate_only=not apply,  # Dry run mode
-                        debug=verbose,
-                        manual=manual,
-                    )
+                    # Dispatch to the service-specific download entry point.
+                    if service == "soundcloud":
+                        ok = download_soundcloud(
+                            url_file=unmatched_csv_path,
+                            output_dir=unorganized_dir,
+                            format=format,
+                            bitrate=bitrate,
+                            cookie_file=cookies_file,
+                            pre_skip_existing=pre_skip_existing,
+                            retries=retries,
+                            validate_only=not apply,  # Dry run mode
+                            debug=verbose,
+                            manual=manual,
+                        )
+                    else:  # spotify (default)
+                        ok = download_spotify(
+                            url_file=unmatched_csv_path,
+                            output_dir=unorganized_dir,
+                            format=format,
+                            bitrate=bitrate,
+                            cookie_file=cookies_file,
+                            pre_skip_existing=pre_skip_existing,
+                            retries=retries,
+                            validate_only=not apply,  # Dry run mode
+                            debug=verbose,
+                            manual=manual,
+                        )
                     record("download", ok)
                 except Exception as e:
                     record("download", False, error=str(e))
@@ -425,6 +442,7 @@ def run_process_unmatched(
         apply,
         verbose,
         manual,
+        service,
         record,
         results,
     )

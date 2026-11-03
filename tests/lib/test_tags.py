@@ -265,12 +265,8 @@ class TestWriteTagNFC:
 
         # Writing a case-only different value should trigger a save
         # (case-only differences matter for NFC)
-        before_mtime = os.path.getmtime(path)
         write_tag(path, title="TITLE")  # Uppercase - different NFC
-        after_mtime = os.path.getmtime(path)
-        assert after_mtime != before_mtime, "Writing case-only different value should update file"
-
-        # Verify the value was actually written
+        # Verify the value was actually written (save happened)
         result = read_tags(path)
         assert result["title"] == "TITLE"
 

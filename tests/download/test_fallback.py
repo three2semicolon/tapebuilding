@@ -60,7 +60,6 @@ class TestProcessFallback:
                 cookies_from_browser=None,
                 resolved_ffmpeg="/usr/bin/ffmpeg",
                 library_index={},
-                is_spotify=True
             )
 
             # All should be failed due to missing metadata
@@ -92,7 +91,6 @@ class TestProcessFallback:
                 cookies_from_browser=None,
                 resolved_ffmpeg="/usr/bin/ffmpeg",
                 library_index=library_index,
-                is_spotify=True
             )
 
             # All should be successful due to pre-existing files
@@ -124,7 +122,6 @@ class TestProcessFallback:
                     cookies_from_browser=None,
                     resolved_ffmpeg="/usr/bin/ffmpeg",
                     library_index=library_index,
-                    is_spotify=True
                 )
 
                 # Should be successful
@@ -170,7 +167,6 @@ class TestProcessFallback:
                 cookies_from_browser=None,
                 resolved_ffmpeg="/usr/bin/ffmpeg",
                 library_index=library_index,
-                is_spotify=True
             )
 
             # Should be successful
@@ -202,7 +198,6 @@ class TestProcessFallback:
                 cookies_from_browser=None,
                 resolved_ffmpeg="/usr/bin/ffmpeg",
                 library_index=library_index,
-                is_spotify=True
             )
 
             # Should be failed (user skipped)
@@ -215,7 +210,7 @@ class TestProcessFallback:
         """Test fallback processing for SoundCloud URLs."""
         batch = ["url1"]
         metadata = {
-            "url1": {"uploader": "Artist 1", "title": "Track 1"},
+            "url1": {"artist": "Artist 1", "track": "Track 1"},
         }
         library_index = {}  # Empty library index
 
@@ -230,7 +225,6 @@ class TestProcessFallback:
                 cookies_from_browser=None,
                 resolved_ffmpeg="/usr/bin/ffmpeg",
                 library_index=library_index,
-                is_spotify=False  # SoundCloud
             )
 
             # Should be failed (user skipped)
@@ -238,3 +232,152 @@ class TestProcessFallback:
             assert failed == ["url1"]
             assert batch_succeeded is False
             assert mock_prompt.call_count == 1
+
+
+class TestProcessFallbackLost:
+    """Tests for marking tracks as lost via backspace in manual fallback."""
+
+    def test_backspace_marks_url_as_lost(self):
+        """Pressing backspace marks the URL as lost (in fallback_lost, not failed)."""
+        batch = ["url1"]
+        metadata = {
+            "url1": {"artist": "Artist 1", "track": "Track 1"},
+        }
+        library_index = {}
+
+        with mock.patch('download.fallback._read_fallback_input', return_value=('lost', None)):
+            successful, failed, batch_succeeded = process_fallback(
+                batch=batch,
+                metadata=metadata,
+                output_dir="/tmp/output",
+                format="mp3",
+                overwrite_errors=False,
+                cookies_from_browser=None,
+                resolved_ffmpeg="/usr/bin/ffmpeg",
+                library_index=library_index,
+            )
+
+            assert successful == []
+            assert failed == []  # lost is intentional, not a failure
+            assert batch_succeeded is False
+
+    def test_backspace_writes_to_lost_songs_csv(self, tmp_path):
+        """Pressing backspace appends the song's row to lost-songs.csv."""
+        unmatched_csv = tmp_path / "unmatched.csv"
+        unmatched_csv.write_text(
+            "playlist_name,track_id,track_name,artist_names,album_name,tier_tried,spotify_url\n"
+            "My Playlist,track123,Track One,Artist One,Album One,tier3,https://open.spotify.com/track/url1\n",
+            encoding="utf-8-sig",
+        )
+
+        batch = ["https://open.spotify.com/track/url1"]
+        metadata = {
+            "https://open.spotify.com/track/url1": {"artist": "Artist One", "track": "Track One"},
+        }
+        library_index = {}
+
+        lost_songs_path = tmp_path / "lost-songs.csv"
+
+        with mock.patch('download.fallback._read_fallback_input', return_value=('lost', None)):
+            successful, failed, batch_succeeded = process_fallback(
+                batch=batch,
+                metadata=metadata,
+                output_dir=str(tmp_path),
+                format="mp3",
+                overwrite_errors=False,
+                cookies_from_browser=None,
+                resolved_ffmpeg="/usr/bin/ffmpeg",
+                library_index=library_index,
+                unmatched_csv_path=str(unmatched_csv),
+            )
+
+            assert lost_songs_path.exists()
+            content = lost_songs_path.read_text(encoding="utf-8-sig")
+            assert "Artist One" in content
+            assert "Track One" in content
+            assert "https://open.spotify.com/track/url1" in content
+            assert "lost_at" in content
+
+    def test_backspace_removes_from_unmatched_csv(self, tmp_path):
+        """Pressing backspace removes the song's row from unmatched.csv."""
+        unmatched_csv = tmp_path / "unmatched.csv"
+        unmatched_csv.write_text(
+            "playlist_name,track_id,track_name,artist_names,album_name,tier_tried,spotify_url\n"
+            "My Playlist,track123,Track One,Artist One,Album One,tier3,https://open.spotify.com/track/url1\n"
+            "Other Playlist,track456,Track Two,Artist Two,Album Two,tier1,https://open.spotify.com/track/url2\n",
+            encoding="utf-8-sig",
+        )
+
+        batch = ["https://open.spotify.com/track/url1"]
+        metadata = {
+            "https://open.spotify.com/track/url1": {"artist": "Artist One", "track": "Track One"},
+        }
+        library_index = {}
+
+        with mock.patch('download.fallback._read_fallback_input', return_value=('lost', None)):
+            process_fallback(
+                batch=batch,
+                metadata=metadata,
+                output_dir=str(tmp_path),
+                format="mp3",
+                overwrite_errors=False,
+                cookies_from_browser=None,
+                resolved_ffmpeg="/usr/bin/ffmpeg",
+                library_index=library_index,
+                unmatched_csv_path=str(unmatched_csv),
+            )
+
+            content = unmatched_csv.read_text(encoding="utf-8-sig")
+            assert "url1" not in content
+            assert "url2" in content  # other URL preserved
+            assert "Track Two" in content
+
+    def test_backspace_all_songs_batch_not_successful(self):
+        """When all songs in a batch are marked lost, batch_succeeded_via_fallback is False."""
+        batch = ["url1", "url2"]
+        metadata = {
+            "url1": {"artist": "Artist 1", "track": "Track 1"},
+            "url2": {"artist": "Artist 2", "track": "Track 2"},
+        }
+        library_index = {}
+
+        with mock.patch('download.fallback._read_fallback_input', return_value=('lost', None)):
+            successful, failed, batch_succeeded = process_fallback(
+                batch=batch,
+                metadata=metadata,
+                output_dir="/tmp/output",
+                format="mp3",
+                overwrite_errors=False,
+                cookies_from_browser=None,
+                resolved_ffmpeg="/usr/bin/ffmpeg",
+                library_index=library_index,
+            )
+
+            assert successful == []
+            assert failed == []  # lost songs are not failures
+            assert batch_succeeded is False
+
+    def test_backspace_no_unmatched_csv_path_no_crash(self):
+        """When unmatched_csv_path is None, backspace still marks as lost without writing CSVs."""
+        batch = ["url1"]
+        metadata = {
+            "url1": {"artist": "Artist 1", "track": "Track 1"},
+        }
+        library_index = {}
+
+        with mock.patch('download.fallback._read_fallback_input', return_value=('lost', None)):
+            successful, failed, batch_succeeded = process_fallback(
+                batch=batch,
+                metadata=metadata,
+                output_dir="/tmp/output",
+                format="mp3",
+                overwrite_errors=False,
+                cookies_from_browser=None,
+                resolved_ffmpeg="/usr/bin/ffmpeg",
+                library_index=library_index,
+                # unmatched_csv_path not provided
+            )
+
+            assert successful == []
+            assert failed == []
+            assert batch_succeeded is False

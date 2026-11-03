@@ -73,7 +73,17 @@ def _deduplicate_urls(urls):
     return deduped_urls
 
 
-def _process_manual_mode(urls, metadata, output_dir, format, overwrite_errors, batch_size, cookies_from_browser, verbose):
+def _process_manual_mode(
+    urls,
+    metadata,
+    output_dir,
+    format,
+    overwrite_errors,
+    batch_size,
+    cookies_from_browser,
+    verbose,
+    url_file=None,
+):
     """Process URLs in manual mode via fallback."""
     # Process URLs in batches via fallback
     overall_success = True
@@ -102,7 +112,7 @@ def _process_manual_mode(urls, metadata, output_dir, format, overwrite_errors, b
             cookies_from_browser=cookies_from_browser,
             resolved_ffmpeg=resolved_ffmpeg,
             library_index={},  # manual mode doesn't use library index
-            is_spotify=True,
+            unmatched_csv_path=url_file,
         )
 
         if not batch_succeeded:
@@ -233,6 +243,25 @@ def download_spotify(
     if urls is None:
         return False
 
+    # Filter out songs previously marked as lost (via backspace in manual mode).
+    # lost-songs.csv lives next to unmatched.csv; even if unmatched.csv is
+    # regenerated on a subsequent full run, these URLs are skipped so they
+    # aren't re-downloaded.
+    if url_file:
+        lost_songs_path = os.path.join(
+            os.path.dirname(os.path.abspath(url_file)), "lost-songs.csv"
+        )
+        lost_urls = fallback._read_lost_song_urls(lost_songs_path)
+        if lost_urls:
+            lost_set = set(lost_urls)
+            before = len(urls)
+            urls = [u for u in urls if u not in lost_set]
+            metadata = {u: m for u, m in metadata.items() if u in set(urls)}
+            removed = before - len(urls)
+            if removed:
+                print(f"  Skipping {removed} lost song(s) (listed in lost-songs.csv).")
+            url_count = len(urls)
+
     # Pre-skip existence check
     if pre_skip_existing and metadata:
         should_continue, urls, url_count = _handle_pre_skip_existence(urls, metadata, output_dir, format, validate_only, verbose)
@@ -245,7 +274,8 @@ def download_spotify(
     # If manual, process via fallback and return
     if manual:
         return _process_manual_mode(
-            urls, metadata, output_dir, format, overwrite_errors, batch_size, cookies_from_browser, verbose
+            urls, metadata, output_dir, format, overwrite_errors, batch_size, cookies_from_browser, verbose,
+            url_file=url_file,
         )
 
     # Otherwise, proceed with spotdl processing (original logic)
@@ -573,8 +603,7 @@ def _handle_batch_result(
             overwrite_errors=overwrite_errors,
             cookies_from_browser=cookies_from_browser,
             resolved_ffmpeg=resolved_ffmpeg,
-            library_index={},  # Note: using empty library_index for consistency with manual mode?
-            is_spotify=True,
+            library_index={},
         )
         # Update overall_success based on fallback results
         if not batch_succeeded:

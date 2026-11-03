@@ -213,7 +213,8 @@ def _read_csv_file_and_populate(csv_file, urls, metadata, verbose):
 
 
 def _process_manual_mode(urls, metadata, output_dir, format,
-                        overwrite_errors, batch_size, cookies_from_browser, verbose):
+                        overwrite_errors, batch_size, cookies_from_browser, verbose,
+                        unmatched_csv_path=None):
     """Process URLs in manual mode via fallback."""
     # Process URLs in batches via fallback
     overall_success = True
@@ -225,6 +226,14 @@ def _process_manual_mode(urls, metadata, output_dir, format,
     resolved_output_dir = resolve_output_dir(output_dir)
     resolved_ffmpeg = ffmpeg_path()
 
+    # Fallback expects 'artist'/'track' keys; soundcloud metadata uses
+    # 'uploader'/'title'. Translate so fallback prompts read correctly.
+    fallback_metadata = {}
+    for url, m in metadata.items():
+        fallback_metadata[url] = dict(m)
+        fallback_metadata[url]['artist'] = m.get('uploader', '')
+        fallback_metadata[url]['track'] = m.get('title', '')
+
     for batch_idx in range(num_batches):
         start = batch_idx * batch_size
         end = min(start + batch_size, len(urls))
@@ -235,14 +244,14 @@ def _process_manual_mode(urls, metadata, output_dir, format,
 
         fallback_succeeded, fallback_failed, batch_succeeded = fallback.process_fallback(
             batch=batch,
-            metadata=metadata,
+            metadata=fallback_metadata,
             output_dir=resolved_output_dir,
             format=format,
             overwrite_errors=overwrite_errors,
             cookies_from_browser=cookies_from_browser,
             resolved_ffmpeg=resolved_ffmpeg,
             library_index={},  # manual mode doesn't use library index
-            is_spotify=False
+            unmatched_csv_path=unmatched_csv_path,
         )
 
         if not batch_succeeded:
@@ -376,6 +385,25 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
 
     print(f"url validation complete: {url_count} unique urls.")
 
+    # Filter out songs previously marked as lost (via backspace in manual mode).
+    # lost-songs.csv lives next to unmatched.csv; even if unmatched.csv is
+    # regenerated on a subsequent full run, these URLs are skipped so they
+    # aren't re-downloaded.
+    if url_file:
+        lost_songs_path = os.path.join(
+            os.path.dirname(os.path.abspath(url_file)), "lost-songs.csv"
+        )
+        lost_urls = fallback._read_lost_song_urls(lost_songs_path)
+        if lost_urls:
+            lost_set = set(lost_urls)
+            before = len(urls)
+            urls = [u for u in urls if u not in lost_set]
+            metadata = {u: m for u, m in metadata.items() if u in set(urls)}
+            removed = before - len(urls)
+            if removed:
+                print(f"  Skipping {removed} lost song(s) (listed in lost-songs.csv).")
+            url_count = len(urls)
+
     # Pre-skip existing check
     if pre_skip_existing:
         should_continue, urls, url_count = _handle_pre_skip_existence(
@@ -390,7 +418,8 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
     # If manual, process via fallback and return
     if manual:
         return _process_manual_mode(urls, metadata, output_dir, format,
-                                  overwrite_errors, batch_size, cookies_from_browser, verbose)
+                                  overwrite_errors, batch_size, cookies_from_browser, verbose,
+                                  unmatched_csv_path=url_file)
 
     # Otherwise, proceed with ytdl processing (original logic)
     return _process_ytdl_mode(urls, metadata, output_dir, format, bitrate,

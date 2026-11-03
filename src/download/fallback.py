@@ -2,12 +2,20 @@
 
 Provides functions to handle fallback scenarios when spotdl or ytdl fail to
 find/download a track, allowing users to specify alternative sources.
+
+In manual mode, the user is prompted for each failed track. They can:
+- Enter a URL or local file path to download the track from an alternative source
+- Press Enter to skip the track (it stays in unmatched.csv for future runs)
+- Press Backspace to mark the track as lost
 """
 
+import csv
 import os
+import sys
 import shutil
 import click
-from typing import List, Dict, Any, Optional
+from datetime import date
+from typing import List, Dict, Any, Optional, Tuple
 
 from download.manifest import predict_output_filename
 from download.ytdl import download_ytdl
@@ -15,6 +23,190 @@ from lib.text import normalize_key
 from lib.paths import archive_path
 from lib.catalog import links as manual_links
 from download.existing import resolve_output_dir
+
+
+def _read_key() -> Optional[str]:
+    """Read a single keypress from the terminal.
+
+    Returns the character as a string, or None for special keys (arrows,
+    function keys) that can't be meaningfully interpreted, or None when
+    stdin is not a TTY (non-interactive: fall back to click.prompt).
+    """
+    if not sys.stdin.isatty():
+        return None
+
+    if sys.platform == "win32":
+        import msvcrt
+        ch = msvcrt.getch()
+        if ch in (b'\x00', b'\xe0'):  # function/arrow key prefix
+            msvcrt.getch()  # consume the scan code
+            return None
+        try:
+            return ch.decode('utf-8')
+        except UnicodeDecodeError:
+            return ch.decode('latin-1')
+    else:
+        import tty
+        import termios
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return ch
+
+
+def _read_fallback_input(artist: str, track: str) -> Tuple[str, Optional[str]]:
+    """Read user input for a fallback track, detecting backspace vs enter vs URL.
+
+    The user can:
+    - Type a URL or file path and press Enter  -> ('url', '<input>')
+    - Press Enter on an empty line             -> ('skip', None)
+    - Press Backspace on an empty line         -> ('lost', None)
+    - Press Ctrl+C                             -> ('abort', None)
+
+    Falls back to click.prompt when stdin is not a TTY (backspace not
+    distinguishable from enter in that case; empty input = skip).
+
+    Returns:
+        Tuple of (action, value) where action is 'url', 'skip', 'lost', or
+        'abort'.
+    """
+    prompt = (
+        f"Enter a URL or local file path to download '{artist} - {track}' instead "
+        f"(Enter to skip, Backspace to mark as lost): "
+    )
+    print(prompt, end='', flush=True)
+
+    chars: List[str] = []
+    while True:
+        ch = _read_key()
+        if ch is None:
+            # Not a TTY or an uninterpretably special key: fall back to
+            # click.prompt for the whole line.
+            try:
+                user_input = click.prompt(prompt.strip(), default='', show_default=False)
+            except (EOFError, click.exceptions.Abort):
+                return ('abort', None)
+            if not user_input:
+                return ('skip', None)
+            return ('url', user_input)
+
+        if ch in ('\r', '\n'):
+            # Enter key
+            print()
+            if chars:
+                return ('url', ''.join(chars))
+            return ('skip', None)
+
+        if ch in ('\x08', '\x7f'):
+            # Backspace key
+            if chars:
+                chars.pop()
+                print('\b \b', end='', flush=True)
+            else:
+                # Backspace on an empty line = mark as lost
+                print()
+                return ('lost', None)
+            continue
+
+        if ch == '\x03':
+            # Ctrl+C — abort, skip all remaining
+            print()
+            return ('abort', None)
+
+        # Regular character: echo and accumulate. Skip other control chars.
+        if ord(ch) < 32:
+            continue
+        chars.append(ch)
+        print(ch, end='', flush=True)
+
+
+def _write_lost_song(lost_songs_path: str, row_dict: Dict[str, str]) -> None:
+    """Append a song row to lost-songs.csv.
+
+    Creates the file with a header row if it doesn't exist yet. The row data
+    comes from the unmatched.csv row for this track, plus a lost_at date.
+
+    Args:
+        lost_songs_path: Path to lost-songs.csv (same directory as
+            unmatched.csv).
+        row_dict: Full row data from unmatched.csv for this track.
+    """
+    fieldnames = [
+        'playlist_name', 'track_id', 'track_name', 'artist_names',
+        'album_name', 'tier_tried', 'spotify_url', 'lost_at',
+    ]
+    row = dict(row_dict)
+    row['lost_at'] = date.today().isoformat()
+
+    file_exists = os.path.exists(lost_songs_path) and os.path.getsize(lost_songs_path) > 0
+
+    with open(lost_songs_path, 'a', encoding='utf-8-sig', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow({k: row.get(k, '') for k in fieldnames})
+
+
+def _read_csv_rows(csv_path: str) -> Dict[str, Dict[str, str]]:
+    """Read all rows from a CSV, keyed by spotify_url.
+
+    Returns a dict mapping spotify_url -> full row dict. Silently returns {}
+    on any read error.
+    """
+    rows: Dict[str, Dict[str, str]] = {}
+    try:
+        with open(csv_path, 'r', encoding='utf-8-sig', newline='') as f:
+            first_line = f.readline()
+            f.seek(0)
+            delimiter = ','
+            for d in (',', ';', '\t', '|'):
+                if d in first_line:
+                    delimiter = d
+                    break
+            reader = csv.DictReader(f, delimiter=delimiter)
+            if reader.fieldnames:
+                reader.fieldnames = [name.strip() for name in reader.fieldnames]
+            for row in reader:
+                url = (row.get('spotify_url') or '').strip()
+                if url:
+                    rows[url] = row
+    except Exception:
+        pass
+    return rows
+
+
+def _remove_from_unmatched_csv(unmatched_csv_path: str, url: str) -> None:
+    """Remove all rows matching the given URL from unmatched.csv, in place.
+
+    Uses an atomic write (write to .tmp, then os.replace) so the file is
+    never left in a partial state if the process is interrupted.
+    """
+    if not os.path.exists(unmatched_csv_path):
+        return
+
+    rows: List[Dict[str, str]] = []
+    fieldnames: Optional[List[str]] = None
+
+    with open(unmatched_csv_path, 'r', encoding='utf-8-sig', newline='') as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        for row in reader:
+            if (row.get('spotify_url') or '').strip() != url:
+                rows.append(row)
+
+    if not fieldnames:
+        return
+
+    tmp = unmatched_csv_path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8-sig', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    os.replace(tmp, unmatched_csv_path)
 
 
 def _log_urls(filename: str, urls: List[str], reason: Optional[str] = None) -> None:
@@ -31,6 +223,29 @@ def _log_urls(filename: str, urls: List[str], reason: Optional[str] = None) -> N
             f.write(line + '\n')
 
 
+def _read_lost_song_urls(lost_songs_path: str) -> set:
+    """Read URLs from lost-songs.csv. Returns a set of URLs.
+
+    lost-songs.csv lives next to unmatched.csv and is populated when the user
+    presses Backspace during manual fallback to mark a track as lost. Shared by
+    both the Spotify and SoundCloud download entry points so a track marked as
+    lost for one service isn't re-downloaded on subsequent runs.
+    """
+    if not lost_songs_path or not os.path.exists(lost_songs_path):
+        return set()
+    urls = set()
+    try:
+        with open(lost_songs_path, "r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                url = (row.get("spotify_url") or "").strip()
+                if url:
+                    urls.add(url)
+    except Exception as e:
+        print(f"warning: failed to read lost-songs.csv {lost_songs_path}: {e}")
+    return urls
+
+
 def process_fallback(
     batch: List[str],
     metadata: Dict[str, Dict[str, Any]],
@@ -40,7 +255,7 @@ def process_fallback(
     cookies_from_browser: Optional[str],
     resolved_ffmpeg: str,
     library_index: Optional[Dict[str, Any]] = None,
-    is_spotify: bool = True
+    unmatched_csv_path: Optional[str] = None,
 ) -> tuple[List[str], List[str], bool]:
     """Process fallback for a batch of failed URLs.
 
@@ -53,7 +268,9 @@ def process_fallback(
         cookies_from_browser: Browser to get cookies from
         resolved_ffmpeg: Path to ffmpeg executable
         library_index: Index of existing files (for existence check)
-        is_spotify: Whether processing Spotify (True) or SoundCloud (False) URLs
+        unmatched_csv_path: Optional path to the unmatched.csv being processed.
+            When a track is marked as lost (backspace), its row is appended to
+            lost-songs.csv (next to unmatched.csv) and removed from unmatched.csv.
 
     Returns:
         Tuple of (successful_urls, failed_urls, batch_succeeded_via_fallback)
@@ -62,74 +279,93 @@ def process_fallback(
     fallback_succeeded = []
     fallback_failed = []
     fallback_skipped = []
+    fallback_lost = []
     skip_all_remaining = False  # Track if user wants to skip all remaining downloads
 
-    # Determine metadata keys based on service
-    artist_key = 'artist' if is_spotify else 'uploader'
-    track_key = 'track' if is_spotify else 'title'
-
-    for url in batch:
-        fallback_succeeded, fallback_failed, fallback_skipped, skip_all_remaining = _process_fallback_url(
-            url, metadata, artist_key, track_key, is_spotify, format, output_dir,
-            overwrite_errors, cookies_from_browser, resolved_ffmpeg, library_index,
-            fallback_succeeded, fallback_failed, fallback_skipped, skip_all_remaining
+    # Build URL -> full row mapping from unmatched.csv (for lost-songs.csv)
+    rows_by_url: Dict[str, Dict[str, str]] = {}
+    lost_songs_path: Optional[str] = None
+    if unmatched_csv_path:
+        rows_by_url = _read_csv_rows(unmatched_csv_path)
+        lost_songs_path = os.path.join(
+            os.path.dirname(os.path.abspath(unmatched_csv_path)), "lost-songs.csv"
         )
 
+    for url in batch:
+        fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost, skip_all_remaining = _process_fallback_url(
+            url, metadata, format, output_dir,
+            overwrite_errors, cookies_from_browser, resolved_ffmpeg, library_index,
+            rows_by_url.get(url, {}), lost_songs_path, unmatched_csv_path,
+            fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost, skip_all_remaining
+        )
+
+        if skip_all_remaining:
+            # Mark any remaining URLs as skipped
+            remaining = batch[batch.index(url) + 1:]
+            for remaining_url in remaining:
+                fallback_skipped.append(remaining_url)
+            break
+
     # Determine if batch succeeded via fallback
-    # Only actual failures matter, not intentional skips
-    # The batch succeeds via fallback only if there are no failures AND no skips
-    # (if user skips, we consider that as not succeeding via fallback)
-    batch_succeeded_via_fallback = len(fallback_failed) == 0 and len(fallback_skipped) == 0
+    # No failures, no skips, and no lost marks means the batch fully succeeded
+    batch_succeeded_via_fallback = (
+        len(fallback_failed) == 0
+        and len(fallback_skipped) == 0
+        and len(fallback_lost) == 0
+    )
 
     if fallback_failed:
         print(f"  Fallback failed for {len(fallback_failed)} URL(s) in batch.")
-        # Log the failed URLs
+        # Log the failed URLs (only genuine failures, not intentional skips/lost)
         _log_urls('soft_failures.txt', fallback_failed, reason='fallback_failed')
+    if fallback_lost:
+        print(f"  Marked {len(fallback_lost)} URL(s) as lost (added to lost-songs.csv, removed from unmatched.csv).")
     elif fallback_skipped:
         print(f"  Skipped fallback for {len(fallback_skipped)} URL(s) in batch.")
     else:
         print("  All URLs in batch succeeded via fallback.")
 
-    # For return value, combine failed and skipped URLs as "failed" to maintain test compatibility
-    # but keep logging separate (only actual failures are logged)
+    # For return value, combine failed and skipped URLs as "failed" to maintain
+    # test compatibility. Lost URLs are intentional, not failures, so they are
+    # not included here and are not logged to soft_failures.txt.
     total_failed = fallback_failed + fallback_skipped
     return fallback_succeeded, total_failed, batch_succeeded_via_fallback
 
 
-def _process_fallback_url(url, metadata, artist_key, track_key, is_spotify, format, output_dir,
+def _process_fallback_url(url, metadata, format, output_dir,
                          overwrite_errors, cookies_from_browser, resolved_ffmpeg, library_index,
-                         fallback_succeeded, fallback_failed, fallback_skipped, skip_all_remaining):
+                         row_dict, lost_songs_path, unmatched_csv_path,
+                         fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost, skip_all_remaining):
     """Process a single URL in the fallback batch.
 
     Args:
         url: The URL to process
         metadata: Metadata dictionary mapping URLs to track info
-        artist_key: Key for artist metadata ('artist' for Spotify, 'uploader' for SoundCloud)
-        track_key: Key for track metadata ('track' for Spotify, 'title' for SoundCloud)
-        is_spotify: Whether processing Spotify (True) or SoundCloud (False) URLs
         format: Audio format for downloads
         output_dir: Directory to save downloaded/copied files
         overwrite_errors: Whether to overwrite existing files
         cookies_from_browser: Browser to get cookies from
         resolved_ffmpeg: Path to ffmpeg executable
         library_index: Index of existing files (for existence check)
-        fallback_succeeded, fallback_failed, fallback_skipped: Lists to update
+        row_dict: Full unmatched.csv row dict for this URL (used when marking as lost)
+        lost_songs_path: Path to lost-songs.csv (None if unmatched_csv_path not provided)
+        unmatched_csv_path: Path to unmatched.csv (rows are removed from here when marked lost)
+        fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost: Lists to update
         skip_all_remaining: Boolean tracking if user wants to skip all remaining downloads
 
     Returns:
-        Tuple of (updated fallback_succeeded, fallback_failed, fallback_skipped, skip_all_remaining)
+        Tuple of (updated fallback_succeeded, fallback_failed, fallback_skipped,
+        fallback_lost, skip_all_remaining)
     """
-    from lib.text import normalize_artist
-
     meta = metadata.get(url) or {}
-    artist = meta.get(artist_key, '')
-    track = meta.get(track_key, '')
+    artist = meta.get('artist', '')
+    track = meta.get('track', '')
 
     # If user chose to skip all remaining, skip this URL without prompting
     if skip_all_remaining:
         print(f"  Skipping all remaining downloads (including '{artist} - {track}') due to previous skip-all.")
         fallback_skipped.append(url)
-        return fallback_succeeded, fallback_failed, fallback_skipped, skip_all_remaining
+        return fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost, skip_all_remaining
 
     if not artist or not track:
         if not metadata:
@@ -137,28 +373,19 @@ def _process_fallback_url(url, metadata, artist_key, track_key, is_spotify, form
         elif url not in metadata:
             why = "this url isn't in the loaded csv metadata (url mismatch?)"
         else:
-            why = f"csv row has no {artist_key}/{track_key} values"
+            why = "csv row has no artist/track values"
         print(f"  Skipping fallback for URL with missing metadata: {url}\n    -> {why}")
         fallback_failed.append(url)
-        return fallback_succeeded, fallback_failed, fallback_skipped, skip_all_remaining
+        return fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost, skip_all_remaining
 
-    # Normalize artist and track metadata for consistent formatting
-    artist = normalize_artist(artist)
-    track = normalize_artist(track)
+    # Normalize artist and track metadata for consistent formatting.
+    # read_csv_metadata always stores 'artist'/'track' keys regardless of
+    # service; is_spotify only affects the filename template below.
+    artist = meta.get('artist', '')
+    track = meta.get('track', '')
 
     # Predict output filename
-    if is_spotify:
-        predicted = predict_output_filename(artist, track, format)
-    else:
-        # For SoundCloud, we need additional metadata
-        set_name = meta.get('set_name', None)
-        set_position = meta.get('set_position', None)
-        if set_name and set_position is not None:
-            # Playlist template
-            predicted = f"{set_name}/{set_position:02d} - {artist} - {track}.{format}"
-        else:
-            # Single template
-            predicted = f"{artist} - {track}.{format}"
+    predicted = predict_output_filename(artist, track, format)
 
     stem = os.path.splitext(predicted)[0]
 
@@ -166,48 +393,40 @@ def _process_fallback_url(url, metadata, artist_key, track_key, is_spotify, form
     if library_index is not None and normalize_key(stem) in library_index:
         print(f"  File already exists (via pre-skip): {predicted}")
         fallback_succeeded.append(url)
-        return fallback_succeeded, fallback_failed, fallback_skipped, skip_all_remaining
+        return fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost, skip_all_remaining
 
     # Get user input for fallback source
-    user_input, skip_all_remaining = _get_fallback_user_input(artist, track, skip_all_remaining)
-    if not user_input:
+    action, user_input = _read_fallback_input(artist, track)
+
+    if action == 'abort':
+        # Ctrl+C: skip all remaining downloads
+        skip_all_remaining = True
+        print("  Skipping all remaining downloads.")
+        fallback_skipped.append(url)
+        return fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost, skip_all_remaining
+
+    if action == 'lost':
+        # Backspace: mark as lost — append to lost-songs.csv and remove from unmatched.csv
+        print(f"  Marking '{artist} - {track}' as lost.")
+        if lost_songs_path and row_dict:
+            _write_lost_song(lost_songs_path, row_dict)
+        if unmatched_csv_path:
+            _remove_from_unmatched_csv(unmatched_csv_path, url)
+        fallback_lost.append(url)
+        return fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost, skip_all_remaining
+
+    if action == 'skip':
         print(f"  Skipping fallback for '{artist} - {track}'.")
         fallback_skipped.append(url)
-        return fallback_succeeded, fallback_failed, fallback_skipped, skip_all_remaining
+        return fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost, skip_all_remaining
 
-    # Process the user input (URL or local file)
+    # action == 'url': process the user input (URL or local file)
     fallback_succeeded, fallback_failed = _process_fallback_input(
         user_input, artist, track, format, output_dir, overwrite_errors,
         cookies_from_browser, resolved_ffmpeg, fallback_succeeded, fallback_failed, url, predicted
     )
 
-    return fallback_succeeded, fallback_failed, fallback_skipped, skip_all_remaining
-
-
-def _get_fallback_user_input(artist, track, skip_all_remaining):
-    """Get user input for fallback source and handle skip-all logic.
-
-    Args:
-        artist: Artist name
-        track: Track name
-        skip_all_remaining: Current skip-all-remaining flag
-
-    Returns:
-        Tuple of (user_input, updated_skip_all_remaining)
-    """
-
-    # Prompt user for fallback source
-    try:
-        user_input = click.prompt(
-            f"Enter a URL or local file path to download '{artist} - {track}' instead (or press Enter to skip)",
-            default='', show_default=False
-        )
-    except (EOFError, click.exceptions.Abort):
-        # Treat as empty input (skip) - also set flag to skip all remaining downloads
-        user_input = ''
-        skip_all_remaining = True
-
-    return user_input, skip_all_remaining
+    return fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost, skip_all_remaining
 
 
 def _process_fallback_input(user_input, artist, track, format, output_dir,
