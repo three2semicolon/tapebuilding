@@ -107,13 +107,10 @@ def _handle_soundcloud_export(export_type, set_ids, playlists_file, output, user
         likes = export_likes(None, soundcloud_user, export_dir)  # sp=None for soundcloud
         click.echo(f"exported {len(likes)} likes")
     elif export_type == "sets":
-        identifiers = list(set_ids)
-        if playlists_file:
-            with open(playlists_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#"):
-                        identifiers.append(line)
+        # CLI option takes precedence; fall back to SOUNDCLOUD_PLAYLISTS_FILE env var
+        if not playlists_file:
+            playlists_file = config.SOUNDCLOUD_PLAYLISTS_FILE
+        identifiers = _process_export_parameters(set_ids, playlists_file)
         if not identifiers:
             click.echo("error: --set-ids or --playlists-file required for --type sets", err=True)
             sys.exit(1)

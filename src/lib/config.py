@@ -61,6 +61,8 @@ _SETTINGS = {
     "SPOTAPI_DELAY": (_as_float, 0.15),
     # profile
     "SOUNDCLOUD_USER": (None, "me"),
+    "SOUNDCLOUD_PLAYLISTS_FILE": (None, None),
+    "SOUNDCLOUD_COOKIES_FILE": (None, None),
     # paths - lib.paths.resolve() still owns cli > env > default precedence
     "ARCHIVE_PATH": (None, None),
     "TAPEDECK_PATH": (None, None),

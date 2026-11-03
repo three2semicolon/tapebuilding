@@ -106,20 +106,14 @@ def process_unmatched_cmd(archive_path_opt, playlists_path_opt, exports_dir_opt,
     if not result['ok']:
         sys.exit(1)
 
-    # If --clean flag is used, run organize cleanup after successful download
-    # (for download+import commands like core download and process-unmatched)
     if clean:
         if verbose:
             click.echo("Download completed successfully. Running organize cleanup to organize the crate...")
-        # Invoke the cleanup command with --apply flag matching the download command's --apply flag
         try:
-            # Create a context for the cleanup command
             ctx = click.get_current_context(silent=True)
             if ctx:
-                # We're already in a click context, invoke the cleanup subcommand
                 ctx.invoke(cleanup_cmd, apply=apply, verbose=verbose)
             else:
-                # Fallback: call cleanup directly (though this won't work perfectly without click context)
                 click.echo("warning: Cannot invoke organize cleanup from within another command", err=True)
         except Exception as e:
             click.echo(f"warning: Failed to run organize cleanup: {e}", err=True)

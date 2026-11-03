@@ -7,6 +7,7 @@ import os
 import re
 import json
 import csv
+from urllib.parse import urlparse
 
 import yt_dlp
 from lib.text import normalize_key
@@ -81,6 +82,47 @@ def _extract_info(url, cookies_from_browser=None):
         ydl_opts['cookiesfrombrowser'] = (cookies_from_browser,)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         return ydl.extract_info(url, download=False)
+
+
+def _extract_info_full(url, cookies_from_browser=None):
+    """Extract info from url using yt-dlp without extract_flat (full metadata).
+
+    Used to resolve real SoundCloud track titles when flat extraction only
+    returned the URL slug.
+    """
+    ydl_opts = {
+        'quiet': True,
+        'skip_download': True,
+    }
+    if cookies_from_browser:
+        ydl_opts['cookiesfrombrowser'] = (cookies_from_browser,)
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        return ydl.extract_info(url, download=False)
+
+
+def _url_slug(url):
+    """Extract the last path component from a URL as a potential slug."""
+    if not url:
+        return ''
+    path = urlparse(url).path
+    return path.rstrip('/').split('/')[-1]
+
+
+def _title_looks_like_url_slug(title, url):
+    """Check if title appears to be a URL slug rather than a real track title.
+
+    yt-dlp's flat extraction for SoundCloud sometimes returns the URL's last
+    path component (e.g. "charizard" from .../shamanabeats/charizard) as the
+    title instead of the actual track title.
+    """
+    if not title or not url:
+        return False
+    slug = _url_slug(url)
+    if not slug:
+        return False
+    title_norm = title.lower().replace('-', ' ').replace('_', ' ').strip()
+    slug_norm = slug.lower().replace('-', ' ').replace('_', ' ').strip()
+    return title_norm == slug_norm and title_norm != ''
 
 
 def list_user_sets(profile_url_or_username, cookies_from_browser=None):
@@ -223,24 +265,24 @@ def _apply_url_fallback(name, uploader, url):
 
 
 def _fetch_metadata_if_needed(name, uploader, url, cookies_from_browser):
-    """Fetch metadata for API URLs if needed.
+    """Fetch metadata for SoundCloud URLs if needed.
 
-    Args:
-        name: Current track name
-        uploader: Current uploader
-        url: Track URL
-        cookies_from_browser: Browser to get cookies from
-
-    Returns:
-        Tuple of (updated_name, updated_uploader)
+    When yt-dlp's flat extraction returns a URL slug as the title (or no title
+    or uploader at all), do a full extraction to get the real track title and
+    uploader. Applies to both regular SoundCloud URLs and API-v2 track URLs.
+    Errors are caught and swallowed so a bad track doesn't fail the whole set.
     """
-    if url and url.startswith('https://api-v2.soundcloud.com/tracks/'):
-        if not name or not uploader:
-            meta = _extract_info(url, cookies_from_browser)
+    if url and 'soundcloud.com' in url:
+        title_is_slug = _title_looks_like_url_slug(name, url)
+        if not name or not uploader or title_is_slug:
+            try:
+                meta = _extract_info_full(url, cookies_from_browser)
+            except Exception:
+                return name, uploader
             if meta:
-                if not name:
+                if not name or title_is_slug:
                     name = meta.get('title', '')
-                if not uploader:
+                if not uploader or title_is_slug:
                     uploader = meta.get('uploader', '')
     return name, uploader
 

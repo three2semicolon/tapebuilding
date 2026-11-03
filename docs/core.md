@@ -57,6 +57,8 @@ core process-unmatched --apply
 core process-unmatched --archive-path <crate>
 core process-unmatched --service spotify --exclude "_orc"
 core process-unmatched --apply --format flac --bitrate 1000k
+core process-unmatched --apply --service soundcloud             # rescrape soundcloud sets, download unmatched, import, sync
+core process-unmatched --apply --service soundcloud --manual    # manual mode: prompt for each unmatched track's source
 ```
 
 options:
@@ -75,8 +77,8 @@ options:
 
 workflow steps:
 
-1. **refresh playlists**: rescrapes spotify data and rebuilds local `.m3u8`s with `--reindex` to generate fresh `unmatched.csv`
-2. **download**: downloads tracks listed in the unmatched csv to `<crate>/unorganized`
+1. **refresh playlists**: rescrapes service data and rebuilds local `.m3u8`s with `--reindex` to generate fresh `unmatched.csv`. for spotify, rescrape pulls all owned playlists via the spotify api; for soundcloud, rescrape pulls all sets for `soundcloud_user` unless `soundcloud_playlists_file` is set, in which case only the sets listed in that file are re-scraped.
+2. **download**: downloads tracks listed in the unmatched csv to `<crate>/unorganized`. for soundcloud, metadata uses `uploader`/`title` keys and is translated for fallback mode.
 3. **import**: imports the downloaded files into the library crate via beets
 4. **sync playlists**: rebuilds local `.m3u8`s from the updated library (no rescrape)
 

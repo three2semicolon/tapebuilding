@@ -168,7 +168,6 @@ def _resolve_paths(archive_path_opt, playlists_path_opt, exports_dir_opt, servic
 
 
 def _download_step(
-    skip_initial_playlist_refresh,
     service_exports_dir,
     unorganized_dir,
     format,
@@ -203,57 +202,55 @@ def _download_step(
     Returns:
         None (results are recorded via the record function)
     """
-    if skip_initial_playlist_refresh:
-        record("download", True, skipped=True)  # Completely skip download step
-    else:
-        # Normal behavior: proceed if previous step was successful
-        if "refresh-playlists" in [r["step"] for r in results if r["ok"]]:
-            print("=== step 2: download from unmatched CSV ===")
-            unmatched_csv_path = os.path.join(service_exports_dir, "unmatched.csv")
-            if not os.path.exists(unmatched_csv_path):
-                record("download", False, error="unmatched CSV not found")
-            else:
-                try:
-                    # Configure download options
-                    # Dispatch to the service-specific download entry point.
-                    if service == "soundcloud":
-                        ok = download_soundcloud(
-                            url_file=unmatched_csv_path,
-                            output_dir=unorganized_dir,
-                            format=format,
-                            bitrate=bitrate,
-                            cookie_file=cookies_file,
-                            pre_skip_existing=pre_skip_existing,
-                            retries=retries,
-                            validate_only=not apply,  # Dry run mode
-                            debug=verbose,
-                            manual=manual,
-                        )
-                    else:  # spotify (default)
-                        ok = download_spotify(
-                            url_file=unmatched_csv_path,
-                            output_dir=unorganized_dir,
-                            format=format,
-                            bitrate=bitrate,
-                            cookie_file=cookies_file,
-                            pre_skip_existing=pre_skip_existing,
-                            retries=retries,
-                            validate_only=not apply,  # Dry run mode
-                            debug=verbose,
-                            manual=manual,
-                        )
-                    record("download", ok)
-                except Exception as e:
-                    record("download", False, error=str(e))
+    # Proceed if previous step was successful. When --skip-initial-playlist-refresh
+    # is set, step 1 checks whether unmatched.csv already exists from a prior run
+    # and records ok if so; here we download from that existing CSV.
+    if "refresh-playlists" in [r["step"] for r in results if r["ok"]]:
+        print("=== step 2: download from unmatched CSV ===")
+        unmatched_csv_path = os.path.join(service_exports_dir, "unmatched.csv")
+        if not os.path.exists(unmatched_csv_path):
+            record("download", False, error="unmatched CSV not found")
         else:
-            record("download", True, skipped=True)  # Skip if previous step failed
+            try:
+                # Configure download options
+                # Dispatch to the service-specific download entry point.
+                if service == "soundcloud":
+                    ok = download_soundcloud(
+                        url_file=unmatched_csv_path,
+                        output_dir=unorganized_dir,
+                        format=format,
+                        bitrate=bitrate,
+                        cookie_file=cookies_file,
+                        pre_skip_existing=pre_skip_existing,
+                        retries=retries,
+                        validate_only=not apply,  # Dry run mode
+                        debug=verbose,
+                        manual=manual,
+                    )
+                else:  # spotify (default)
+                    ok = download_spotify(
+                        url_file=unmatched_csv_path,
+                        output_dir=unorganized_dir,
+                        format=format,
+                        bitrate=bitrate,
+                        cookie_file=cookies_file,
+                        pre_skip_existing=pre_skip_existing,
+                        retries=retries,
+                        validate_only=not apply,  # Dry run mode
+                        debug=verbose,
+                        manual=manual,
+                    )
+                record("download", ok)
+            except Exception as e:
+                record("download", False, error=str(e))
+    else:
+        record("download", True, skipped=True)  # Skip if previous step failed
 
 
-def _import_step(skip_initial_playlist_refresh, unorganized_dir, crate, apply, verbose, record, results):
+def _import_step(unorganized_dir, crate, apply, verbose, record, results):
     """Handle the import step of the unmatched tracks processing pipeline.
 
     Args:
-        skip_initial_playlist_refresh: Whether to skip the initial playlist refresh
         unorganized_dir: Path to the unorganized directory
         crate: Path to the crate/archive directory
         apply: Whether to apply changes or just show what would be done
@@ -264,22 +261,20 @@ def _import_step(skip_initial_playlist_refresh, unorganized_dir, crate, apply, v
     Returns:
         None (results are recorded via the record function)
     """
-    # When skip_initial_playlist_refresh is True, we skip import entirely
-    if skip_initial_playlist_refresh:
-        record("import", True, skipped=True)  # Completely skip import step
+    # Proceed if download was attempted (not skipped). When
+    # --skip-initial-playlist-refresh is set and unmatched.csv exists from a
+    # prior run, download runs normally above and gets marked as attempted.
+    download_attempted = any(r["step"] == "download" and not r["skipped"] for r in results)
+    if download_attempted:
+        print("=== step 3: import downloaded files ===")
+        try:
+            import_result = run_import(input_dir=unorganized_dir, output_dir=crate, dry_run=not apply, verbose=verbose)
+            ok = import_result.get("ok", False)
+            record("import", ok)
+        except Exception as e:
+            record("import", False, error=str(e))
     else:
-        # Normal behavior: proceed if download was attempted (not skipped)
-        download_attempted = any(r["step"] == "download" and not r["skipped"] for r in results)
-        if download_attempted:
-            print("=== step 3: import downloaded files ===")
-            try:
-                import_result = run_import(input_dir=unorganized_dir, output_dir=crate, dry_run=not apply, verbose=verbose)
-                ok = import_result.get("ok", False)
-                record("import", ok)
-            except Exception as e:
-                record("import", False, error=str(e))
-        else:
-            record("import", True, skipped=True)  # Skip if download failed/skipped
+        record("import", True, skipped=True)  # Skip if download failed/skipped
 
 
 def _sync_playlists_step(
@@ -429,9 +424,9 @@ def run_process_unmatched(
     print()
 
     # Step 2: Download from unmatched CSV (if it exists and we're not in dry-run or it exists)
-    # When skip_initial_playlist_refresh is True, we skip download entirely
+    # When --skip-initial-playlist-refresh was used, step 1 reuses an existing
+    # unmatched.csv from a prior run, and this step downloads from it normally.
     _download_step(
-        skip_initial_playlist_refresh,
         service_exports_dir,
         unorganized_dir,
         format,
@@ -449,8 +444,7 @@ def run_process_unmatched(
     print()
 
     # Step 3: Import downloaded files
-    # When skip_initial_playlist_refresh is True, we skip import entirely
-    _import_step(skip_initial_playlist_refresh, unorganized_dir, crate, apply, verbose, record, results)
+    _import_step(unorganized_dir, crate, apply, verbose, record, results)
     print()
 
     # Step 4: Refresh playlists (reindex only) to sync with updated library
