@@ -82,6 +82,8 @@ def _refresh_playlists_step(
     playlists_path_resolved,
     exports_dir_opt,
     record,
+    cookies_file=None,
+    cookies_from_browser=None,
 ):
     """Handle the refresh playlists step of the unmatched tracks processing pipeline.
 
@@ -96,6 +98,7 @@ def _refresh_playlists_step(
         playlists_path_resolved: Resolved playlists path
         exports_dir_opt: Optional exports directory override
         record: Function to record step results
+        cookies_file: Optional path to Netscape-format cookies file (soundcloud rescrape)
 
     Returns:
         None (results are recorded via the record function)
@@ -113,6 +116,8 @@ def _refresh_playlists_step(
         print("=== step 1: refresh playlists (rescrape/reindex) ===")
         try:
             # Note: build_playlists always returns True, but we check if unmatched CSV is generated
+            # For SoundCloud rescrape, pass cookie file if configured
+            sc_cookie_file = cookies_file or (config.SOUNDCLOUD_COOKIES_FILE if service == "soundcloud" else None)
             build_playlists(
                 apply=apply,
                 rescrape=True,  # Rescrape from Spotify to get latest data
@@ -124,6 +129,8 @@ def _refresh_playlists_step(
                 playlists_path=playlists_path_resolved,
                 exports_dir=exports_dir_opt,
                 verbose=verbose,
+                cookie_file=sc_cookie_file,
+                cookies_from_browser=cookies_from_browser,
             )
 
             # Check if unmatched CSV was created
@@ -378,6 +385,7 @@ def run_process_unmatched(
     format="mp3",
     bitrate="320k",
     cookies_file=None,
+    cookies_from_browser=None,
     pre_skip_existing=False,
     retries=0,
     manual=False,
@@ -420,6 +428,8 @@ def run_process_unmatched(
         playlists_path_resolved,
         exports_dir_opt,
         record,
+        cookies_file=cookies_file,
+        cookies_from_browser=cookies_from_browser,
     )
     print()
 

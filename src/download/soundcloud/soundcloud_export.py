@@ -71,20 +71,24 @@ def _extract_artist_title_from_url(url):
     return None, None
 
 
-def _extract_info(url, cookies_from_browser=None):
+def _extract_info(url, cookies_from_browser=None, cookie_file=None):
     """Extract info from url using yt-dlp with extract_flat=True."""
     ydl_opts = {
         'quiet': True,
         'extract_flat': True,
         'skip_download': True,
+        'extractor_retries': 3,
+        'sleep_interval_requests': 0.5,
     }
     if cookies_from_browser:
         ydl_opts['cookiesfrombrowser'] = (cookies_from_browser,)
+    if cookie_file:
+        ydl_opts['cookies'] = cookie_file
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         return ydl.extract_info(url, download=False)
 
 
-def _extract_info_full(url, cookies_from_browser=None):
+def _extract_info_full(url, cookies_from_browser=None, cookie_file=None):
     """Extract info from url using yt-dlp without extract_flat (full metadata).
 
     Used to resolve real SoundCloud track titles when flat extraction only
@@ -93,9 +97,13 @@ def _extract_info_full(url, cookies_from_browser=None):
     ydl_opts = {
         'quiet': True,
         'skip_download': True,
+        'extractor_retries': 3,
+        'sleep_interval_requests': 0.5,
     }
     if cookies_from_browser:
         ydl_opts['cookiesfrombrowser'] = (cookies_from_browser,)
+    if cookie_file:
+        ydl_opts['cookies'] = cookie_file
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         return ydl.extract_info(url, download=False)
 
@@ -125,13 +133,13 @@ def _title_looks_like_url_slug(title, url):
     return title_norm == slug_norm and title_norm != ''
 
 
-def list_user_sets(profile_url_or_username, cookies_from_browser=None):
+def list_user_sets(profile_url_or_username, cookies_from_browser=None, cookie_file=None):
     """Return list of dicts for each set: {'name', 'url', 'track_count'}."""
     # Normalize to URL
     if not profile_url_or_username.startswith('http'):
         profile_url_or_username = f'https://soundcloud.com/{profile_url_or_username}/sets'
     try:
-        info = _extract_info(profile_url_or_username, cookies_from_browser)
+        info = _extract_info(profile_url_or_username, cookies_from_browser, cookie_file)
     except Exception as e:
         print(f"warning: failed to fetch sets for user {profile_url_or_username}: {e}")
         return []
@@ -152,20 +160,20 @@ def list_user_sets(profile_url_or_username, cookies_from_browser=None):
     return sets
 
 
-def list_user_likes(profile_url_or_username, cookies_from_browser=None):
+def list_user_likes(profile_url_or_username, cookies_from_browser=None, cookie_file=None):
     """Return list of dicts for each liked track: analogous to a set of one track."""
     # Normalize the profile URL
     profile_url = _normalize_profile_url(profile_url_or_username)
 
     # Fetch user info
-    info = _fetch_user_info(profile_url, cookies_from_browser)
+    info = _fetch_user_info(profile_url, cookies_from_browser, cookie_file)
     if not info:
         return []
 
     # Process entries
     likes = []
     for entry in info.get('entries', []):
-        like = _process_like_entry(entry, profile_url_or_username, cookies_from_browser)
+        like = _process_like_entry(entry, profile_url_or_username, cookies_from_browser, cookie_file)
         if like:
             likes.append(like)
     return likes
@@ -185,18 +193,19 @@ def _normalize_profile_url(profile_url_or_username):
     return profile_url_or_username
 
 
-def _fetch_user_info(profile_url, cookies_from_browser=None):
+def _fetch_user_info(profile_url, cookies_from_browser=None, cookie_file=None):
     """Fetch user info from SoundCloud API.
 
     Args:
         profile_url: Normalized profile URL
         cookies_from_browser: Browser to get cookies from
+        cookie_file: Path to Netscape-format cookies file
 
     Returns:
         Info dictionary or None if failed
     """
     try:
-        info = _extract_info(profile_url, cookies_from_browser)
+        info = _extract_info(profile_url, cookies_from_browser, cookie_file)
     except Exception as e:
         print(f"warning: failed to fetch likes for user {profile_url}: {e}")
         return None
@@ -206,13 +215,14 @@ def _fetch_user_info(profile_url, cookies_from_browser=None):
     return info
 
 
-def _process_like_entry(entry, profile_url_or_username, cookies_from_browser=None):
+def _process_like_entry(entry, profile_url_or_username, cookies_from_browser=None, cookie_file=None):
     """Process a single like entry and return a formatted like dictionary.
 
     Args:
         entry: Entry dictionary from yt-dlp extraction
         profile_url_or_username: Original profile URL or username for error messages
         cookies_from_browser: Browser to get cookies from
+        cookie_file: Path to Netscape-format cookies file
 
     Returns:
         Formatted like dictionary or None if processing failed
@@ -227,7 +237,7 @@ def _process_like_entry(entry, profile_url_or_username, cookies_from_browser=Non
         name, uploader = _apply_url_fallback(name, uploader, url)
 
         # Fetch metadata for API URLs if needed
-        name, uploader = _fetch_metadata_if_needed(name, uploader, url, cookies_from_browser)
+        name, uploader = _fetch_metadata_if_needed(name, uploader, url, cookies_from_browser, cookie_file)
 
         # Get artist name
         artist_name = _get_artist_name(entry.get('artist', ''), uploader)
@@ -264,7 +274,7 @@ def _apply_url_fallback(name, uploader, url):
     return name, uploader
 
 
-def _fetch_metadata_if_needed(name, uploader, url, cookies_from_browser):
+def _fetch_metadata_if_needed(name, uploader, url, cookies_from_browser=None, cookie_file=None):
     """Fetch metadata for SoundCloud URLs if needed.
 
     When yt-dlp's flat extraction returns a URL slug as the title (or no title
@@ -276,7 +286,7 @@ def _fetch_metadata_if_needed(name, uploader, url, cookies_from_browser):
         title_is_slug = _title_looks_like_url_slug(name, url)
         if not name or not uploader or title_is_slug:
             try:
-                meta = _extract_info_full(url, cookies_from_browser)
+                meta = _extract_info_full(url, cookies_from_browser, cookie_file)
             except Exception:
                 return name, uploader
             if meta:
@@ -305,34 +315,35 @@ def _get_artist_name(artist_field, uploader):
     return artist_name
 
 
-def export_set(set_url, cookies_from_browser=None):
+def export_set(set_url, cookies_from_browser=None, cookie_file=None):
     """Export one set to track rows: each dict with 'title', 'uploader', 'track_url', 'position'."""
     # Extract and validate info
-    info = _extract_and_validate_set_info(set_url, cookies_from_browser)
+    info = _extract_and_validate_set_info(set_url, cookies_from_browser, cookie_file)
     if not info:
         return []
 
     # Process tracks
     tracks = []
     for i, entry in enumerate(info.get('entries', []), start=1):
-        track = _process_set_entry(entry, i, set_url, cookies_from_browser)
+        track = _process_set_entry(entry, i, set_url, cookies_from_browser, cookie_file)
         if track:
             tracks.append(track)
     return tracks
 
 
-def _extract_and_validate_set_info(set_url, cookies_from_browser=None):
+def _extract_and_validate_set_info(set_url, cookies_from_browser=None, cookie_file=None):
     """Extract and validate set info from SoundCloud API.
 
     Args:
         set_url: URL of the set to export
         cookies_from_browser: Browser to get cookies from
+        cookie_file: Path to Netscape-format cookies file
 
     Returns:
         Info dictionary or None if failed/empty
     """
     try:
-        info = _extract_info(set_url, cookies_from_browser)
+        info = _extract_info(set_url, cookies_from_browser, cookie_file)
     except Exception as e:
         print(f"warning: failed to fetch set info for {set_url}: {e}")
         return None
@@ -341,7 +352,7 @@ def _extract_and_validate_set_info(set_url, cookies_from_browser=None):
     return info
 
 
-def _process_set_entry(entry, position, set_url, cookies_from_browser=None):
+def _process_set_entry(entry, position, set_url, cookies_from_browser=None, cookie_file=None):
     """Process a single set entry and return a formatted track dictionary.
 
     Args:
@@ -349,6 +360,7 @@ def _process_set_entry(entry, position, set_url, cookies_from_browser=None):
         position: Position/track number in the set
         set_url: Set URL for error messages
         cookies_from_browser: Browser to get cookies from
+        cookie_file: Path to Netscape-format cookies file
 
     Returns:
         Formatted track dictionary or None if processing failed
@@ -363,7 +375,7 @@ def _process_set_entry(entry, position, set_url, cookies_from_browser=None):
         title, uploader = _apply_url_fallback(title, uploader, track_url)
 
         # Fetch metadata for API URLs if needed
-        title, uploader = _fetch_metadata_if_needed(title, uploader, track_url, cookies_from_browser)
+        title, uploader = _fetch_metadata_if_needed(title, uploader, track_url, cookies_from_browser, cookie_file)
 
         # Get artist name
         artist_name = _get_artist_name(entry.get('artist', ''), uploader)
@@ -408,7 +420,7 @@ def merge_and_deduplicate(track_lists):
     return unique_tracks
 
 
-def export_specific_set(sp, set_identifier, export_dir, cookies_from_browser=None):
+def export_specific_set(sp, set_identifier, export_dir, cookies_from_browser=None, cookie_file=None):
     """Export a specific set (url or identifier) to per-set csv/txt.
     Similar to export_specific_playlist in spotify_export.
     """
@@ -422,13 +434,21 @@ def export_specific_set(sp, set_identifier, export_dir, cookies_from_browser=Non
         # Since we don't have a username, we'll treat it as a URL directly.
         # This is a limitation; we'll need to improve later.
         set_url = f'https://soundcloud.com/{set_identifier}'
-    info = _extract_info(set_url, cookies_from_browser)
+    try:
+        info = _extract_info(set_url, cookies_from_browser, cookie_file)
+    except Exception as e:
+        print(f"warning: could not fetch set info for {set_identifier}: {e}, skipping")
+        return []
     if not info:
         print(f"error: could not fetch set info for {set_identifier}")
         return []
     set_name = info.get('title', 'Unknown Set')
     print(f"found set: {set_name}")
-    tracks = export_set(set_url, cookies_from_browser)
+    try:
+        tracks = export_set(set_url, cookies_from_browser, cookie_file)
+    except Exception as e:
+        print(f"warning: could not export tracks for set {set_identifier}: {e}, skipping")
+        return []
     print(f"found {len(tracks)} tracks")
     # Create safe filename
     safe_name = "".join(c for c in set_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
@@ -450,7 +470,7 @@ def export_specific_set(sp, set_identifier, export_dir, cookies_from_browser=Non
     return tracks
 
 
-def export_sets(sp, set_identifiers, export_dir, cookies_from_browser=None, include_likes=False):
+def export_sets(sp, set_identifiers, export_dir, cookies_from_browser=None, cookie_file=None, include_likes=False):
     """Export a list of specific sets (urls or identifiers) -
     each to its own per-set csv/txt, then merge all their tracks into one deduped
     'soundcloud_manifest.csv' + urls txt.
@@ -470,14 +490,17 @@ def export_sets(sp, set_identifiers, export_dir, cookies_from_browser=None, incl
     set_names = {}
 
     for identifier in deduped:
-        # Get set info to retrieve the actual set name
-        info = _extract_info(identifier, cookies_from_browser)
-        set_name = info.get('title', 'Unknown Set') if info else 'Unknown Set'
+        try:
+            # Get set info to retrieve the actual set name
+            info = _extract_info(identifier, cookies_from_browser, cookie_file)
+            set_name = info.get('title', 'Unknown Set') if info else 'Unknown Set'
 
-        tracks = export_specific_set(sp, identifier, export_dir, cookies_from_browser)
-        all_tracks.extend(tracks)
-        tracks_by_set[identifier] = tracks
-        set_names[identifier] = set_name
+            tracks = export_specific_set(sp, identifier, export_dir, cookies_from_browser, cookie_file)
+            all_tracks.extend(tracks)
+            tracks_by_set[identifier] = tracks
+            set_names[identifier] = set_name
+        except Exception as e:
+            print(f"warning: could not process set {identifier}: {e}, skipping")
 
     # Deduplicate across sets
     manifest_tracks = merge_and_deduplicate([all_tracks])
@@ -498,13 +521,13 @@ def export_sets(sp, set_identifiers, export_dir, cookies_from_browser=None, incl
     return manifest_tracks
 
 
-def export_likes(sp, username, export_dir, cookies_from_browser=None):
+def export_likes(sp, username, export_dir, cookies_from_browser=None, cookie_file=None):
     """Export soundcloud likes for a user to CSV and TXT files.
     """
     print(f"fetching soundcloud likes for user: {username}")
 
     # Get likes for the user
-    likes = list_user_likes(username, cookies_from_browser)  # 'me' refers to the authenticated user
+    likes = list_user_likes(username, cookies_from_browser, cookie_file)  # 'me' refers to the authenticated user
     if not likes:
         print("warning: no likes found for user")
         return []
@@ -549,7 +572,10 @@ def export_likes(sp, username, export_dir, cookies_from_browser=None):
     return likes
 
 
-def export_all_data(sp, username, export_dir, cookies_from_browser=None, include_likes=False, my_sets_only=True):
+def export_all_data(
+    sp, username, export_dir, cookies_from_browser=None, cookie_file=None,
+    include_likes=False, my_sets_only=True,
+):
     """Export all sets (and optionally likes) for a user.
     Similar to export_all_data in spotify_export.
     """
@@ -559,7 +585,7 @@ def export_all_data(sp, username, export_dir, cookies_from_browser=None, include
     print(f"fetching all soundcloud sets for user: {username}")
 
     # Get all sets for the user
-    sets = list_user_sets(username, cookies_from_browser)  # 'me' refers to the authenticated user
+    sets = list_user_sets(username, cookies_from_browser, cookie_file)  # 'me' refers to the authenticated user
     if not sets:
         print("warning: no sets found for user")
         sets = []
@@ -572,13 +598,13 @@ def export_all_data(sp, username, export_dir, cookies_from_browser=None, include
     # Export all sets and get the manifest tracks
     manifest_tracks = []
     if set_identifiers:
-        manifest_tracks = export_sets(sp, set_identifiers, export_dir, cookies_from_browser, include_likes=False)
+        manifest_tracks = export_sets(sp, set_identifiers, export_dir, cookies_from_browser, cookie_file, include_likes=False)
         print(f"created manifest from sets with {len(manifest_tracks)} unique tracks")
 
     # Optionally include likes
     if include_likes:
         print("fetching soundcloud likes...")
-        likes = list_user_likes(username, cookies_from_browser)
+        likes = list_user_likes(username, cookies_from_browser, cookie_file)
         if likes:
             print(f"found {len(likes)} liked tracks")
             # Convert likes to the format expected by merge_and_deduplicate

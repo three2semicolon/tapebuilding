@@ -269,7 +269,7 @@ class TestExportSets:
             ]
 
             # Mock the _extract_info function to return set names
-            def mock_extract_info_side_effect(url, cookies_from_browser=None):
+            def mock_extract_info_side_effect(url, cookies_from_browser=None, cookie_file=None):
                 if 'set1' in url:
                     return {'title': 'Set One'}
                 elif 'set2' in url:
@@ -364,10 +364,10 @@ class TestFetchMetadataIfNeeded:
             name, uploader = _fetch_metadata_if_needed(
                 'charizard', '',
                 'https://soundcloud.com/shamanabeats/charizard',
-                None
+                None, None
             )
             mock_full.assert_called_once_with(
-                'https://soundcloud.com/shamanabeats/charizard', None
+                'https://soundcloud.com/shamanabeats/charizard', None, None
             )
             assert name == 'Lost My First Edition Holographic Charizard'
             assert uploader == 'shamana'

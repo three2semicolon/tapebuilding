@@ -89,7 +89,8 @@ def _handle_spotify_export(identifiers, output, mine):
         spotify_export_all_data(sp, export_dir, my_playlists_only=mine)
 
 
-def _handle_soundcloud_export(export_type, set_ids, playlists_file, output, user):
+def _handle_soundcloud_export(export_type, set_ids, playlists_file, output, user,
+                              cookies_from_browser=None, cookie_file=None):
     """Handle SoundCloud export logic.
 
     Args:
@@ -98,13 +99,17 @@ def _handle_soundcloud_export(export_type, set_ids, playlists_file, output, user
         playlists_file: Path to file containing set IDs
         output: Output directory override
         user: SoundCloud username or URL
+        cookies_from_browser: Browser name to pull cookies from (e.g. chrome, firefox).
+        cookie_file: Path to a Netscape-format cookies.txt.
     """
     export_dir = get_export_dir(base_dir=output)
     soundcloud_user = user or config.SOUNDCLOUD_USER  # default to current user
 
     if export_type == "likes":
         click.echo(f"exporting soundcloud likes for user: {soundcloud_user}")
-        likes = export_likes(None, soundcloud_user, export_dir)  # sp=None for soundcloud
+        likes = export_likes(None, soundcloud_user, export_dir,
+                             cookies_from_browser=cookies_from_browser,
+                             cookie_file=cookie_file)  # sp=None for soundcloud
         click.echo(f"exported {len(likes)} likes")
     elif export_type == "sets":
         # CLI option takes precedence; fall back to SOUNDCLOUD_PLAYLISTS_FILE env var
@@ -115,11 +120,15 @@ def _handle_soundcloud_export(export_type, set_ids, playlists_file, output, user
             click.echo("error: --set-ids or --playlists-file required for --type sets", err=True)
             sys.exit(1)
         click.echo(f"exporting {len(identifiers)} specific soundcloud set(s) for user: {soundcloud_user}")
-        unique_tracks = export_sets(None, identifiers, export_dir)  # sp=None for soundcloud
+        unique_tracks = export_sets(None, identifiers, export_dir,
+                                    cookies_from_browser=cookies_from_browser,
+                                    cookie_file=cookie_file)  # sp=None for soundcloud
         click.echo(f"exported {len(unique_tracks)} unique tracks from {len(identifiers)} set(s)")
     elif export_type == "all-sets":
         click.echo(f"exporting all soundcloud sets for user: {soundcloud_user}")
-        unique_tracks = soundcloud_export_all_data(None, soundcloud_user, export_dir)  # sp=None for soundcloud
+        unique_tracks = soundcloud_export_all_data(None, soundcloud_user, export_dir,
+                                                   cookies_from_browser=cookies_from_browser,
+                                                   cookie_file=cookie_file)  # sp=None for soundcloud
         click.echo(f"exported {len(unique_tracks)} unique tracks")
 
 
@@ -179,7 +188,15 @@ def download():
 )
 @click.option("--set-ids", multiple=True, help="specific set ids to export (for soundcloud --type sets), repeatable")
 @click.option("--user", help="soundcloud username or url (defaults to current user)")
-def export_cmd(playlists, playlists_file, output, mine, service, export_type, set_ids, user):
+@click.option("--cookies-from-browser", "cookies_from_browser", help="browser name to pull cookies from (e.g. chrome, firefox).")
+@click.option(
+    "--cookie-file",
+    "cookie_file",
+    type=click.Path(exists=True),
+    help="path to a Netscape-format cookies.txt; preferred over --cookies-from-browser (avoids the browser file-lock issue)",
+)
+def export_cmd(playlists, playlists_file, output, mine, service, export_type, set_ids, user,
+               cookies_from_browser, cookie_file):
     """export spotify playlists + liked songs to csv, or soundcloud likes/sets to csv.
 
     SPOTIFY (default):
@@ -198,7 +215,9 @@ def export_cmd(playlists, playlists_file, output, mine, service, export_type, se
             identifiers = _process_export_parameters(playlists, playlists_file)
             _handle_spotify_export(identifiers, output, mine)
         elif service == "soundcloud":
-            _handle_soundcloud_export(export_type, set_ids, playlists_file, output, user)
+            _handle_soundcloud_export(export_type, set_ids, playlists_file, output, user,
+                                      cookies_from_browser=cookies_from_browser,
+                                      cookie_file=cookie_file)
     except Exception as e:
         click.echo(f"error: {e}", err=True)
         sys.exit(1)

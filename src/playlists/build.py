@@ -406,6 +406,7 @@ def build_playlists(
     exports_dir=None,
     service="spotify",
     cookies_from_browser=None,
+    cookie_file=None,
 ):
     """build/refresh local .m3u8s from current playlist membership (spotify or soundcloud).
 
@@ -439,12 +440,20 @@ def build_playlists(
                     print(f"warning: SOUNDCLOUD_PLAYLISTS_FILE is set but contains no set urls: {playlists_file}")
                 else:
                     print(f"rescraping {len(identifiers)} soundcloud set(s) from {playlists_file} into {exports_dir_resolved}")
-                    sc_export_sets(None, identifiers, exports_dir_resolved)
+                    sc_export_sets(
+                        None, identifiers, exports_dir_resolved,
+                        cookies_from_browser=cookies_from_browser,
+                        cookie_file=cookie_file,
+                    )
             else:
                 from download.soundcloud.soundcloud_export import export_all_data as sc_export_all_data
                 username = config.SOUNDCLOUD_USER
                 print(f"rescraping soundcloud (--rescrape) into {exports_dir_resolved}")
-                sc_export_all_data(None, username, exports_dir_resolved)
+                sc_export_all_data(
+                    None, username, exports_dir_resolved,
+                    cookies_from_browser=cookies_from_browser,
+                    cookie_file=cookie_file,
+                )
     else:
         sp = _handle_authentication(rescrape, covers)
         _handle_rescrape(sp, names, exports_dir_resolved, exclude_names, rescrape)
