@@ -28,6 +28,7 @@ from lib.text import normalize_key
 from download.existing import build_library_index, scan_existing_fuzzy, resolve_output_dir
 from download.manifest import predict_output_filename, read_csv_metadata
 from download import fallback
+from download import fallback as _fallback_mod  # alias to avoid shadowing by the `fallback` parameter
 
 
 def _read_urls_from_source(url_file, verbose):
@@ -73,7 +74,17 @@ def _deduplicate_urls(urls):
     return deduped_urls
 
 
-def _process_manual_mode(urls, metadata, output_dir, format, overwrite_errors, batch_size, cookies_from_browser, verbose):
+def _process_manual_mode(
+    urls,
+    metadata,
+    output_dir,
+    format,
+    overwrite_errors,
+    batch_size,
+    cookies_from_browser,
+    verbose,
+    url_file=None,
+):
     """Process URLs in manual mode via fallback."""
     # Process URLs in batches via fallback
     overall_success = True
@@ -102,7 +113,7 @@ def _process_manual_mode(urls, metadata, output_dir, format, overwrite_errors, b
             cookies_from_browser=cookies_from_browser,
             resolved_ffmpeg=resolved_ffmpeg,
             library_index={},  # manual mode doesn't use library index
-            is_spotify=True,
+            unmatched_csv_path=url_file,
         )
 
         if not batch_succeeded:
@@ -161,8 +172,37 @@ def _validate_and_prepare_urls(url_file, verbose):
     return urls, url_count
 
 
+def _resolve_urls_and_metadata(url_file, urls, manual, pre_skip_existing, verbose):
+    """Determine the URL list and metadata, either from direct input or a file."""
+    if urls is not None:
+        urls = _deduplicate_urls(list(urls))
+        if not urls:
+            print("no urls provided")
+            return None, 0, {}
+        url_count = len(urls)
+        print(f"url validation complete: {url_count} unique urls.")
+        return urls, url_count, {}  # no csv metadata for direct url input
+
+    # File-based URL source
+    if not os.path.exists(url_file):
+        print(f"error: url file/path not found: {url_file}")
+        return None, 0, None
+    urls, url_count = _validate_and_prepare_urls(url_file, verbose)
+    if urls is None:
+        return None, 0, None
+
+    metadata = None
+    if manual or pre_skip_existing:
+        metadata = _read_metadata_if_needed(url_file, manual, pre_skip_existing)
+    if not metadata:
+        print("warning: no csv metadata available - skipping existence check and fallback metadata.")
+        metadata = {}
+    return urls, url_count, metadata
+
+
 def download_spotify(
-    url_file,
+    url_file=None,
+    urls=None,
     output_dir=None,
     format="mp3",
     bitrate="320k",
@@ -177,6 +217,7 @@ def download_spotify(
     cookie_file=None,
     debug=False,
     spotdl_fallback=False,
+    fallback=False,
     manual=False,
     verbose=False,
     clean=False,
@@ -195,20 +236,20 @@ def download_spotify(
     retries = config.DOWNLOAD_RETRIES if retries == 3 and config.DOWNLOAD_RETRIES is not None else retries
 
     if verbose:
-        print(f"processing spotify source: {url_file}")
+        source = "single url" if urls is not None else (url_file or "<default manifest>")
+        print(f"processing spotify source: {source}")
 
-    # Validate and prepare URLs
-    urls, url_count = _validate_and_prepare_urls(url_file, verbose)
+    urls, url_count, metadata = _resolve_urls_and_metadata(
+        url_file, urls, manual or spotdl_fallback, pre_skip_existing, verbose
+    )
     if urls is None:
         return False
 
-    metadata = None
-    # We need metadata for fallback (if manual) and for pre-skip existence check
-    if manual or pre_skip_existing:
-        metadata = _read_metadata_if_needed(url_file, manual, pre_skip_existing)
-        if not metadata:
-            print("warning: no csVs with track_name/artist_names columns found - skipping existence check and fallback metadata.")
-            metadata = {}
+    # Filter out songs previously marked as lost (via backspace in manual mode).
+    urls, metadata, url_count = _fallback_mod.apply_lost_song_filter(urls, metadata, url_file)
+
+    # Filter out songs already covered by a manual link (.manual_links.json).
+    urls, metadata, url_count = _fallback_mod.apply_manual_link_filter(urls, metadata)
 
     # Pre-skip existence check
     if pre_skip_existing and metadata:
@@ -222,7 +263,8 @@ def download_spotify(
     # If manual, process via fallback and return
     if manual:
         return _process_manual_mode(
-            urls, metadata, output_dir, format, overwrite_errors, batch_size, cookies_from_browser, verbose
+            urls, metadata, output_dir, format, overwrite_errors, batch_size, cookies_from_browser, verbose,
+            url_file=url_file,
         )
 
     # Otherwise, proceed with spotdl processing (original logic)
@@ -240,7 +282,7 @@ def download_spotify(
         cookies_from_browser,
         cookie_file,
         debug,
-        spotdl_fallback,
+        spotdl_fallback or fallback,
         verbose,
     )
 
@@ -539,10 +581,10 @@ def _handle_batch_result(
             print(f"  Batch {batch_num} had hard failure (track unavailable).")
         overall_success = False
         # Log the failed URLs to failed_downloads.txt with track_unavailable reason
-        fallback._log_urls("failed_downloads.txt", batch, reason="track_unavailable")
+        _fallback_mod._log_urls("failed_downloads.txt", batch, reason="track_unavailable")
     elif not batch_succeeded and spotdl_fallback:
         # Process fallback using the fallback module
-        fallback_succeeded, fallback_failed, batch_succeeded = fallback.process_fallback(
+        fallback_succeeded, fallback_failed, batch_succeeded = _fallback_mod.process_fallback(
             batch=batch,
             metadata=metadata,
             output_dir=resolved_output_dir,
@@ -550,14 +592,13 @@ def _handle_batch_result(
             overwrite_errors=overwrite_errors,
             cookies_from_browser=cookies_from_browser,
             resolved_ffmpeg=resolved_ffmpeg,
-            library_index={},  # Note: using empty library_index for consistency with manual mode?
-            is_spotify=True,
+            library_index={},
         )
         # Update overall_success based on fallback results
         if not batch_succeeded:
             overall_success = False
             # Log the failed URLs from fallback
-            fallback._log_urls("soft_failures.txt", fallback_failed, reason="spotdl_fallback_failed")
+            _fallback_mod._log_urls("soft_failures.txt", fallback_failed, reason="spotdl_fallback_failed")
     elif not batch_succeeded:
         # No fallback or fallback not enabled, log failure
         if verbose:
@@ -565,6 +606,6 @@ def _handle_batch_result(
         overall_success = False
         # Determine if it was hard or soft failure? We don't have reason here.
         # For simplicity, log to soft_failures.txt (could be either)
-        fallback._log_urls("soft_failures.txt", batch, reason="spotdl_exhausted_retries")
+        _fallback_mod._log_urls("soft_failures.txt", batch, reason="spotdl_exhausted_retries")
 
     return overall_success

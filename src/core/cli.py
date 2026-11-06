@@ -68,6 +68,8 @@ def download_cmd(source, apply, archive_path_opt, drop_opt, only_opt,
 @click.option('--exports-dir', 'exports_dir_opt', help='exports dir override.')
 @click.option('--service', type=click.Choice(['spotify', 'soundcloud']), default='spotify', show_default=True,
               help='service to process (spotify or soundcloud)')
+@click.option('--playlist', '-p', 'playlist_names', multiple=True, metavar='NAME|URL',
+              help='process a specific playlist by name or URL (repeatable; default: all owned).')
 @click.option('--exclude', 'exclude_names', multiple=True, metavar='NAME|ID',
               help='skip a specific playlist (repeatable; applied after scope resolution).')
 @click.option('--apply', is_flag=True, help='do it for real (default is a preview).')
@@ -75,23 +77,43 @@ def download_cmd(source, apply, archive_path_opt, drop_opt, only_opt,
               help='audio format for the download step.')
 @click.option('--bitrate', 'bitrate_opt', default='320k', show_default=True, help='audio bitrate.')
 @click.option('--cookies-file', 'cookies_file', help='Netscape format cookie file for Spotify download.')
+@click.option('--cookies-from-browser', 'cookies_from_browser', help='browser name to pull cookies from (e.g. chrome, firefox).')
 @click.option('--pre-skip-existing', is_flag=True, help='skip downloading existing files.')
 @click.option('--retries', 'retries', default=0, show_default=True, type=int, help='number of download retries.')
-@click.option('--manual', is_flag=True, help='enable manual fallback for failed downloads.')
+@click.option('--manual', is_flag=True, help='enable manual fallback for failed downloads (skips primary download).')
+@click.option('--fallback', is_flag=True, help='try primary download first, prompt for fallback sources on failure.')
 @click.option('--verbose', is_flag=True, help='verbose output.')
 @click.option('--clean', is_flag=True,
               help='run organize cleanup after successful download to organize the crate.')
 @click.option('--skip-initial-playlist-refresh', is_flag=True,
               help='skip the initial playlist refresh step (use existing unmatched CSV).')
-def process_unmatched_cmd(archive_path_opt, playlists_path_opt, exports_dir_opt, service,
-                         exclude_names, apply, format_opt, bitrate_opt, cookies_file,
-                         pre_skip_existing, retries, manual, verbose, clean, skip_initial_playlist_refresh):
+def process_unmatched_cmd(
+    archive_path_opt,
+    playlists_path_opt,
+    exports_dir_opt,
+    service,
+    playlist_names,
+    exclude_names,
+    apply,
+    format_opt,
+    bitrate_opt,
+    cookies_file,
+    cookies_from_browser,
+    pre_skip_existing,
+    retries,
+    manual,
+    fallback,
+    verbose,
+    clean,
+    skip_initial_playlist_refresh,
+):
     """process unmatched tracks: refresh playlists → download missing → import."""
     result = run_process_unmatched(
         archive_path_opt=archive_path_opt,
         playlists_path_opt=playlists_path_opt,
         exports_dir_opt=exports_dir_opt,
         service=service,
+        playlist_names=list(playlist_names),
         exclude_names=list(exclude_names),
         apply=apply,
         format=format_opt,
@@ -100,26 +122,21 @@ def process_unmatched_cmd(archive_path_opt, playlists_path_opt, exports_dir_opt,
         pre_skip_existing=pre_skip_existing,
         retries=retries,
         manual=manual,
+        fallback=fallback,
         verbose=verbose,
         skip_initial_playlist_refresh=skip_initial_playlist_refresh
     )
     if not result['ok']:
         sys.exit(1)
 
-    # If --clean flag is used, run organize cleanup after successful download
-    # (for download+import commands like core download and process-unmatched)
     if clean:
         if verbose:
             click.echo("Download completed successfully. Running organize cleanup to organize the crate...")
-        # Invoke the cleanup command with --apply flag matching the download command's --apply flag
         try:
-            # Create a context for the cleanup command
             ctx = click.get_current_context(silent=True)
             if ctx:
-                # We're already in a click context, invoke the cleanup subcommand
                 ctx.invoke(cleanup_cmd, apply=apply, verbose=verbose)
             else:
-                # Fallback: call cleanup directly (though this won't work perfectly without click context)
                 click.echo("warning: Cannot invoke organize cleanup from within another command", err=True)
         except Exception as e:
             click.echo(f"warning: Failed to run organize cleanup: {e}", err=True)

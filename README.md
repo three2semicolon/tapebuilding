@@ -85,7 +85,13 @@ core process-unmatched                                          # dry run by def
 core process-unmatched --apply
 core process-unmatched --archive-path Z:/music/library
 core process-unmatched --service spotify --exclude "_orc" --exclude "7891EGVL0dNKc7OXH08c77" --exclude "4OUSku5ncsCDBCl4K5yj0t" --exclude "__obs"
+core process-unmatched --playlist "_obs"                                          # one spotify playlist by name
+core process-unmatched --playlist "https://open.spotify.com/playlist/..."           # one spotify playlist by url
+core process-unmatched --service soundcloud --playlist "https://soundcloud.com/anomaliebeats/velours"  # one soundcloud set
 core process-unmatched --apply --format flac --bitrate 1000k
+core process-unmatched --apply --service soundcloud             # rescrape soundcloud sets, download unmatched, import, sync
+core process-unmatched --apply --service soundcloud --manual    # manual mode: prompt for each unmatched track's source
+core process-unmatched --apply --fallback                       # download first, prompt on failure
 ```
 
 options:
@@ -96,21 +102,28 @@ options:
 - `--exports-dir` - exports directory override (default: `<playlists_path>/exports`)
 - `--service` - service to process (spotify or soundcloud, default: spotify)
 - `--exclude` - skip a specific playlist by name or ID (repeatable; applied after scope resolution; default: none)
+- `--playlist` / `-p` - process only the specified playlist(s) by name or URL (repeatable; default: all owned)
 - `--format` (default mp3) - audio format for the download step
 - `--bitrate` (default 320k) - audio bitrate for the download step
 - `--cookies-file` - Netscape format cookie file for Spotify download
 - `--pre-skip-existing` - skip downloading existing files (default: true)
 - `--retries` (default 0) - number of download retries
+- `--manual` - skip primary download and only prompt for fallback sources
+- `--fallback` - try primary download first, prompt for fallback sources on failure
 - `--verbose` - verbose output
 
 workflow steps:
 
-1. **refresh playlists**: rescrapes spotify data and rebuilds local `.m3u8`s with `--reindex` to generate fresh `unmatched.csv`
-2. **download**: downloads tracks listed in the unmatched CSV to `<crate>/unorganized`
+1. **refresh playlists**: rescrapes service data and rebuilds local `.m3u8`s with `--reindex` to generate fresh `unmatched.csv`. for spotify, rescrape pulls all owned playlists via the spotify api; for soundcloud, rescrape pulls all sets for `soundcloud_user` unless `soundcloud_playlists_file` is set, in which case only the sets listed in that file are re-scraped.
+2. **download**: downloads tracks listed in the unmatched CSV to `<crate>/unorganized`. for soundcloud, metadata uses `uploader`/`title` keys and is translated for fallback mode.
 3. **import**: imports the downloaded files into the library crate via beets
 4. **sync playlists**: rebuilds local `.m3u8`s from the updated library (no rescrape) to sync playlists with imported tracks
 
 each step runs in its own no-op mode during dry-run (validation/checking without side effects).
+
+### lost songs
+
+during manual mode (`--manual`), pressing backspace on a track marks it as lost: its row is appended to `lost-songs.csv` (next to `unmatched.csv`) and removed from `unmatched.csv`. on subsequent runs, both the spotify and soundcloud download entry points read `lost-songs.csv` and skip those urls so they aren't re-downloaded.
 
 ## download - export, download, retry, soundbyte
 
@@ -143,27 +156,21 @@ the full-library export.
 expose soundcloud sets/likes to csv for `download soundcloud`.
 
 ```bash
-download export-soundcloud                                  # all sets (requires authentication, stubbed)
-download export-soundcloud --mine                            # only your own sets (requires authentication)
-download export-soundcloud -o /path/to/export               # custom output directory (default: PLAYLISTS_PATH/exports)
-download export-soundcloud -p "<set-url-or-id>"             # export a specific set
-download export-soundcloud -p "<url-1>" -p "<url-2>"        # two or more -> exported + merged into a scoped manifest
-download export-soundcloud --playlists-file sets.txt        # newline-delimited list of set urls/ids (#-comments ignored), combined with -p
+download export --service soundcloud --type all-sets         # all sets for SOUNDCLOUD_USER (default: "me")
+download export --service soundcloud --type likes             # all liked tracks for SOUNDCLOUD_USER
+download export --service soundcloud --type sets --set-ids "<set-url>"   # export a specific set
+download export --service soundcloud --type sets --playlists-file sets.txt  # newline-delimited set urls/ids (#-comments ignored)
+download export --service soundcloud --type sets -p "<url-1>" -p "<url-2>"  # two or more sets, combined
 ```
 
-outputs (in the export directory):
+outputs (in `<exports>/soundcloud/`):
 
-- `soundcloud_sets.csv` - set metadata (if implemented)
-- `soundcloud_playlist_tracks.csv` - all set tracks (with duplicates)
 - `soundcloud_manifest.csv` - deduplicated master track list (track url as primary key)
 - `soundcloud_manifest_urls.txt` - track urls, one per line, for `download soundcloud`
+- `playlists.csv` / `playlist_tracks.csv` - playlist-format files for `playlists` command
+- `likes.csv` / `likes_urls.txt` - liked tracks (with `--type likes`)
 
-with two or more `-p`/`--playlists-file` identifiers, the export scopes to
-just those sets instead: `soundcloud_manifest.csv` +
-`soundcloud_manifest_urls.txt`, separate filenames so they don't clobber
-the full-library export.
-
-note: likes are not included by default; see open questions in PLAYLIST_SYNC_PLAN.md.
+with `--type sets` and `--playlists-file` / `--set-ids`, the export scopes to just those sets instead of all.
 ### download music from soundcloud
 
 downloads from soundcloud urls (tracks, sets) via yt-dlp.
@@ -172,10 +179,11 @@ downloads from soundcloud urls (tracks, sets) via yt-dlp.
 download soundcloud "https://soundcloud.com/artist/track"
 download soundcloud "https://soundcloud.com/artist/sets/my-set"     # set -> "Set Name/NN - Uploader - Title.ext"
 download soundcloud -u path/to/urls.txt
-download soundcloud -u /path/to/export/directory -o /path/to/music
-download soundcloud -u path/to/urls.txt --batch-size 25        # urls per yt-dlp call (default 1)
-download soundcloud -u path/to/urls.txt --pre-skip-existing    # skip tracks already in the library (needs csv metadata)
-download soundcloud -u path/to/urls.txt --validate-only        # check existence without downloading
+download soundcloud -u path/to/urls.txt --manual                   # prompt for each track's source (youtube url or local file)
+download soundcloud -u path/to/urls.txt --fallback                 # download first, prompt on failure
+download soundcloud -u path/to/urls.txt --batch-size 25            # urls per yt-dlp call (default 1)
+download soundcloud -u path/to/urls.txt --pre-skip-existing        # skip tracks already in the library (needs csv metadata)
+download soundcloud -u path/to/urls.txt --validate-only            # check existence without downloading
 ```
 
 options:
@@ -188,19 +196,27 @@ options:
 - `--cookies-from-browser` - browser to pull cookies from (e.g. `chrome`)
 - `--cookie-file` - path to a Netscape-format `cookies.txt`; preferred over `--cookies-from-browser` (avoids the browser file-lock issue)
 - `--debug` - DEBUG log level for yt-dlp instead of INFO
+- `--manual` - skip primary download, prompt for each track's fallback source (enter a youtube url or local file path; backspace marks as lost)
+- `--fallback` - try primary download first, prompt for fallback sources on failure
+- `--soundcloud-fallback` / `--no-soundcloud-fallback` - prompt for youtube url or local file when yt-dlp fails (default: off)
 - `-o, --output` - output directory (default: library root)
+- `--clean` - run `organize validate --all` after successful download
+- `--verbose` - verbose output
 
 urls are deduplicated preserving first-seen order. output is
 scanned for soft/hard failure markers and logged to
-`failed_downloads.txt` / `soft_failures.txt`.
+`failed_downloads.txt` / `soft_failures.txt`. soundcloud metadata uses
+`uploader`/`title` keys and is translated to `artist`/`track` for fallback mode.
 
 ### download music from spotify
 
 downloads from spotify urls (tracks, albums, playlists) via spotdl.
 `--url-file` accepts a `.txt` (one url per line), a `.csv` (must have a
-`spotify_url` column), or a directory of `.csv` files.
+`spotify_url` column), or a directory of `.csv` files. a single spotify url
+can also be passed directly as an argument.
 
 ```bash
+download spotify "https://open.spotify.com/track/..."       # download a single spotify url directly
 download spotify                                            # <exports>/spotify_manifest_urls.txt
 download spotify -u path/to/urls.txt
 download spotify -u /path/to/export/directory -o /path/to/music
@@ -218,6 +234,7 @@ options:
 - `--cookies-from-browser` - browser to pull cookies from (e.g. `chrome`)
 - `--cookie-file` - path to a Netscape-format `cookies.txt`; preferred over `--cookies-from-browser` (avoids the browser file-lock issue)
 - `--debug` - DEBUG log level for spotdl/yt-dlp instead of INFO
+- `--fallback` - try primary download first, prompt for fallback sources on failure
 - `-o, --output` - output directory (default: library root)
 
 urls are deduplicated preserving first-seen order. spotdl's exit code is
@@ -353,23 +370,43 @@ includes the functionality to prevent new wrong merges and handle existing
 ones through the improved grouping logic. See `BUGFIX_PLAN.md` for details
 on the retirement of --resplit.
 
+### journal / undo / leftover report
+
+Every mutating step of an `organize cleanup --apply` run (each file move and
+each tag write) is appended to `<crate>/.organize_journal.jsonl` before it
+happens and marked done/failed afterward, with the old and new value. That
+gives:
+
+- **`organize undo`** — reverse a journaled run's completed operations,
+  newest first. Dry-run by default; pass `--apply` to actually revert moves
+  and restore tag values. `--run` targets a specific run ID; omitted, it
+  reverts the most recent run not already undone.
+- **`organize undo --list`** — list journaled runs with status (moves,
+  tags, skipped tags, failed ops) and whether each run completed,
+  interrupted, or failed.
+- **`organize cleanup --check-tags`** (leftover report) — scans `singles/`
+  and `albums/` for corrupted `albumartist` tags left by past wrong merges
+  (a single tagged with another artist's albumartist, or an album file whose
+  `albumartist` disagrees with its folder's canonical value). Dry-run by
+  default; `--apply` writes the canonical value.
+
+Journal run IDs are printed at the end of every apply run (`journal:
+<crate>/.organize_journal.jsonl (run <id>; revert with `organize undo`)`).
+Dry runs never touch the journal. Note that `beets.db` goes stale after any
+apply — rebuild it with `organize cleanup --rebuild-db` (or `core sync`).
+
 the `normalize_artists` beets plugin rewrites artist strings to a
 consistent `"A, B & C"` form at import (handles `feat.`/`ft.`, collab `x`,
 `and`); enabled via `library_config.yaml`'s `plugins` list +
 `pluginpath`.
 
-## playlists - rebuild local playlists from spotify
+## playlists - rebuild local playlists from spotify or soundcloud
 
-rescrapes spotify (optionally scoped to specific playlists) and rebuilds
-each owned playlist's `.m3u8` against the crate, using the same tiered
-matcher as `tapedeck`. writes unmatched tracks to `unmatched.csv` /
-`unmatched_urls.txt` (feeds back into `download spotify -u`) rather than
-failing the run. `--covers` downloads each playlist's cover art.
+rescrapes service data (optionally scoped to specific playlists) and rebuilds each playlist's `.m3u8` against the crate, using the same tiered matcher as `tapedeck`. writes unmatched tracks to `unmatched.csv` / `unmatched_urls.txt` (feeds back into `download spotify -u` or `download soundcloud -u`) rather than failing the run. `--covers` downloads each playlist's cover art (spotify only).
 
-`core sync` is this command's `--apply --rescrape` flow, promoted to its
-own entry point - see above for that usage. for the full `playlists`
-flag set (dry-run/preview mode, `-p`/`--all`/`--mine` selection, etc.)
-run `playlists --help`.
+for spotify, `--service spotify` (default) rescrapes owned playlists via the spotify api. for soundcloud, `--service soundcloud` rescrapes all sets for `soundcloud_user` unless `soundcloud_playlists_file` is set, in which case only the sets listed in that file are re-scraped.
+
+`core sync` is this command's `--apply --rescrape` flow, promoted to its own entry point - see above for that usage. for the full `playlists` flag set (dry-run/preview mode, `-p`/`--all`/`--mine` selection, etc.) run `playlists --help`.
 
 ## tapedeck - mirror a rotation subset to a synced device
 
@@ -408,13 +445,15 @@ fallback (`ARCHIVE_PATH`/`archive_path`) has been dropped.
 - `SPOTIFY_REDIRECT_URI` - oauth redirect (default
   `http://127.0.0.1:8888/callback`).
 - `SPOTIFY_SP_DC` - your browser's `sp_dc` cookie (obtained after logging into Spotify). when set, auth uses spotapi instead of oauth — no spotify premium needed. when unset, falls back to the official web api oauth flow above.
+- `SOUNDCLOUD_USER` - soundcloud username or "me" for the authenticated user (default: `me`). used by soundcloud playlist rescrape and export.
+- `SOUNDCLOUD_PLAYLISTS_FILE` - newline-delimited file of soundcloud set urls (blank lines and #-comments ignored). when set, soundcloud rescrape only re-scrapes the sets listed in this file instead of all sets.
 - `FIREBASE_PROJECT_ID`, `FIREBASE_CREDENTIALS_PATH` - for `download soundbyte`.
 
 ## documentation
 
 Full documentation (this README expanded into per-package guides) is published with [Zensical](https://zensical.org/) and hosted on GitHub Pages:
 
-- Site: https://three2semicolon.github.io/tapebuilding/
+- Site: https://tapebuilding.whitfija.com/
 - Source: [`docs/`](https://github.com/three2semicolon/tapebuilding/tree/main/docs) in this repo
 
 Preview locally:

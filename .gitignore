@@ -17,6 +17,7 @@ venv/
 manifest.txt
 test_exports/
 .spotapi_cache/
+.soundcloud_cache
 
 
 # Music files

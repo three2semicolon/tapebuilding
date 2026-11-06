@@ -10,6 +10,8 @@ safe_move()/write_tag(), so a hand-rolled fake tag dict wouldn't exercise the
 actual regrouping decisions the way it matters here.
 """
 
+import os
+
 import pytest
 
 from organize.cleanup import (
@@ -474,18 +476,98 @@ class TestComprehensiveIdempotency:
             artist="Edition Artist", album="Album Edition Deluxe", title="Deluxe Song", track=1
         )
 
-        # First apply run
+        # First apply run: reorganizes and quarantines true duplicates
         run_cleanup(crate=str(crate), apply=True)
+        capsys.readouterr()  # discard first-run output
 
-        # Second apply run should be completely idempotent
+        # Second apply run: lone duplicate survivors settle into singles/
+        run_cleanup(crate=str(crate), apply=True)
+        capsys.readouterr()  # discard second-run output
+
+        # Duplicates were quarantined (not suffixed) on the first run
+        dupes = crate / "duplicates"
+        assert dupes.is_dir()
+        assert len([p for p in dupes.iterdir() if p.is_file()]) == 4
+
+        # Third apply run must be completely idle - that's the idempotency gate
         run_cleanup(crate=str(crate), apply=True, verbose=True)
         out = capsys.readouterr().out
 
-        # Assert that second run does nothing
+        # Assert that final run does nothing
         assert "files moving to albums/   : 0" in out
         assert "files moving to singles/  : 0" in out
+        assert "duplicates quarantined    : 0" in out
         assert "albumartist tags to write : 0" in out
         assert "album tags to write       : 0" in out
         assert "title tags to write     : 0" in out
+
+
+class TestKeepExistingFolder:
+    """Bug 6.4: case alone never renames an already-correct folder."""
+
+    def test_case_variant_reuses_existing_folder_string(self, tmp_path, make_tagged_file):
+        # existing folder on disk is "Citizen - Youth"; tags say album "youth",
+        # so the computed folder "Citizen - youth" matches case-insensitively
+        # and the existing folder's exact string is reused
+        make_tagged_file(filename="crate/albums/Citizen - Youth/01 One.mp3",
+                          artist="Citizen", album="youth", title="One", track=1)
+        make_tagged_file(filename="crate/albums/Citizen - Youth/02 Two.mp3",
+                          artist="Citizen", album="youth", title="Two", track=2)
+        crate = str(tmp_path / "crate")
+
+        files = scan_audio(crate)
+        groups = group_files(files)
+        plan = build_plan(groups, crate)
+
+        assert len(plan.album_moves) == 2
+        for _src, dst, _aa in plan.album_moves:
+            assert os.path.dirname(dst) == os.path.join(crate, "albums", "Citizen - Youth")
+        assert "Citizen - youth" not in os.listdir(os.path.join(crate, "albums"))
+
+    def test_no_existing_match_uses_computed_name(self, tmp_path, make_tagged_file):
+        make_tagged_file(filename="crate/albums/Only/01 One.mp3",
+                          artist="Nova", album="Nightfall", title="One", track=1)
+        make_tagged_file(filename="crate/albums/Only/02 Two.mp3",
+                          artist="Nova", album="Nightfall", title="Two", track=2)
+        crate = str(tmp_path / "crate")
+
+        files = scan_audio(crate)
+        groups = group_files(files)
+        plan = build_plan(groups, crate)
+
+        _src, dst, _aa = plan.album_moves[0]
+        assert dst == os.path.join(crate, "albums", "Nova - Nightfall", "01 - Nova - One.mp3")
+
+
+class TestTwoPhaseSwap:
+    """Bug 6.7: swap/cycle moves land via temp names instead of (2) suffixes."""
+
+    def test_swap_moves_land_collision_free(self, tmp_path, make_tagged_file, capsys):
+        # each file's wanted name is the other file's current name: a pure swap
+        make_tagged_file(filename="crate/albums/Swap/02 - Swap Artist - One.mp3",
+                          artist="Swap Artist", album="Swap", title="One", track=1)
+        make_tagged_file(filename="crate/albums/Swap/01 - Swap Artist - Two.mp3",
+                          artist="Swap Artist", album="Swap", title="Two", track=2)
+        crate = str(tmp_path / "crate")
+
+        run_cleanup(crate=crate, apply=True)
+        capsys.readouterr()
+
+        folder = os.path.join(crate, "albums", "Swap Artist - Swap")
+        one = read_tags(os.path.join(folder, "01 - Swap Artist - One.mp3"))
+        two = read_tags(os.path.join(folder, "02 - Swap Artist - Two.mp3"))
+        assert one['title'] == 'One'
+        assert two['title'] == 'Two'
+        assert not os.path.exists(os.path.join(crate, "albums", "Swap", "02 - Swap Artist - One.mp3"))
+        assert not os.path.exists(os.path.join(crate, "albums", "Swap", "01 - Swap Artist - Two.mp3"))
+        # no (2)-suffixed collision names should exist
+        leftovers = [f for f in os.listdir(folder) if '(2' in f]
+        assert not leftovers, leftovers
+
+        # second run is fully idle
+        run_cleanup(crate=crate, apply=True, verbose=True)
+        out = capsys.readouterr().out
+        assert "files moving to albums/   : 0" in out
+        assert "files moving to singles/  : 0" in out
 
 

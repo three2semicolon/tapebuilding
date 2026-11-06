@@ -25,6 +25,9 @@ _TIER_NAMES = {
     7: 'soundcloud_artist_title',
     8: 'soundcloud_fuzzy_title',
     9: 'soundcloud_title_only',
+    # evaluated FIRST by MatchIndex.match(), but numbered after the heuristic
+    # tiers so nothing that treats tier numbers as truthy/1..9 breaks.
+    10: 'manual_link',
 }
 
 

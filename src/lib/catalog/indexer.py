@@ -7,6 +7,10 @@ to cover albums/, singles/, AND the soundtracks/ tree - beets.db does not
 index soundtracks/, so playlists and tapedeck both read the filesystem
 directly here instead of querying beets.
 
+top-level duplicates/ and unorganized/ are never scanned (Bug 12): they are
+staging directories, not crate content, so the walk prunes them along with
+playlists/ and the system recycle dirs (see _SKIP_TOPLEVEL).
+
 promoted out of playlists/ during the lib/ refactor: tapedeck depended on
 this just as much as playlists did, so it belongs to the shared catalog
 layer rather than one package.

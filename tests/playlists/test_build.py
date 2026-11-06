@@ -457,7 +457,7 @@ class TestBuildPlaylistsOrchestration:
         # get their own real coverage - here they're just pass-throughs so
         # match_rows() below is the only thing build_playlists() sees.
         monkeypatch.setattr(build_module, "get_index", lambda *a, **kw: "INDEX")
-        monkeypatch.setattr(build_module, "MatchIndex", lambda index: index)
+        monkeypatch.setattr(build_module, "MatchIndex", lambda index, **kw: index)
         monkeypatch.setattr(build_module, "safe_name", lambda name: name)
 
         def fake_match_rows(rows, index=None, verbose=False):

@@ -1,4 +1,3 @@
-
 """tapedeck/copy - stage (load) and unstage (unload) a mirrored subtree.
 
 the deck mirrors the crate 1:1 by crate-relative path, so every source path maps to
@@ -82,20 +81,26 @@ def _collect(items, crate):
 
 
 def _prune_empty_dirs(tapedeck):
-    """bottom-up rmdir of empty dirs under each mirrored subtree, up to (not
-    including) the tapedeck root itself."""
+    """fixed-point bottom-up rmdir of empty dirs under each mirrored subtree,
+    up to (not including) the tapedeck root itself. repeats until a full pass
+    removes nothing, so a parent that only becomes empty *because* its child
+    was just removed in this same pass is re-checked and pruned too."""
     for sub in _PRUNE_SUBS:
         root = os.path.join(tapedeck, sub)
         if not os.path.isdir(root):
             continue
-        for dp, dirs, fns in os.walk(root, topdown=False):
-            if dp == root:
-                continue
-            try:
-                if not dirs and not fns:
-                    os.rmdir(dp)
-            except OSError:
-                pass
+        changed = True
+        while changed:
+            changed = False
+            for dp, dirs, fns in os.walk(root, topdown=False):
+                if dp == root:
+                    continue
+                try:
+                    if not dirs and not fns:
+                        os.rmdir(dp)
+                        changed = True
+                except OSError:
+                    pass
 
 
 # --- stage (load) -----------------------------------------------------------
@@ -248,60 +253,6 @@ def _is_m3u8(rel):
         True if the path has an m3u8 extension, False otherwise
     """
     return os.path.splitext(rel)[1].lower() in M3U_EXT
-
-
-def _should_protect_item(rel, is_audio, kind, protected):
-    """Check if an item should be protected from removal.
-
-    Args:
-        rel: Relative path of the item
-        is_audio: Whether the item is an audio file (not m3u8)
-        kind: Type of items ('playlist' or other)
-        protected: Set of protected relative paths
-
-    Returns:
-        Tuple of (should_protect: bool, reason: str)
-    """
-    if kind == 'playlist' and is_audio and _norm_rel(rel) in protected:
-        return True, ' (protected by another playlist)'
-    return False, ''
-
-
-def _process_dry_run_item(dst, is_m3u8_rel, summary):
-    """Process an item in dry-run mode.
-
-    Args:
-        dst: Destination path
-        is_m3u8_rel: Whether the item is an m3u8 file
-        summary: Summary dictionary to update
-    """
-    if os.path.exists(dst):
-        summary['m3u8_removed' if is_m3u8_rel else 'removed'] += 1
-    else:
-        summary['missing'] += 1
-
-
-def _process_actual_removal(dst, is_m3u8_rel, summary):
-    """Process an item for actual removal.
-
-    Args:
-        dst: Destination path
-        is_m3u8_rel: Whether the item is an m3u8 file
-        summary: Summary dictionary to update
-    """
-    if not os.path.exists(dst):
-        summary['missing'] += 1
-        return
-
-    try:
-        os.remove(dst)
-        if is_m3u8_rel:
-            summary['m3u8_removed'] += 1
-        else:
-            summary['removed'] += 1
-    except OSError as e:
-        summary['errors'] += 1
-        print(f"  warning: could not remove {dst}: {e}")
 
 
 def _should_protect_item(rel, is_audio, kind, protected):

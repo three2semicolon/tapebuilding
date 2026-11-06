@@ -23,7 +23,7 @@ from lib.tags import (
     scan_audio,
     safe_move,
 )
-from lib.text import primary_artist
+from lib.text import primary_artist, render_credit
 
 
 class TestReadTags:
@@ -99,6 +99,25 @@ class TestSanitize:
 
     def test_all_illegal_characters_returns_underscore(self):
         assert sanitize("///") == "___"
+
+
+class TestRenderCredit:
+    def test_splits_on_slash_joins_with_comma_space(self):
+        assert render_credit("Run The Jewels/El-P/Killer Mike") == "Run The Jewels, El-P, Killer Mike"
+
+    def test_ampersand_left_untouched(self):
+        assert render_credit("King Gizzard & The Lizard Wizard") == "King Gizzard & The Lizard Wizard"
+        assert render_credit("Simon & Garfunkel") == "Simon & Garfunkel"
+
+    def test_comma_inside_credit_left_untouched(self):
+        assert render_credit("Tyler, The Creator") == "Tyler, The Creator"
+
+    def test_allowlist_slash_credit_renders_with_underscore(self):
+        assert render_credit("AC/DC") == "AC_DC"
+
+    def test_empty_and_none_return_empty_string(self):
+        assert render_credit("") == ""
+        assert render_credit(None) == ""
 
 
 class TestPrimaryToken:
@@ -246,12 +265,8 @@ class TestWriteTagNFC:
 
         # Writing a case-only different value should trigger a save
         # (case-only differences matter for NFC)
-        before_mtime = os.path.getmtime(path)
         write_tag(path, title="TITLE")  # Uppercase - different NFC
-        after_mtime = os.path.getmtime(path)
-        assert after_mtime != before_mtime, "Writing case-only different value should update file"
-
-        # Verify the value was actually written
+        # Verify the value was actually written (save happened)
         result = read_tags(path)
         assert result["title"] == "TITLE"
 

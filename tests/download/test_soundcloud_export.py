@@ -16,6 +16,8 @@ from download.soundcloud.soundcloud_export import (
     list_user_sets,
     merge_and_deduplicate,
     _soundcloud_track_key,
+    _fetch_metadata_if_needed,
+    _title_looks_like_url_slug,
 )
 
 
@@ -267,7 +269,7 @@ class TestExportSets:
             ]
 
             # Mock the _extract_info function to return set names
-            def mock_extract_info_side_effect(url, cookies_from_browser=None):
+            def mock_extract_info_side_effect(url, cookies_from_browser=None, cookie_file=None):
                 if 'set1' in url:
                     return {'title': 'Set One'}
                 elif 'set2' in url:
@@ -314,3 +316,109 @@ class TestExportSets:
                 'https://soundcloud.com/artist/tracka',
                 'https://soundcloud.com/artist/trackb'
             }
+
+
+# --- URL slug detection -----------------------------------------------------------
+
+class TestTitleLooksLikeUrlSlug:
+    def test_url_slug_matches_title(self):
+        assert _title_looks_like_url_slug(
+            'charizard',
+            'https://soundcloud.com/shamanabeats/charizard'
+        ) is True
+
+    def test_real_title_does_not_match_slug(self):
+        assert _title_looks_like_url_slug(
+            'Lost My First Edition Holographic Charizard',
+            'https://soundcloud.com/shamanabeats/charizard'
+        ) is False
+
+    def test_empty_title_returns_false(self):
+        assert _title_looks_like_url_slug(
+            '',
+            'https://soundcloud.com/shamanabeats/charizard'
+        ) is False
+
+    def test_empty_url_returns_false(self):
+        assert _title_looks_like_url_slug(
+            'charizard',
+            ''
+        ) is False
+
+    def test_non_soundcloud_url_returns_false(self):
+        assert _title_looks_like_url_slug(
+            'track',
+            'https://youtube.com/watch?v=abc123'
+        ) is False
+
+
+# --- _fetch_metadata_if_needed ---------------------------------------------------
+
+class TestFetchMetadataIfNeeded:
+    def test_fetches_full_metadata_when_title_is_slug(self):
+        with mock.patch('download.soundcloud.soundcloud_export._extract_info_full') as mock_full:
+            mock_full.return_value = {
+                'title': 'Lost My First Edition Holographic Charizard',
+                'uploader': 'shamana'
+            }
+            name, uploader = _fetch_metadata_if_needed(
+                'charizard', '',
+                'https://soundcloud.com/shamanabeats/charizard',
+                None, None
+            )
+            mock_full.assert_called_once_with(
+                'https://soundcloud.com/shamanabeats/charizard', None, None
+            )
+            assert name == 'Lost My First Edition Holographic Charizard'
+            assert uploader == 'shamana'
+
+    def test_does_not_fetch_when_title_is_already_good(self):
+        with mock.patch('download.soundcloud.soundcloud_export._extract_info_full') as mock_full:
+            name, uploader = _fetch_metadata_if_needed(
+                'Real Track Title', 'Real Artist',
+                'https://soundcloud.com/artist/track',
+                None
+            )
+            mock_full.assert_not_called()
+            assert name == 'Real Track Title'
+            assert uploader == 'Real Artist'
+
+    def test_fetches_when_uploader_missing(self):
+        with mock.patch('download.soundcloud.soundcloud_export._extract_info_full') as mock_full:
+            mock_full.return_value = {
+                'title': 'Real Track Title',
+                'uploader': 'Real Artist'
+            }
+            name, uploader = _fetch_metadata_if_needed(
+                'Real Track Title', '',
+                'https://soundcloud.com/artist/track',
+                None
+            )
+            mock_full.assert_called_once()
+            assert uploader == 'Real Artist'
+
+    def test_handles_api_v2_urls(self):
+        with mock.patch('download.soundcloud.soundcloud_export._extract_info_full') as mock_full:
+            mock_full.return_value = {
+                'title': 'API Track Title',
+                'uploader': 'API Artist'
+            }
+            name, uploader = _fetch_metadata_if_needed(
+                '', '',
+                'https://api-v2.soundcloud.com/tracks/12345678',
+                None
+            )
+            mock_full.assert_called_once()
+            assert name == 'API Track Title'
+            assert uploader == 'API Artist'
+
+    def test_ignores_non_soundcloud_urls(self):
+        with mock.patch('download.soundcloud.soundcloud_export._extract_info_full') as mock_full:
+            name, uploader = _fetch_metadata_if_needed(
+                'Some Track', 'Some Artist',
+                'https://youtube.com/watch?v=abc',
+                None
+            )
+            mock_full.assert_not_called()
+            assert name == 'Some Track'
+            assert uploader == 'Some Artist'

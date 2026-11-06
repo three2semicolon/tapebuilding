@@ -13,6 +13,7 @@ import glob
 import os
 import sys
 import time
+import uuid
 
 from lib.tags import (
     canonical_albumartist,
@@ -45,6 +46,15 @@ def prune_empty_dirs(crate):
                     os.rmdir(dp)
             except OSError:
                 pass
+
+
+def duplicates_dir(crate):
+    """quarantine for true duplicates: moved out of the crate so they don't
+    clutter albums/ or get re-suffixed on every run; never deleted, so they
+    stay recoverable for manual review."""
+    d = os.path.join(crate, 'duplicates')
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
 def backup_db(db, keep=DB_BACKUPS_KEPT):
@@ -298,35 +308,15 @@ def _setup_run_cleanup(crate=None, apply=False, no_tag_write=False,
 
 
 def _scan_and_preprocess(crate):
-    """Scan audio files and collect slash credits for allowlist building."""
+    """Scan audio files."""
     files = scan_audio(crate)
     print(f"scanned {len(files)} audio files")
-
-    # Collect distinct '/' containing credits for Phase 3 allowlist building
-    slash_credits = {}
-    for f in files:
-        artist = f.get('artist', '')
-        if '/' in artist:
-            slash_credits[artist] = slash_credits.get(artist, 0) + 1
-        albumartist = f.get('albumartist', '')
-        if '/' in albumartist:
-            slash_credits[albumartist] = slash_credits.get(albumartist, 0) + 1
-
-    return files, slash_credits
+    return files
 
 
-def _display_slash_credits(slash_credits):
-    """Display slash credits for allowlist building."""
-    if slash_credits:
-        print()
-        print("=== distinct '/' containing credits (for Phase 3 allowlist) ===")
-        # Sort by count descending, then by name
-        for credit, count in sorted(slash_credits.items(), key=lambda x: (-x[1], x[0])):
-            print(f"  {count:>4}x  {credit}")
-
-
-def _display_plan(album_groups, singleton_count, album_moves, singleton_moves, noop,
-                  tag_writes, album_tag_writes, va_groups, split_groups, groups, no_tag_write):
+def _display_plan(album_groups, singleton_count, album_moves, singleton_moves, dup_moves,
+                  noop, tag_writes, album_tag_writes, va_groups, split_groups, groups,
+                  no_tag_write):
     """Display the cleanup plan."""
     print()
     print("=== plan ===")
@@ -335,6 +325,7 @@ def _display_plan(album_groups, singleton_count, album_moves, singleton_moves, n
     print(f"  true singletons           : {singleton_count}")
     print(f"  files moving to albums/   : {len(album_moves)}")
     print(f"  files moving to singles/  : {len(singleton_moves)}")
+    print(f"  duplicates quarantined    : {len(dup_moves)}")
     print(f"  files already in place     : {noop}")
     print(f"  albumartist tags to write : {0 if no_tag_write else len(tag_writes)}")
     print(f"  album tags to write       : {0 if no_tag_write else len(album_tag_writes)}")
@@ -436,63 +427,6 @@ def _handle_dry_run(apply, no_tag_write, tag_writes, album_tag_writes):
         return True
 
 
-def _apply_phase(crate, apply, no_tag_write, tag_writes, album_tag_writes,
-                 album_moves, singleton_moves, groups):
-    """Apply the cleanup plan: move files and write tags."""
-    # --- apply: every move + tag write is journaled (organize.journal) ---
-    # `moved` maps each original path -> where the file actually ended up
-    # (safe_move may suffix on collision), hoisted out of the tag-write
-    # blocks so album-tag-only runs can't hit an UnboundLocalError after
-    # files have already moved (BUGFIX_PLAN.md Bug 10) and so singleton
-    # moves are tracked too.
-    moved = {}
-    with Journal(crate, 'cleanup') as j:
-        if album_moves:
-            print(f"\nmoving {len(album_moves)} files into albums/...")
-            for src, dst, aa in album_moves:
-                moved[os.path.normpath(src)] = j.move(src, dst)
-        if singleton_moves:
-            print(f"moving {len(singleton_moves)} files into singles/...")
-            for src, dst in singleton_moves:
-                moved[os.path.normpath(src)] = j.move(src, dst)
-        prune_empty_dirs(crate)
-
-        if not no_tag_write and tag_writes:
-            print(f"writing albumartist tags on {len(tag_writes)} files...")
-            # after the move, re-resolve each path: file may have moved to its album folder
-            for src, aa in tag_writes:
-                path = moved.get(os.path.normpath(src), src)
-                j.tag(path, albumartist=aa)
-        elif no_tag_write:
-            print("(--no-tag-write: albumartist tags left as-is - albums may re-split on a future beets run)")
-
-        if not no_tag_write and album_tag_writes:
-            print(f"writing album tags on {len(album_tag_writes)} files...")
-            for src, album in album_tag_writes:
-                path = moved.get(os.path.normpath(src), src)
-                j.tag(path, album=album)
-
-
-def _group_and_plan(files, crate):
-    """Group files and build the cleanup plan."""
-    groups = group_files(files)
-    plan = build_plan(groups, crate)
-    album_moves = plan.album_moves
-    singleton_moves = plan.singleton_moves
-    noop = plan.noop_count
-    tag_writes = plan.tag_writes
-    album_tag_writes = plan.album_tag_writes
-    va_groups = plan.va_groups
-    split_groups = plan.split_groups
-    ambiguous_groups = plan.ambiguous_groups
-
-    album_groups = sum(1 for k, m in groups.items() if k[0] == 'album' and len(m) > 1)
-    singleton_count = len(files) - sum(len(m) for k, m in groups.items() if k[0] == 'album' and len(m) > 1)
-
-    return (groups, plan, album_moves, singleton_moves, noop, tag_writes, album_tag_writes,
-            va_groups, split_groups, ambiguous_groups, album_groups, singleton_count)
-
-
 def run_cleanup(crate=None, apply=False, no_tag_write=False,
                 rebuild_db_flag=False, verbose=False):
     """regroup <crate>/albums + <crate>/singles in place. plain, import-safe
@@ -505,16 +439,16 @@ def run_cleanup(crate=None, apply=False, no_tag_write=False,
     print(f"mode  : {'apply (files move, tags written)' if apply else 'dry run (nothing moves)'}")
     print()
 
-    files, slash_credits = _scan_and_preprocess(crate)
-
-    _display_slash_credits(slash_credits)
+    files = _scan_and_preprocess(crate)
 
     result = _group_and_plan(files, crate)
-    groups, plan, album_moves, singleton_moves, noop, tag_writes, album_tag_writes, \
-        va_groups, split_groups, ambiguous_groups, album_groups, singleton_count = result
+    groups, plan, album_moves, singleton_moves, dup_moves, noop, tag_writes, \
+        album_tag_writes, va_groups, split_groups, ambiguous_groups, album_groups, \
+        singleton_count = result
 
-    _display_plan(album_groups, singleton_count, album_moves, singleton_moves, noop,
-                  tag_writes, album_tag_writes, va_groups, split_groups, groups, no_tag_write)
+    _display_plan(album_groups, singleton_count, album_moves, singleton_moves, dup_moves,
+                  noop, tag_writes, album_tag_writes, va_groups, split_groups, groups,
+                  no_tag_write)
 
     _display_verbose_details(verbose, va_groups, split_groups, ambiguous_groups, groups,
                            album_moves, singleton_moves, crate)
@@ -522,47 +456,86 @@ def run_cleanup(crate=None, apply=False, no_tag_write=False,
     _handle_dry_run(apply, no_tag_write, tag_writes, album_tag_writes)
 
     _apply_phase(crate, apply, no_tag_write, tag_writes, album_tag_writes,
-                 album_moves, singleton_moves, groups)
+                 album_moves, singleton_moves, dup_moves, groups)
 
     _final_reporting(crate, apply, no_tag_write, tag_writes, album_tag_writes,
                      album_moves, singleton_moves, groups, rebuild_db_flag)
 
 
 def _apply_phase(crate, apply, no_tag_write, tag_writes, album_tag_writes,
-                 album_moves, singleton_moves, groups):
-    """Apply the cleanup plan: move files and write tags."""
-    # --- apply: every move + tag write is journaled (organize.journal) ---
-    # `moved` maps each original path -> where the file actually ended up
-    # (safe_move may suffix on collision), hoisted out of the tag-write
-    # blocks so album-tag-only runs can't hit an UnboundLocalError after
-    # files have already moved (BUGFIX_PLAN.md Bug 10) and so singleton
-    # moves are tracked too.
-    moved = {}
-    with Journal(crate, 'cleanup') as j:
-        if album_moves:
-            print(f"\nmoving {len(album_moves)} files into albums/...")
-            for src, dst, aa in album_moves:
-                moved[os.path.normpath(src)] = j.move(src, dst)
-        if singleton_moves:
-            print(f"moving {len(singleton_moves)} files into singles/...")
-            for src, dst in singleton_moves:
-                moved[os.path.normpath(src)] = j.move(src, dst)
-        prune_empty_dirs(crate)
+                 album_moves, singleton_moves, dup_moves, groups):
+    """Apply the cleanup plan: move files and write tags.
 
+    Fix 7 (two-phase apply): a move whose destination is currently occupied
+    by another planned source (a swap or cycle) would collide at apply time
+    and spawn fresh `(2)` names. Phase 1 vacates every such destination to a
+    temp name first; phase 2 lands the real moves, now collision-free.
+    Everything is journaled so the run can be reverted with `organize undo`;
+    dry runs never touch the journal."""
+    if not apply:
+        return
+    moved = {}
+    temps = {}  # normpath(original src) -> temp path the file now sits at
+    quarantined = {os.path.normpath(s) for s, _ in dup_moves}
+    with Journal(crate, 'cleanup') as j:
+        _vacate_occupied_destinations(j, album_moves, singleton_moves, dup_moves, temps)
+        _land_moves(j, album_moves, temps, moved,
+                    f"\nmoving {len(album_moves)} files into albums/...")
+        _land_moves(j, singleton_moves, temps, moved,
+                    f"moving {len(singleton_moves)} files into singles/...")
+        _land_moves(j, dup_moves, temps, moved,
+                    f"quarantining {len(dup_moves)} duplicate(s) -> {duplicates_dir(crate)}/...")
+        prune_empty_dirs(crate)
         if not no_tag_write and tag_writes:
-            print(f"writing albumartist tags on {len(tag_writes)} files...")
-            # after the move, re-resolve each path: file may have moved to its album folder
-            for src, aa in tag_writes:
-                path = moved.get(os.path.normpath(src), src)
-                j.tag(path, albumartist=aa)
+            _apply_tag_writes(j, 'albumartist', tag_writes, quarantined, moved)
         elif no_tag_write:
             print("(--no-tag-write: albumartist tags left as-is - albums may re-split on a future beets run)")
-
         if not no_tag_write and album_tag_writes:
-            print(f"writing album tags on {len(album_tag_writes)} files...")
-            for src, album in album_tag_writes:
-                path = moved.get(os.path.normpath(src), src)
-                j.tag(path, album=album)
+            _apply_tag_writes(j, 'album', album_tag_writes, quarantined, moved)
+
+
+def _vacate_occupied_destinations(j, album_moves, singleton_moves, dup_moves, temps):
+    """Phase 1 of the two-phase apply: vacate every destination that another
+    planned source currently occupies, so swaps and cycles land collision-free
+    instead of spawning fresh `(2)` names."""
+    all_moves = ([(s, d) for s, d, _ in album_moves]
+                 + [(s, d) for s, d in singleton_moves]
+                 + [(s, d) for s, d in dup_moves])
+    sources = {os.path.normpath(s) for s, _ in all_moves}
+    src_index = {os.path.normpath(s): (s, d) for s, d in all_moves}
+    vacated = set()
+    for src, dst in all_moves:
+        sn, dn = os.path.normpath(src), os.path.normpath(dst)
+        if dn not in sources or dn == sn or dn in vacated:
+            continue
+        occupant = src_index.get(dn)
+        if not occupant:
+            continue
+        osrc, odst = occupant
+        temp = j.move(osrc, odst + '.phase1-tmp-' + uuid.uuid4().hex[:6])
+        temps[os.path.normpath(osrc)] = temp
+        vacated.add(dn)
+
+
+def _land_moves(j, moves, temps, moved, message):
+    """Phase 2: land one batch of moves whose destinations are now free."""
+    if not moves:
+        return
+    print(message)
+    for src, dst, *_ in moves:
+        actual = temps.get(os.path.normpath(src), src)
+        moved[os.path.normpath(src)] = j.move(actual, dst)
+
+
+def _apply_tag_writes(j, field, writes, quarantined, moved):
+    """Write one tag field on each non-quarantined file, re-resolving moved
+    paths so the tag lands on the file's new location."""
+    print(f"writing {field} tags on {len(writes)} files...")
+    for src, value in writes:
+        if os.path.normpath(src) in quarantined:
+            continue
+        path = moved.get(os.path.normpath(src), src)
+        j.tag(path, **{field: value})
 
 
 def _final_reporting(crate, apply, no_tag_write, tag_writes, album_tag_writes,
@@ -593,6 +566,7 @@ def _group_and_plan(files, crate):
     plan = build_plan(groups, crate)
     album_moves = plan.album_moves
     singleton_moves = plan.singleton_moves
+    dup_moves = plan.dup_moves
     noop = plan.noop_count
     tag_writes = plan.tag_writes
     album_tag_writes = plan.album_tag_writes
@@ -603,5 +577,6 @@ def _group_and_plan(files, crate):
     album_groups = sum(1 for k, m in groups.items() if k[0] == 'album' and len(m) > 1)
     singleton_count = len(files) - sum(len(m) for k, m in groups.items() if k[0] == 'album' and len(m) > 1)
 
-    return (groups, plan, album_moves, singleton_moves, noop, tag_writes, album_tag_writes,
-            va_groups, split_groups, ambiguous_groups, album_groups, singleton_count)
+    return (groups, plan, album_moves, singleton_moves, dup_moves, noop, tag_writes,
+            album_tag_writes, va_groups, split_groups, ambiguous_groups, album_groups,
+            singleton_count)

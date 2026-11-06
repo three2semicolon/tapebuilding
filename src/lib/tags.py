@@ -178,6 +178,20 @@ def write_tag(path, **fields):
         print(f"  tag-write failed: {path} ({e})", file=sys.stderr)
 
 
+def _dominant_key(counts, orig, total):
+    """dominant normalized key from a Counter: the top key if it reaches half
+    of `total`, else None. Deterministic lexicographic tie-break."""
+    if not total:
+        return None
+    top_n = max(counts.values())
+    candidates = [k for k in counts if counts[k] == top_n]
+    # Deterministic tie-break: lexicographic on normalized key
+    top = min(candidates) if len(candidates) > 1 else candidates[0]
+    if top_n >= total * 0.5:
+        return top
+    return None
+
+
 def canonical_albumartist(files):
     """pick the folder label for an album group: dominant (albumartist|artist)
     string, else dominant primary collaborator, else "Various Artists".
@@ -191,40 +205,52 @@ def canonical_albumartist(files):
             counts[k] += 1
             orig.setdefault(k, raw)
     total = sum(counts.values())
-    if total:
-        top, top_n = counts.most_common(1)[0]
-        if top_n >= total * 0.5:
-            return orig[top]
-        pc = collections.Counter()
-        porig = {}
-        for f in files:
-            raw = (f['albumartist'] or f['artist'] or '').strip()
-            if not raw:
-                continue
-            p = primary_token(raw)
-            k = normalize_key(p)
-            pc[k] += 1
-            porig.setdefault(k, p)
-        if pc:
-            ptop, ptop_n = pc.most_common(1)[0]
-            if ptop_n >= total * 0.5:
-                return porig[ptop]
+    top = _dominant_key(counts, orig, total)
+    if top is not None:
+        return orig[top]
+    pc = collections.Counter()
+    porig = {}
+    for f in files:
+        raw = (f['albumartist'] or f['artist'] or '').strip()
+        if not raw:
+            continue
+        p = primary_token(raw)
+        k = normalize_key(p)
+        pc[k] += 1
+        porig.setdefault(k, p)
+    ptop = _dominant_key(pc, porig, total)
+    if ptop is not None:
+        return porig[ptop]
     return 'Various Artists'
 
 
-def dominant_album(files):
-    """most common original-cased album string among the group's files."""
+def dominant_album(files, existing_folder_album=None):
+    """most common original-cased album string among the group's files.
+    Tie-break: (a) matches existing_folder_album, (b) longer/more-cased, (c) lexicographic."""
     c = collections.Counter()
     orig = {}
     for f in files:
         a = f['album']
         if a:
-            c[normalize_key(a)] += 1
-            orig.setdefault(normalize_key(a), a)
+            key = normalize_key(a)
+            c[key] += 1
+            orig.setdefault(key, a)
     if not c:
         return ''
-    # Deterministic tie-break: alphabetical ordering of original-cased strings
-    return orig[c.most_common(1)[0][0]]
+    max_count = max(c.values())
+    candidates = [key for key in c if c[key] == max_count]
+    if len(candidates) == 1:
+        return orig[candidates[0]]
+    # Tie-break (a): matches existing folder's album part
+    if existing_folder_album:
+        existing_key = normalize_key(existing_folder_album)
+        if existing_key in candidates:
+            return existing_folder_album
+    # Tie-break (b) longer string, then more-cased, then (c) lexicographic
+    def rank(key):
+        v = orig[key]
+        return (-len(v), -sum(1 for ch in v if ch.isupper()), v)
+    return orig[min(candidates, key=rank)]
 
 
 def canonical_album(files):

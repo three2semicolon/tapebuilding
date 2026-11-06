@@ -15,6 +15,8 @@ variables are set in `.env` (see `.env.example`). uppercase only. the old dual-c
 | `spotify_client_id`, `spotify_client_secret` | spotify api client id/secret (official web api oauth flow). |
 | `spotify_redirect_uri` | oauth redirect (default `http://127.0.0.1:8888/callback`). |
 | `spotify_sp_dc` | your browser's `sp_dc` cookie (obtained after logging into spotify). when set, auth uses spotapi instead of oauth, no spotify premium needed. when unset, falls back to the official web api oauth flow. |
+| `soundcloud_user` | soundcloud username or "me" for the authenticated user (default: `me`). used by soundcloud playlist rescrape and export. |
+| `soundcloud_playlists_file` | newline-delimited file of soundcloud set urls (blank lines and #-comments ignored). when set, soundcloud rescrape only re-scrapes the sets listed in this file instead of all sets. |
 | `firebase_project_id`, `firebase_credentials_path` | for `download soundbyte`. |
 
 copy `.env.example` to `.env` and fill in your values:
