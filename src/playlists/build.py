@@ -201,7 +201,7 @@ def _handle_names_scope(rows, names):
             if is_id and meta.get("id") == as_id:
                 selected.append(meta)
                 break
-            if not is_id and meta.get("name") == token:
+            if not is_id and (meta.get("name") == token or meta.get("id") == token or meta.get("playlist_url") == token):
                 selected.append(meta)
                 break
     return selected
@@ -270,7 +270,7 @@ def _apply_exclude_filter(selected, exclude_names):
                 excluded = True
                 matched_tokens.add(token)
                 break
-            if not is_id and meta.get("name") == token:
+            if not is_id and (meta.get("name") == token or meta.get("id") == token or meta.get("playlist_url") == token):
                 excluded = True
                 matched_tokens.add(token)
                 break
@@ -427,8 +427,15 @@ def build_playlists(
     if service == "soundcloud":
         sp = None
         if rescrape:
-            playlists_file = config.SOUNDCLOUD_PLAYLISTS_FILE
-            if playlists_file:
+            if names:
+                from download.soundcloud.soundcloud_export import export_sets as sc_export_sets
+                print(f"rescraping {len(names)} soundcloud set(s) (--playlist) into {exports_dir_resolved}")
+                sc_export_sets(
+                    None, names, exports_dir_resolved,
+                    cookies_from_browser=cookies_from_browser,
+                    cookie_file=cookie_file,
+                )
+            elif playlists_file:
                 from download.soundcloud.soundcloud_export import export_sets as sc_export_sets
                 identifiers = []
                 with open(playlists_file, "r", encoding="utf-8") as f:

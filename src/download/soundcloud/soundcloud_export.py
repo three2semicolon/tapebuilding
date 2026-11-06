@@ -3,17 +3,79 @@ and build a deduplicated manifest of track urls for `download soundcloud`.
 
 """
 
+import hashlib
+import json
 import os
 import re
-import json
 import csv
+import time
 from urllib.parse import urlparse
 
 import yt_dlp
+from lib import config
 from lib.text import normalize_key
 
 # Cache for SoundCloud display names to avoid repeated requests
 _soundcloud_display_name_cache = {}
+
+# Change-detection cache for SoundCloud set exports.
+# Tracks are cached on disk keyed on set URL + track-count fingerprint,
+# so re-running `download export --service soundcloud` only re-fetches
+# sets whose track count actually changed. Cache lives in
+# SOUNDCLOUD_CACHE_DIR (default <repo>/.soundcloud_cache); entries expire
+# after 14 days; SOUNDCLOUD_NO_CACHE=1 forces a full refetch.
+_CACHE_MAX_AGE = 14 * 86400
+
+
+def _soundcloud_cache_dir():
+    return config.SOUNDCLOUD_CACHE_DIR or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        ".soundcloud_cache",
+    )
+
+
+def _cache_enabled():
+    return not config.SOUNDCLOUD_NO_CACHE
+
+
+def _cache_read(set_url, fingerprint):
+    """cached tracks for `set_url` if the stored fingerprint matches and
+    entry is fresh, else None."""
+    if not _cache_enabled():
+        return None
+    try:
+        name = hashlib.md5(set_url.encode()).hexdigest()
+        path = os.path.join(_soundcloud_cache_dir(), name + ".json")
+        with open(path, encoding="utf-8") as f:
+            blob = json.load(f)
+        if blob.get("fingerprint") != fingerprint or time.time() - blob.get("saved_at", 0) > _CACHE_MAX_AGE:
+            return None
+        return blob.get("tracks")
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _cache_write(set_url, fingerprint, tracks):
+    if not _cache_enabled():
+        return
+    name = hashlib.md5(set_url.encode()).hexdigest()
+    path = os.path.join(_soundcloud_cache_dir(), name + ".json")
+    try:
+        os.makedirs(_soundcloud_cache_dir(), exist_ok=True)
+        with open(path + ".tmp", "w", encoding="utf-8") as f:
+            json.dump({"fingerprint": fingerprint, "saved_at": time.time(), "tracks": tracks}, f)
+        os.replace(path + ".tmp", path)
+    except OSError as e:
+        print(f"  warning: could not write soundcloud cache {path}: {e}")
+
+
+def _set_fingerprint(info):
+    """derive a change fingerprint from flat set info: track_count if
+    available, else entry count."""
+    tc = info.get("track_count") or info.get("playlist_count")
+    if tc:
+        return ("count", int(tc))
+    return ("count", len(info.get("entries", [])))
 
 
 def _get_soundcloud_display_name(username):
@@ -322,12 +384,22 @@ def export_set(set_url, cookies_from_browser=None, cookie_file=None):
     if not info:
         return []
 
+    # Change detection: if track count hasn't changed since last export,
+    # reuse cached tracks instead of re-fetching every track's metadata.
+    fingerprint = _set_fingerprint(info)
+    cached = _cache_read(set_url, fingerprint)
+    if cached is not None:
+        print(f"  cached set (track count: {fingerprint[1]})")
+        return cached
+
     # Process tracks
     tracks = []
     for i, entry in enumerate(info.get('entries', []), start=1):
         track = _process_set_entry(entry, i, set_url, cookies_from_browser, cookie_file)
         if track:
             tracks.append(track)
+
+    _cache_write(set_url, fingerprint, tracks)
     return tracks
 
 

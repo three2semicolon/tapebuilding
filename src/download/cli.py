@@ -27,6 +27,7 @@ import click
 from dotenv import load_dotenv
 from lib import config
 
+from lib.catalog.links import check_links, print_check_report
 from lib.spotify_auth import authenticate_user
 from download.spotify.spotify_api import get_export_dir
 from download.spotify.spotify_export import export_all_data as spotify_export_all_data, export_specific_playlist, export_playlists
@@ -635,6 +636,30 @@ def soundbyte_cmd(limit, output, delay):
     click.echo(f"album csv  : {result['album_csv_path']}")
     click.echo(f"track csv  : {result['track_csv_path']}")
     click.echo(f"\nfeed the track csv to `download spotify --pre-skip-existing -u {result['track_csv_path']}` to download.")
+
+
+@download.command("check-links")
+@click.option("--fix", is_flag=True, help="rewrite relocated links to point at the found file.")
+@click.option(
+    "--library-root",
+    "library_root",
+    type=click.Path(),
+    help="crate root to check against (defaults to ARCHIVE_PATH).",
+)
+def check_links_cmd(fix, library_root):
+    """verify every stored manual link still points at an existing file.
+
+    Without --fix, reports which links are ok, relocated (file moved to a
+    different directory), ambiguous (multiple files with same basename), or
+    missing (no file found). With --fix, rewrites relocated links where
+    exactly one matching file exists in the catalog.
+    """
+    try:
+        report = check_links(library_root=library_root, fix=fix)
+        print_check_report(report, fixed=fix)
+    except Exception as e:
+        click.echo(f"error: {e}", err=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

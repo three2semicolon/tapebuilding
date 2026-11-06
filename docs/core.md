@@ -56,6 +56,9 @@ core process-unmatched                                          # dry run by def
 core process-unmatched --apply
 core process-unmatched --archive-path <crate>
 core process-unmatched --service spotify --exclude "_orc"
+core process-unmatched --playlist "_obs"                                          # one spotify playlist by name
+core process-unmatched --playlist "https://open.spotify.com/playlist/..."           # one spotify playlist by url
+core process-unmatched --service soundcloud --playlist "https://soundcloud.com/anomaliebeats/velours"  # one soundcloud set
 core process-unmatched --apply --format flac --bitrate 1000k
 core process-unmatched --apply --service soundcloud             # rescrape soundcloud sets, download unmatched, import, sync
 core process-unmatched --apply --service soundcloud --manual    # manual mode: prompt for each unmatched track's source
@@ -69,6 +72,7 @@ options:
 - `--exports-dir` - exports directory override
 - `--service` - service to process (`spotify` or `soundcloud`, default: `spotify`)
 - `--exclude` - skip a specific playlist by name or id (repeatable)
+- `--playlist` / `-p` - process only the specified playlist(s) by name or url (repeatable; default: all owned)
 - `--format` (default `mp3`), `--bitrate` (default `320k`)
 - `--cookies-file` - netscape format cookie file for spotify download
 - `--pre-skip-existing` - skip downloading existing files (default: true)

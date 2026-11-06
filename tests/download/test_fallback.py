@@ -3,7 +3,7 @@
 from unittest import mock
 
 
-from download.fallback import _log_urls, process_fallback
+from download.fallback import _log_urls, filter_manual_linked_urls, process_fallback
 
 
 class TestLogUrls:
@@ -381,3 +381,75 @@ class TestProcessFallbackLost:
             assert successful == []
             assert failed == []
             assert batch_succeeded is False
+
+
+class TestFilterManualLinkedUrls:
+    """Tests for filter_manual_linked_urls - skipping URLs already covered by a manual link."""
+
+    def test_keeps_all_when_no_links(self, monkeypatch):
+        monkeypatch.setattr('lib.catalog.links.load_links_safe', lambda: {})
+        kept, skipped = filter_manual_linked_urls(['url1', 'url2'])
+        assert kept == ['url1', 'url2']
+        assert skipped == []
+
+    def test_skips_url_with_valid_link(self, monkeypatch):
+        links = {
+            'https://open.spotify.com/track/abc': {
+                'path': 'albums/Artist/Album/01 - Song.flac',
+                'artist': 'Artist',
+                'title': 'Song',
+            }
+        }
+        monkeypatch.setattr('lib.catalog.links.load_links_safe', lambda: links)
+        monkeypatch.setattr(
+            'lib.catalog.links.resolve_link',
+            lambda link, root, catalog=None: '/crate/albums/Artist/Album/01 - Song.flac',
+        )
+        kept, skipped = filter_manual_linked_urls(
+            [
+                'https://open.spotify.com/track/abc',
+                'https://open.spotify.com/track/def',
+            ],
+            library_root='/crate',
+        )
+        assert kept == ['https://open.spotify.com/track/def']
+        assert skipped == ['https://open.spotify.com/track/abc']
+
+    def test_keeps_url_with_stale_link(self, monkeypatch):
+        links = {
+            'https://open.spotify.com/track/abc': {
+                'path': 'albums/Artist/Album/01 - Song.flac',
+            }
+        }
+        monkeypatch.setattr('lib.catalog.links.load_links_safe', lambda: links)
+        monkeypatch.setattr('lib.catalog.links.resolve_link', lambda link, root, catalog=None: None)
+        kept, skipped = filter_manual_linked_urls(
+            ['https://open.spotify.com/track/abc'],
+            library_root='/crate',
+        )
+        assert kept == ['https://open.spotify.com/track/abc']
+        assert skipped == []
+
+    def test_preserves_metadata_sync(self, monkeypatch):
+        """Filtering URLs also drops their metadata so the two stay in sync."""
+        links = {
+            'https://open.spotify.com/track/abc': {'path': 'albums/Artist/Album/01 - Song.flac'}
+        }
+        monkeypatch.setattr('lib.catalog.links.load_links_safe', lambda: links)
+        monkeypatch.setattr(
+            'lib.catalog.links.resolve_link',
+            lambda link, root, catalog=None: '/crate/albums/Artist/Album/01 - Song.flac',
+        )
+        urls = [
+            'https://open.spotify.com/track/abc',
+            'https://open.spotify.com/track/def',
+        ]
+        metadata = {
+            'https://open.spotify.com/track/abc': {'artist': 'A', 'track': 'T'},
+            'https://open.spotify.com/track/def': {'artist': 'B', 'track': 'U'},
+        }
+        # This mirrors what the download functions do after filtering:
+        urls, _ = filter_manual_linked_urls(urls, library_root='/crate')
+        metadata = {u: m for u, m in metadata.items() if u in set(urls)}
+        assert urls == ['https://open.spotify.com/track/def']
+        assert set(metadata.keys()) == {'https://open.spotify.com/track/def'}

@@ -85,6 +85,9 @@ core process-unmatched                                          # dry run by def
 core process-unmatched --apply
 core process-unmatched --archive-path Z:/music/library
 core process-unmatched --service spotify --exclude "_orc" --exclude "7891EGVL0dNKc7OXH08c77" --exclude "4OUSku5ncsCDBCl4K5yj0t" --exclude "__obs"
+core process-unmatched --playlist "_obs"                                          # one spotify playlist by name
+core process-unmatched --playlist "https://open.spotify.com/playlist/..."           # one spotify playlist by url
+core process-unmatched --service soundcloud --playlist "https://soundcloud.com/anomaliebeats/velours"  # one soundcloud set
 core process-unmatched --apply --format flac --bitrate 1000k
 core process-unmatched --apply --service soundcloud             # rescrape soundcloud sets, download unmatched, import, sync
 core process-unmatched --apply --service soundcloud --manual    # manual mode: prompt for each unmatched track's source
@@ -98,6 +101,7 @@ options:
 - `--exports-dir` - exports directory override (default: `<playlists_path>/exports`)
 - `--service` - service to process (spotify or soundcloud, default: spotify)
 - `--exclude` - skip a specific playlist by name or ID (repeatable; applied after scope resolution; default: none)
+- `--playlist` / `-p` - process only the specified playlist(s) by name or URL (repeatable; default: all owned)
 - `--format` (default mp3) - audio format for the download step
 - `--bitrate` (default 320k) - audio bitrate for the download step
 - `--cookies-file` - Netscape format cookie file for Spotify download

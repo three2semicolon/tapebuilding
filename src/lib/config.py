@@ -63,6 +63,9 @@ _SETTINGS = {
     "SOUNDCLOUD_USER": (None, "me"),
     "SOUNDCLOUD_PLAYLISTS_FILE": (None, None),
     "SOUNDCLOUD_COOKIES_FILE": (None, None),
+    # soundcloud export cache (change detection via track-count fingerprint)
+    "SOUNDCLOUD_CACHE_DIR": (None, None),
+    "SOUNDCLOUD_NO_CACHE": (_as_bool, False),
     # paths - lib.paths.resolve() still owns cli > env > default precedence
     "ARCHIVE_PATH": (None, None),
     "TAPEDECK_PATH": (None, None),

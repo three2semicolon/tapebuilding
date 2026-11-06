@@ -404,6 +404,19 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
                 print(f"  Skipping {removed} lost song(s) (listed in lost-songs.csv).")
             url_count = len(urls)
 
+    # Filter out songs already covered by a manual link (.manual_links.json).
+    # The user already pointed fallback at an existing crate file for these,
+    # so there's nothing to download or prompt for. Resolve against the crate
+    # root since link paths are crate-relative.
+    if urls:
+        before = len(urls)
+        urls, manual_skipped = fallback.filter_manual_linked_urls(urls, archive_path())
+        metadata = {u: m for u, m in metadata.items() if u in set(urls)}
+        removed = before - len(urls)
+        if removed:
+            print(f"  Skipping {removed} song(s) already covered by a manual link.")
+        url_count = len(urls)
+
     # Pre-skip existing check
     if pre_skip_existing:
         should_continue, urls, url_count = _handle_pre_skip_existence(

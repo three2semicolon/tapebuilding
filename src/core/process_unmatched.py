@@ -82,6 +82,7 @@ def _refresh_playlists_step(
     playlists_path_resolved,
     exports_dir_opt,
     record,
+    playlist_names=None,
     cookies_file=None,
     cookies_from_browser=None,
 ):
@@ -122,7 +123,7 @@ def _refresh_playlists_step(
                 apply=apply,
                 rescrape=True,  # Rescrape from Spotify to get latest data
                 reindex=True,
-                names=[],  # No specific names - use scope (owned playlists)
+                names=playlist_names or [],
                 exclude_names=exclude_names or [],
                 service=service,
                 archive_path=crate,
@@ -295,6 +296,7 @@ def _sync_playlists_step(
     skip_initial_playlist_refresh,
     results,
     record,
+    playlist_names=None,
 ):
     """Handle the sync playlists step of the unmatched tracks processing pipeline.
 
@@ -327,7 +329,7 @@ def _sync_playlists_step(
                     apply=apply,
                     rescrape=False,  # Don't rescrape Spotify - use existing export data
                     reindex=True,  # Rebuild local playlists to match current library
-                    names=[],  # No specific names - use scope (owned playlists)
+                    names=playlist_names or [],
                     exclude_names=[],  # When skipping initial refresh, don't apply exclude names to sync
                     service=service,
                     archive_path=crate,
@@ -356,7 +358,7 @@ def _sync_playlists_step(
                     apply=apply,
                     rescrape=False,  # Don't rescrape Spotify - use existing export data
                     reindex=True,  # Rebuild local playlists to match current library
-                    names=[],  # No specific names - use scope (owned playlists)
+                    names=playlist_names or [],
                     exclude_names=exclude_names or [],
                     service=service,
                     archive_path=crate,
@@ -380,6 +382,7 @@ def run_process_unmatched(
     playlists_path_opt=None,
     exports_dir_opt=None,
     service="spotify",
+    playlist_names=None,
     exclude_names=None,
     apply=False,
     format="mp3",
@@ -428,6 +431,7 @@ def run_process_unmatched(
         playlists_path_resolved,
         exports_dir_opt,
         record,
+        playlist_names=playlist_names,
         cookies_file=cookies_file,
         cookies_from_browser=cookies_from_browser,
     )
@@ -469,6 +473,7 @@ def run_process_unmatched(
         skip_initial_playlist_refresh,
         results,
         record,
+        playlist_names=playlist_names,
     )
     print()
 

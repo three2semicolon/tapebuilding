@@ -174,13 +174,58 @@ def add_link(key, file_path, artist='', title='', library_root=None, links_file=
     return rel
 
 
-def resolve_link(link, library_root):
+def _ascii_key(s):
+    """ASCII-only lowercase key for tolerant path comparison.
+
+    Strips all non-ASCII characters (CJK, Hangul, etc.) so that paths which
+    differ only in non-Latin characters still match. Used as a last-resort
+    fallback when exact and normalization-based matching both fail.
+    """
+    return ''.join(c for c in (s or '') if ord(c) < 128).lower()
+
+
+def resolve_link(link, library_root, catalog=None):
     """a stored link -> absolute path, or None if the file isn't there."""
     rel = (link or {}).get('path')
     if not rel:
         return None
     full = os.path.join(library_root, *rel.split('/'))
-    return full if os.path.isfile(full) else None
+    if os.path.isfile(full):
+        return full
+    # Try Unicode normalization (NFC/NFD) for files whose on-disk encoding
+    # differs from what's stored in the links file.
+    import unicodedata
+    for form in ('NFC', 'NFD'):
+        normalized = unicodedata.normalize(form, rel)
+        if normalized != rel:
+            full2 = os.path.join(library_root, *normalized.split('/'))
+            if os.path.isfile(full2):
+                return full2
+    # Fallback: basename matching against catalog index (handles moved files
+    # and minor character differences).
+    if catalog is not None:
+        base = (link.get('basename') or rel.rsplit('/', 1)[-1]).lower()
+        base_ascii = _ascii_key(base)
+        exact_cands = []
+        ascii_cands = []
+        for entry in catalog:
+            p = entry.get('path')
+            if not p:
+                continue
+            try:
+                cand_rel = crate_relpath(p, library_root)
+            except LinkRejected:
+                continue
+            cand_base = os.path.basename(p).lower()
+            if cand_base == base:
+                exact_cands.append(cand_rel)
+            elif base_ascii and _ascii_key(cand_base) == base_ascii:
+                ascii_cands.append(cand_rel)
+        if len(exact_cands) == 1:
+            return os.path.join(library_root, *exact_cands[0].split('/'))
+        if not exact_cands and len(ascii_cands) == 1:
+            return os.path.join(library_root, *ascii_cands[0].split('/'))
+    return None
 
 
 def check_links(library_root=None, links_file=None, catalog=None, fix=False):
@@ -219,6 +264,14 @@ def check_links(library_root=None, links_file=None, catalog=None, fix=False):
                     continue
         base = (link.get('basename') or (link.get('path') or '').rsplit('/', 1)[-1]).lower()
         cands = by_base.get(base, [])
+        if not cands:
+            # Tolerant fallback: ASCII-only basename comparison (handles CJK /
+            # Hangul character differences between stored path and on-disk file).
+            base_ascii = _ascii_key(base)
+            if base_ascii:
+                for cand_base, cand_paths in by_base.items():
+                    if _ascii_key(cand_base) == base_ascii:
+                        cands.extend(cand_paths)
         if len(cands) == 1:
             report['relocated'].append((key, dict(link), cands[0]))  # snapshot: fix mutates `link`
             if fix:

@@ -246,6 +246,43 @@ def _read_lost_song_urls(lost_songs_path: str) -> set:
     return urls
 
 
+def filter_manual_linked_urls(urls, library_root=None):
+    """Filter out URLs that already have a valid manual link to an existing file.
+
+    A manual link (``.manual_links.json``) means the user already pointed
+    fallback at an existing crate file for this track. Re-downloading or
+    re-prompting for it is pointless. The link is resolved against the crate
+    root (``archive_path()``) since link paths are crate-relative.
+
+    Returns a tuple ``(kept, skipped)`` where ``kept`` are URLs without a
+    valid link and ``skipped`` are URLs whose link resolves to an existing file.
+    """
+    from lib.catalog import links as manual_links
+
+    links = manual_links.load_links_safe()
+    if not links:
+        return list(urls), []
+    root = library_root or manual_links.archive_path()
+    # Load the catalog index so resolve_link can fall back to basename
+    # matching when the stored path doesn't exactly match the on-disk file
+    # (e.g. CJK / Hangul character differences between stored path and file).
+    try:
+        from lib.catalog.indexer import get_index
+        catalog = get_index(root)
+    except Exception:
+        catalog = None
+    kept = []
+    skipped = []
+    for url in urls:
+        key = manual_links.link_key(url)
+        link = links.get(key)
+        if link and manual_links.resolve_link(link, root, catalog=catalog):
+            skipped.append(url)
+        else:
+            kept.append(url)
+    return kept, skipped
+
+
 def process_fallback(
     batch: List[str],
     metadata: Dict[str, Dict[str, Any]],
