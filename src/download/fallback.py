@@ -117,6 +117,11 @@ def _read_fallback_input(artist: str, track: str) -> Tuple[str, Optional[str]]:
             print()
             return ('abort', None)
 
+        if ch == '\x1b':
+            # ESC — skip all remaining prompts
+            print()
+            return ('abort', None)
+
         # Regular character: echo and accumulate. Skip other control chars.
         if ord(ch) < 32:
             continue
