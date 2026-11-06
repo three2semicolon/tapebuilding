@@ -435,8 +435,9 @@ def build_playlists(
                     cookies_from_browser=cookies_from_browser,
                     cookie_file=cookie_file,
                 )
-            elif playlists_file:
+            elif config.SOUNDCLOUD_PLAYLISTS_FILE:
                 from download.soundcloud.soundcloud_export import export_sets as sc_export_sets
+                playlists_file = config.SOUNDCLOUD_PLAYLISTS_FILE
                 identifiers = []
                 with open(playlists_file, "r", encoding="utf-8") as f:
                     for line in f:

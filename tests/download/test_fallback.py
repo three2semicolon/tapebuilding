@@ -43,7 +43,8 @@ class TestLogUrls:
 
 class TestProcessFallback:
     def test_process_fallback_spotify_all_skip(self):
-        """Test when all URLs are skipped due to missing metadata."""
+        """Test when all URLs are skipped due to missing metadata — they are
+        now prompted (URL shown as identifier) rather than skipped silently."""
         batch = ["url1", "url2"]
         metadata = {
             "url1": {"artist": "", "track": "Track 1"},  # Missing artist
@@ -62,11 +63,12 @@ class TestProcessFallback:
                 library_index={},
             )
 
-            # All should be failed due to missing metadata
+            # All should be failed (user skipped each prompt)
             assert successful == []
             assert failed == ["url1", "url2"]
             assert batch_succeeded is False
-            assert mock_prompt.call_count == 0  # No prompts should be made
+            # Prompts are now made for missing-metadata URLs (URL shown as identifier)
+            assert mock_prompt.call_count == 2
 
     def test_process_fallback_spotify_all_exist(self):
         """Test when all URLs already exist in library."""

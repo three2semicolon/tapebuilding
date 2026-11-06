@@ -194,6 +194,18 @@ def resolve_link(link, library_root, catalog=None):
         return full
     # Try Unicode normalization (NFC/NFD) for files whose on-disk encoding
     # differs from what's stored in the links file.
+    found = _resolve_link_by_normalization(library_root, rel)
+    if found:
+        return found
+    # Fallback: basename matching against catalog index (handles moved files
+    # and minor character differences).
+    if catalog is not None:
+        return _resolve_link_by_catalog(link, library_root, catalog, rel)
+    return None
+
+
+def _resolve_link_by_normalization(library_root, rel):
+    """Try NFC/NFD normalization of the stored path; return match or None."""
     import unicodedata
     for form in ('NFC', 'NFD'):
         normalized = unicodedata.normalize(form, rel)
@@ -201,31 +213,69 @@ def resolve_link(link, library_root, catalog=None):
             full2 = os.path.join(library_root, *normalized.split('/'))
             if os.path.isfile(full2):
                 return full2
-    # Fallback: basename matching against catalog index (handles moved files
-    # and minor character differences).
-    if catalog is not None:
-        base = (link.get('basename') or rel.rsplit('/', 1)[-1]).lower()
-        base_ascii = _ascii_key(base)
-        exact_cands = []
-        ascii_cands = []
-        for entry in catalog:
-            p = entry.get('path')
-            if not p:
-                continue
-            try:
-                cand_rel = crate_relpath(p, library_root)
-            except LinkRejected:
-                continue
-            cand_base = os.path.basename(p).lower()
-            if cand_base == base:
-                exact_cands.append(cand_rel)
-            elif base_ascii and _ascii_key(cand_base) == base_ascii:
-                ascii_cands.append(cand_rel)
-        if len(exact_cands) == 1:
-            return os.path.join(library_root, *exact_cands[0].split('/'))
-        if not exact_cands and len(ascii_cands) == 1:
-            return os.path.join(library_root, *ascii_cands[0].split('/'))
     return None
+
+
+def _resolve_link_by_catalog(link, library_root, catalog, rel):
+    """Fall back to basename matching against catalog index."""
+    base = (link.get('basename') or rel.rsplit('/', 1)[-1]).lower()
+    base_ascii = _ascii_key(base)
+    exact_cands = []
+    ascii_cands = []
+    for entry in catalog:
+        p = entry.get('path')
+        if not p:
+            continue
+        try:
+            cand_rel = crate_relpath(p, library_root)
+        except LinkRejected:
+            continue
+        cand_base = os.path.basename(p).lower()
+        if cand_base == base:
+            exact_cands.append(cand_rel)
+        elif base_ascii and _ascii_key(cand_base) == base_ascii:
+            ascii_cands.append(cand_rel)
+    if len(exact_cands) == 1:
+        return os.path.join(library_root, *exact_cands[0].split('/'))
+    if not exact_cands and len(ascii_cands) == 1:
+        return os.path.join(library_root, *ascii_cands[0].split('/'))
+    return None
+
+
+def _build_by_base_index(catalog, root):
+    """Build a basename -> list of crate-relative paths map from the catalog."""
+    by_base = defaultdict(list)
+    for e in catalog:
+        p = e.get('path')
+        if not p:
+            continue
+        try:
+            by_base[os.path.basename(p).lower()].append(crate_relpath(p, root))
+        except LinkRejected:
+            continue
+    return by_base
+
+
+def _classify_link(link, by_base):
+    """Classify a broken link against the by-basename index.
+
+    Returns ('relocated', cand), ('ambiguous', cands), or ('missing', None).
+    """
+    base = (link.get('basename') or (link.get('path') or '').rsplit('/', 1)[-1]).lower()
+    cands = by_base.get(base, [])
+    if not cands:
+        # Tolerant fallback: ASCII-only basename comparison (handles CJK /
+        # Hangul character differences between stored path and on-disk file).
+        base_ascii = _ascii_key(base)
+        if base_ascii:
+            for cand_base, cand_paths in by_base.items():
+                if _ascii_key(cand_base) == base_ascii:
+                    cands.extend(cand_paths)
+    if len(cands) == 1:
+        return ('relocated', cands[0])
+    if cands:
+        return ('ambiguous', cands)
+    return ('missing', None)
 
 
 def check_links(library_root=None, links_file=None, catalog=None, fix=False):
@@ -253,32 +303,15 @@ def check_links(library_root=None, links_file=None, catalog=None, fix=False):
             if catalog is None:
                 from .indexer import get_index
                 catalog = get_index(root)
-            by_base = defaultdict(list)
-            for e in catalog:
-                p = e.get('path')
-                if not p:
-                    continue
-                try:
-                    by_base[os.path.basename(p).lower()].append(crate_relpath(p, root))
-                except LinkRejected:
-                    continue
-        base = (link.get('basename') or (link.get('path') or '').rsplit('/', 1)[-1]).lower()
-        cands = by_base.get(base, [])
-        if not cands:
-            # Tolerant fallback: ASCII-only basename comparison (handles CJK /
-            # Hangul character differences between stored path and on-disk file).
-            base_ascii = _ascii_key(base)
-            if base_ascii:
-                for cand_base, cand_paths in by_base.items():
-                    if _ascii_key(cand_base) == base_ascii:
-                        cands.extend(cand_paths)
-        if len(cands) == 1:
-            report['relocated'].append((key, dict(link), cands[0]))  # snapshot: fix mutates `link`
+            by_base = _build_by_base_index(catalog, root)
+        status, value = _classify_link(link, by_base)
+        if status == 'relocated':
+            report['relocated'].append((key, dict(link), value))  # snapshot: fix mutates `link`
             if fix:
-                link['path'] = cands[0]
-                link['basename'] = cands[0].rsplit('/', 1)[-1]
-        elif cands:
-            report['ambiguous'].append((key, link, cands))
+                link['path'] = value
+                link['basename'] = value.rsplit('/', 1)[-1]
+        elif status == 'ambiguous':
+            report['ambiguous'].append((key, link, value))
         else:
             report['missing'].append((key, link, None))
 

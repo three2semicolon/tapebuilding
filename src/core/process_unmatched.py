@@ -141,6 +141,7 @@ def _refresh_playlists_step(
             else:
                 record("refresh-playlists", False, error="unmatched CSV not generated")
         except Exception as e:
+            print(f"  error: {e}")
             record("refresh-playlists", False, error=str(e))
 
 

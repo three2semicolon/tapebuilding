@@ -58,6 +58,42 @@ def _read_key() -> Optional[str]:
         return ch
 
 
+def _url_slug(url: str) -> str:
+    """Derive a filename-friendly slug from a URL's last path component.
+
+    Used as a fallback identifier when csv metadata is missing (e.g.
+    SoundCloud API-v2 tracks where yt-dlp couldn't extract title/uploader).
+    """
+    if not url:
+        return ''
+    return url.rstrip('/').split('/')[-1]
+
+
+def _resolve_fallback_display(url, metadata, format):
+    """Resolve display values and predicted filename for a fallback prompt.
+
+    When csv metadata is missing (empty artist/track — common for SoundCloud
+    API-v2 tracks where yt-dlp couldn't extract title/uploader), show the URL
+    itself as the track identifier instead of skipping the prompt entirely.
+
+    Returns (prompt_artist, prompt_track, predicted_filename, has_meta).
+    """
+    meta = metadata.get(url) or {}
+    artist = meta.get('artist', '')
+    track = meta.get('track', '')
+    has_meta = bool(artist and track)
+    if not has_meta:
+        if not metadata:
+            print("  Warning: no csv metadata was loaded at all (see the warning near the start of the run)")
+        elif url not in metadata:
+            print("  Warning: this url isn't in the loaded csv metadata (url mismatch?)")
+        else:
+            print(f"  Warning: missing artist/track metadata for {url}")
+        predicted = f"{_url_slug(url) or 'unknown'}.{format}"
+        return '', url, predicted, False
+    return artist, track, predict_output_filename(artist, track, format), True
+
+
 def _read_fallback_input(artist: str, track: str) -> Tuple[str, Optional[str]]:
     """Read user input for a fallback track, detecting backspace vs enter vs URL.
 
@@ -74,6 +110,27 @@ def _read_fallback_input(artist: str, track: str) -> Tuple[str, Optional[str]]:
         Tuple of (action, value) where action is 'url', 'skip', 'lost', or
         'abort'.
     """
+    result = _read_fallback_tty(artist, track)
+    if result is not None:
+        return result
+
+    # Not a TTY: fall back to click.prompt for the whole line.
+    prompt = (
+        f"Enter a URL or local file path to download '{artist} - {track}' instead "
+        f"(Enter to skip, Backspace to mark as lost): "
+    )
+    try:
+        user_input = click.prompt(prompt.strip(), default='', show_default=False)
+    except (EOFError, click.exceptions.Abort):
+        return ('abort', None)
+    if not user_input:
+        return ('skip', None)
+    return ('url', user_input)
+
+
+def _read_fallback_tty(artist: str, track: str) -> Optional[Tuple[str, Optional[str]]]:
+    """Read input from a TTY key-by-key. Returns (action, value), or None when
+    stdin is not a TTY and the caller should fall back to click.prompt."""
     prompt = (
         f"Enter a URL or local file path to download '{artist} - {track}' instead "
         f"(Enter to skip, Backspace to mark as lost): "
@@ -84,15 +141,7 @@ def _read_fallback_input(artist: str, track: str) -> Tuple[str, Optional[str]]:
     while True:
         ch = _read_key()
         if ch is None:
-            # Not a TTY or an uninterpretably special key: fall back to
-            # click.prompt for the whole line.
-            try:
-                user_input = click.prompt(prompt.strip(), default='', show_default=False)
-            except (EOFError, click.exceptions.Abort):
-                return ('abort', None)
-            if not user_input:
-                return ('skip', None)
-            return ('url', user_input)
+            return None  # not a TTY: let the caller fall back to click.prompt
 
         if ch in ('\r', '\n'):
             # Enter key
@@ -106,11 +155,10 @@ def _read_fallback_input(artist: str, track: str) -> Tuple[str, Optional[str]]:
             if chars:
                 chars.pop()
                 print('\b \b', end='', flush=True)
-            else:
-                # Backspace on an empty line = mark as lost
-                print()
-                return ('lost', None)
-            continue
+                continue
+            # Backspace on an empty line = mark as lost
+            print()
+            return ('lost', None)
 
         if ch == '\x03':
             # Ctrl+C — abort, skip all remaining
@@ -454,26 +502,10 @@ def _process_fallback_url(url, metadata, format, output_dir,
         fallback_skipped.append(url)
         return fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost, skip_all_remaining
 
-    if not artist or not track:
-        if not metadata:
-            why = "no csv metadata was loaded at all (see the warning near the start of the run)"
-        elif url not in metadata:
-            why = "this url isn't in the loaded csv metadata (url mismatch?)"
-        else:
-            why = "csv row has no artist/track values"
-        print(f"  Skipping fallback for URL with missing metadata: {url}\n    -> {why}")
-        fallback_failed.append(url)
-        return fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost, skip_all_remaining
-
-    # Normalize artist and track metadata for consistent formatting.
-    # read_csv_metadata always stores 'artist'/'track' keys regardless of
-    # service; is_spotify only affects the filename template below.
-    artist = meta.get('artist', '')
-    track = meta.get('track', '')
-
-    # Predict output filename
-    predicted = predict_output_filename(artist, track, format)
-
+    # Resolve display values and predicted filename. When csv metadata is
+    # missing, the URL itself is shown as the track identifier so the user
+    # can still identify which track is being prompted.
+    prompt_artist, prompt_track, predicted, has_meta = _resolve_fallback_display(url, metadata, format)
     stem = os.path.splitext(predicted)[0]
 
     # Check if already exists via pre-skip logic (if enabled and library_index provided)
@@ -483,7 +515,7 @@ def _process_fallback_url(url, metadata, format, output_dir,
         return fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost, skip_all_remaining
 
     # Get user input for fallback source
-    action, user_input = _read_fallback_input(artist, track)
+    action, user_input = _read_fallback_input(prompt_artist, prompt_track)
 
     if action == 'abort':
         # Ctrl+C: skip all remaining downloads
@@ -494,7 +526,7 @@ def _process_fallback_url(url, metadata, format, output_dir,
 
     if action == 'lost':
         # Backspace: mark as lost — append to lost-songs.csv and remove from unmatched.csv
-        print(f"  Marking '{artist} - {track}' as lost.")
+        print(f"  Marking '{prompt_artist} - {prompt_track}' as lost.")
         if lost_songs_path and row_dict:
             _write_lost_song(lost_songs_path, row_dict)
         if unmatched_csv_path:
@@ -503,13 +535,13 @@ def _process_fallback_url(url, metadata, format, output_dir,
         return fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost, skip_all_remaining
 
     if action == 'skip':
-        print(f"  Skipping fallback for '{artist} - {track}'.")
+        print(f"  Skipping fallback for '{prompt_artist} - {prompt_track}'.")
         fallback_skipped.append(url)
         return fallback_succeeded, fallback_failed, fallback_skipped, fallback_lost, skip_all_remaining
 
     # action == 'url': process the user input (URL or local file)
     fallback_succeeded, fallback_failed = _process_fallback_input(
-        user_input, artist, track, format, output_dir, overwrite_errors,
+        user_input, prompt_artist, prompt_track, format, output_dir, overwrite_errors,
         cookies_from_browser, resolved_ffmpeg, fallback_succeeded, fallback_failed, url, predicted
     )
 
