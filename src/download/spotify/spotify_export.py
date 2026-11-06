@@ -1,9 +1,9 @@
 """download.spotify_export - export spotify playlists + liked songs to csv,
 and build a deduplicated manifest of track urls for `spotify_download`.
 
-was spotify_to_csv.py. extract_playlist_id_from_url() stays in this file
-(spotify-export-specific, not a generic lib/ concern) even though
-playlists/build.py also imports it.
+was spotify_to_csv.py. extract_playlist_id_from_url() now lives in
+lib.exclusion (shared with playlists.build and playlists.cli); it is
+re-exported here for backward compatibility.
 
 export_playlists() is new (not in the original spotify_to_csv.py): exports
 a *list* of specific playlists and merges their tracks into one scoped
@@ -13,6 +13,12 @@ full library export - see its own docstring.
 
 import os
 
+from lib.exclusion import (
+    extract_playlist_id_from_url,
+    build_exclude_tokens,
+    is_playlist_excluded,
+)
+
 from download.spotify.spotify_api import (
     get_user_playlists,
     get_playlist_tracks,
@@ -21,15 +27,6 @@ from download.spotify.spotify_api import (
     export_to_csv,
     export_manifest_as_txt,
 )
-
-
-def extract_playlist_id_from_url(url):
-    if 'open.spotify.com/playlist/' in url:
-        return url.split('open.spotify.com/playlist/')[1].split('?')[0]
-    elif url.startswith('spotify:playlist:'):
-        return url.split('spotify:playlist:')[1]
-    else:
-        return url
 
 
 def export_specific_playlist(sp, playlist_identifier, export_dir):
@@ -134,32 +131,14 @@ def export_all_data(sp, export_dir, my_playlists_only=False, exclude_names=None)
     export_to_csv(playlists, 'playlists.csv', spotify_dir)
 
     # Process exclusions if provided
-    exclude_tokens = []
-    if exclude_names:
-        for token in exclude_names:
-            as_id = extract_playlist_id_from_url(token)
-            is_id = len(as_id) >= 16
-            exclude_tokens.append((token, as_id, is_id))
+    exclude_tokens = build_exclude_tokens(exclude_names) if exclude_names else []
 
     all_playlist_tracks = []
     for playlist in playlists:
-        # Check if this playlist should be excluded
-        excluded = False
-        playlist_id = playlist.get('id', '')
-        playlist_name = playlist.get('name', 'Unknown')
-
-        for token, as_id, is_id in exclude_tokens:
-            if is_id and playlist_id == as_id:
-                excluded = True
-                break
-            if not is_id and playlist_name == token:
-                excluded = True
-                break
-
-        if not excluded:
-            tracks = get_playlist_tracks(sp, playlist.get('id', ''), playlist.get('name', 'Unknown'))
-            all_playlist_tracks.extend(tracks)
-        # else: silently skip excluded playlist
+        if is_playlist_excluded(playlist, exclude_tokens):
+            continue  # silently skip excluded playlist
+        tracks = get_playlist_tracks(sp, playlist.get('id', ''), playlist.get('name', 'Unknown'))
+        all_playlist_tracks.extend(tracks)
 
     export_to_csv(all_playlist_tracks, 'playlist_tracks.csv', spotify_dir)
 

@@ -1,5 +1,4 @@
 """lib.paths - resolve every root path the project touches.
-import os
 
 single source of truth for ARCHIVE_PATH / TAPEDECK_PATH / PLAYLISTS_PATH /
 FFMPEG_PATH. uppercase-only - the old dual-case (ARCHIVE_PATH / archive_path)
@@ -44,27 +43,7 @@ def tapedeck_path(cli=None):
 def playlists_path(cli=None):
     """where .m3u8s + exports live - PLAYLISTS_PATH. no fallback: a missing
     PLAYLISTS_PATH is a real configuration error, not something to guess at."""
-    result = resolve('PLAYLISTS_PATH', cli, required=True)
-    # FIX: Handle potential issue with backslash handling in Windows paths
-    # If we get a value that looks like it's missing backslashes (e.g., Y:musiccrateplaylists
-    # instead of Y:\music\crate\playlists), attempt to correct it
-    if isinstance(result, str) and len(result) >= 3 and result[1] == ':':
-        # Check if it looks like a Windows drive path that's missing backslashes
-        # Expected pattern: Y:\folder\subfolder\filename
-        # Corrupted pattern we see: Y:foldername (missing backslashes)
-        if '\\' not in result and result.count(':') == 1:
-            # Try to reconstruct proper path by inserting backslashes
-            # This is a heuristic fix for the specific corruption we're observing
-            drive_part = result[:2]  # e.g., "Y:"
-            rest = result[2:]        # e.g., "musiccrateplaylists"
-
-            # Try to split the rest into reasonable folder names
-            # This is specific to our known case but handles the corruption
-            if rest == 'musiccrateplaylists':
-                corrected = drive_part + '\\music\\crate\\playlists'
-                result = corrected
-            # Add more specific fixes if needed for other known corruptions
-    return result
+    return resolve('PLAYLISTS_PATH', cli, required=True)
 
 
 def exports_dir(playlists_path_value=None, cli=None):

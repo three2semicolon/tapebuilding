@@ -310,8 +310,6 @@ def filter_manual_linked_urls(urls, library_root=None):
     Returns a tuple ``(kept, skipped)`` where ``kept`` are URLs without a
     valid link and ``skipped`` are URLs whose link resolves to an existing file.
     """
-    from lib.catalog import links as manual_links
-
     links = manual_links.load_links_safe()
     if not links:
         return list(urls), []

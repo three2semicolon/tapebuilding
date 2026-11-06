@@ -95,7 +95,7 @@ def _cache_read(name, fingerprint):
     try:
         with open(os.path.join(_cache_dir(), name + ".json"), encoding="utf-8") as f:
             blob = json.load(f)
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return None
     if blob.get("fingerprint") != fingerprint or time.time() - blob.get("saved_at", 0) > _CACHE_MAX_AGE:
         return None
@@ -134,7 +134,7 @@ def _map_track(data, uri=None):
     artist_items = (data.get("artists") or {}).get("items") or []
     try:
         popularity = int(data.get("playcount") or 0)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         popularity = 0
     return {
         "id": track_id,

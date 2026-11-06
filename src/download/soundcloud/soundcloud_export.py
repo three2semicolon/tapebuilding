@@ -792,7 +792,6 @@ def _convert_to_playlist_meta(playlist_id, playlist_name, description='',
 
     Returns:
         dict with keys matching PLAYLIST_META_FIELDS
-    }
     """
     return {
         'id': playlist_id,

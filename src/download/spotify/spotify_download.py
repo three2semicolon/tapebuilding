@@ -23,6 +23,7 @@ import time
 
 
 from lib import config
+from lib.env_defaults import apply_if_default
 from lib.paths import archive_path, ffmpeg_path
 from lib.text import normalize_key
 from download.existing import build_library_index, scan_existing_fuzzy, resolve_output_dir
@@ -223,17 +224,13 @@ def download_spotify(
     clean=False,
 ):
     # Apply environment variable defaults
-    pre_skip_existing = (
-        config.DOWNLOAD_PRE_SKIP_EXISTING
-        if pre_skip_existing is False and config.DOWNLOAD_PRE_SKIP_EXISTING is not None
-        else pre_skip_existing
-    )
+    pre_skip_existing = apply_if_default(pre_skip_existing, config.DOWNLOAD_PRE_SKIP_EXISTING, False)
     cookie_file = (
         config.DOWNLOAD_COOKIES_FILE
         if (cookie_file is None or cookie_file == "") and config.DOWNLOAD_COOKIES_FILE
         else cookie_file
     )
-    retries = config.DOWNLOAD_RETRIES if retries == 3 and config.DOWNLOAD_RETRIES is not None else retries
+    retries = apply_if_default(retries, config.DOWNLOAD_RETRIES, 3)
 
     if verbose:
         source = "single url" if urls is not None else (url_file or "<default manifest>")

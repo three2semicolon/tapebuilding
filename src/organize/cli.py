@@ -16,7 +16,7 @@ import sys
 import click
 from dotenv import load_dotenv
 
-from lib.paths import archive_path
+from lib.paths import resolve
 from organize.cleanup import resolve_crate, run_cleanup, check_tags
 from organize.preimport import stage
 from organize.beets_import import run_import, export_library_csv
@@ -144,7 +144,7 @@ def preimport_cmd(input_dir, crate, apply, no_merge_existing, no_tag_write, verb
 def import_cmd(input_dir, output_dir, dry_run, only_pass, timid,
                no_preimport, no_merge_existing, verbose, export_csv, csv_path):
     """two-pass beets importer: albums then singletons."""
-    resolved_output = output_dir or archive_path()
+    resolved_output = output_dir or resolve('ARCHIVE_PATH', required=True)
 
     if export_csv:
         success = export_library_csv(resolved_output, csv_path)
@@ -156,7 +156,7 @@ def import_cmd(input_dir, output_dir, dry_run, only_pass, timid,
 
     success = run_import(
         input_dir,
-        output_dir=output_dir,
+        output_dir=resolved_output,
         dry_run=dry_run,
         only_pass=only_pass,
         timid=timid,
@@ -164,7 +164,7 @@ def import_cmd(input_dir, output_dir, dry_run, only_pass, timid,
         no_merge_existing=no_merge_existing,
         verbose=verbose,
     )
-    if not success:
+    if not success.get('ok', False):
         sys.exit(1)
 
 

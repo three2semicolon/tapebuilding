@@ -50,6 +50,7 @@ import os
 import tempfile
 
 from lib.paths import archive_path
+from lib.results import calculate_overall_result
 from download.spotify.spotify_download import download_spotify
 from download.ytdl import download_ytdl
 from organize.beets_import import run_import
@@ -311,7 +312,7 @@ def run_download_songs(source=None, apply=False, archive_path_opt=None, drop=Non
 
     # Cleanup and final result calculation
     tmp_path = _cleanup_temp_file(tmp_path)
-    overall_ok = _calculate_overall_result(results)
+    overall_ok = calculate_overall_result(results)
     print("done." if overall_ok else "completed with errors - see steps above.")
     return {'steps': results, 'ok': overall_ok}
 
@@ -332,14 +333,3 @@ def _cleanup_temp_file(tmp_path):
             pass
     return None
 
-
-def _calculate_overall_result(results):
-    """Calculate the overall result based on step results.
-
-    Args:
-        results: List of step result dictionaries
-
-    Returns:
-        bool: True if all non-skipped steps were successful, False otherwise
-    """
-    return all(r['ok'] for r in results if not r['skipped'])

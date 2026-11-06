@@ -7,10 +7,10 @@ consolidates what used to be two independent near-identical copies: the
 csv-sniffing/metadata reader here started as spotify_download.py's
 pre-refactor _read_csv_metadata_from_file()/_read_csv_metadata(), and
 retry.py carried its own second copy of the same logic before this module
-existed. predict_output_filename() replaces the old sanitize_filename() +
-_predict_output_filename() pair - the sanitization has to match spotdl's
-own exactly, since predicted filenames are compared against what spotdl
-actually writes to disk.
+existed. predict_output_filename() now delegates to
+lib.filename.predict_output_filename() which uses lib.tags.sanitize.
+sanitize_filename() is retained for backward compatibility (tests import
+it directly).
 
 one change from the old tuple-returning version: metadata values are now
 dicts ({'artist', 'track', 'album'}) instead of (artist, track) tuples,
@@ -34,8 +34,12 @@ def sanitize_filename(filename):
 
 def predict_output_filename(artist_names, track_name, fmt):
     """predict the filename spotdl will write for (artist_names, track_name)
-    at the given format extension, e.g. 'Artist - Title.mp3'."""
-    return sanitize_filename(f"{artist_names} - {track_name}.{fmt}")
+    at the given format extension, e.g. 'Artist - Title.mp3'.
+
+    Delegates to lib.filename.predict_output_filename() which uses
+    lib.tags.sanitize for illegal-character replacement."""
+    from lib.filename import predict_output_filename as _lib_predict
+    return _lib_predict(artist_names, track_name, fmt)
 
 
 def _detect_delimiter(header_line):

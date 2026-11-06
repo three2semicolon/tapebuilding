@@ -45,7 +45,7 @@ from urllib.parse import urlsplit
 
 from lib.paths import archive_path, exports_dir
 from lib.tags import EXTENSIONS
-from .indexer import _SKIP_TOPLEVEL
+from .indexer import SKIP_TOPLEVEL
 
 LINKS_NAME = '.manual_links.json'
 
@@ -143,7 +143,7 @@ def crate_relpath(file_path, library_root):
     parts = rel.split(os.sep)
     if parts[0] == '..' or os.path.isabs(rel):
         raise OutsideCrate(f"{file_path} is outside the crate ({root})")
-    skipped = {os.path.normcase(d) for d in _SKIP_TOPLEVEL}
+    skipped = {os.path.normcase(d) for d in SKIP_TOPLEVEL}
     if len(parts) > 1 and os.path.normcase(parts[0]) in skipped:
         raise NotIndexed(
             f"{parts[0]}/ isn't indexed, so a link into it could never match "

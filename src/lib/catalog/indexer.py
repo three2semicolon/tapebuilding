@@ -36,14 +36,14 @@ INDEX_NAME = '.playlist_index.jsonl'
 
 # top-level subdirs never scanned: the playlists tree holds .m3u8/.csv, not
 # audio, and re-indexing would otherwise stat everything under exports/.
-_SKIP_TOPLEVEL = {'playlists', '$RECYCLE.BIN', 'System Volume Information', 'duplicates', 'unorganized'}
+SKIP_TOPLEVEL = {'playlists', '$RECYCLE.BIN', 'System Volume Information', 'duplicates', 'unorganized'}
 
 
 def index_path(exports_dir_value):
     return os.path.join(exports_dir_value, INDEX_NAME)
 
 
-def build_index(library_root, skip_dirs=_SKIP_TOPLEVEL, verbose=False):
+def build_index(library_root, skip_dirs=SKIP_TOPLEVEL, verbose=False):
     """recursive tag walk over the crate -> list of entry dicts (see
     lib.tags.read_tags for shape). prints progress every 1000 files; a 10k-
     track crate takes a couple of minutes cold (the sidecar makes
@@ -68,7 +68,7 @@ def build_index(library_root, skip_dirs=_SKIP_TOPLEVEL, verbose=False):
     return index
 
 
-def _newest_mtime(library_root, skip_dirs=_SKIP_TOPLEVEL, exclude_dir=None):
+def _newest_mtime(library_root, skip_dirs=SKIP_TOPLEVEL, exclude_dir=None):
     """cheap stat-only walk over the same tree build_index() covers -> the
     newest mtime seen (directories and files both), or None if
     library_root doesn't exist. no tag reads - just os.stat(), so this is

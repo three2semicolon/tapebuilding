@@ -9,6 +9,8 @@ has an in-process function to call, for symmetry with download_songs.py -
 no logic was extracted or changed, this is a thin promotion.
 """
 
+from lib.env_defaults import combine_lists
+from lib import config
 from playlists.build import build_playlists
 
 
@@ -24,14 +26,7 @@ def run_sync(
     directly instead (optionally with rescrape=True if you also want a
     fresh export first)."""
     # Handle PLAYLISTS_EXCLUDE environment variable as standing default for --exclude
-    from lib import config
-
-    env_exclude = config.PLAYLISTS_EXCLUDE
-    if env_exclude:
-        if exclude_names:
-            exclude_names = list(exclude_names) + env_exclude
-        else:
-            exclude_names = env_exclude
+    exclude_names = combine_lists(exclude_names, config.PLAYLISTS_EXCLUDE)
 
     return build_playlists(
         apply=True,

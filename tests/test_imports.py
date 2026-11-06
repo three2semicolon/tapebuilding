@@ -29,7 +29,6 @@ MODULES = [
     "lib.m3u",
     "lib.spotify_auth",
     "lib.catalog.indexer",
-    "lib.catalog.matcher",
     # download/
     "download.cli",
     "download.spotify.spotify_export",

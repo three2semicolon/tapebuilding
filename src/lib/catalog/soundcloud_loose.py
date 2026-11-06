@@ -482,7 +482,7 @@ class SoundcloudLooseIndex:
         # Score all three tiers
         tier7_result = self._score_tier7(variant, ent, up_toks, up_str, row_remix, want_dur, consider_wrapper, clean_left_wrapper)
         tier8_result = self._score_tier8(variant, ent, up_toks, up_str, row_remix, want_dur, consider_wrapper, clean_left_wrapper)
-        tier9_result = self._score_tier9(variant, row_remix, want_dur)
+        tier9_result = self._score_tier9([variant], row_remix, want_dur)
 
         # Consider all results and return the best
         best = self._score_consider(best, tier7_result)

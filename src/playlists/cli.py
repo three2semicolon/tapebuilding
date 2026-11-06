@@ -13,7 +13,7 @@ import sys
 import click
 from dotenv import load_dotenv
 
-from download.spotify.spotify_export import extract_playlist_id_from_url
+from lib.exclusion import extract_playlist_id_from_url
 from playlists.build import build_playlists
 
 load_dotenv()

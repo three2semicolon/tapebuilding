@@ -38,7 +38,7 @@ from lib.paths import (
     exports_dir as resolve_exports_dir,
 )
 from lib.catalog.indexer import get_index
-from lib.catalog.matcher import MatchIndex
+from lib.catalog.match_index import MatchIndex
 
 from tapedeck.resolve import resolve_targets, need_index_for
 from tapedeck.copy import stage, unstage

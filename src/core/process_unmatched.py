@@ -8,7 +8,9 @@ Workflow:
 """
 
 import os
+from lib.env_defaults import apply_if_default, apply_if_none, combine_lists
 from lib.paths import archive_path, playlists_path, exports_dir as resolve_exports_dir
+from lib.results import calculate_overall_result
 from playlists.build import _spotify_exports_dir, build_playlists
 from download.spotify.spotify_download import download_spotify
 from download.soundcloud.soundcloud_download import download_soundcloud
@@ -18,38 +20,22 @@ from lib import config
 
 def _handle_playlists_exclude(exclude_names):
     """Handle PLAYLISTS_EXCLUDE environment variable as standing default for --exclude."""
-    env_exclude = config.PLAYLISTS_EXCLUDE
-    if env_exclude:
-        if exclude_names:
-            return list(exclude_names) + env_exclude
-        else:
-            return env_exclude
-    # else: exclude_names remains as passed (could be None)
-    return exclude_names
+    return combine_lists(exclude_names, config.PLAYLISTS_EXCLUDE)
 
 
 def _handle_download_pre_skip_existing(pre_skip_existing):
     """Handle DOWNLOAD_PRE_SKIP_EXISTING environment variable as default for --pre-skip-existing."""
-    env_pre_skip = config.DOWNLOAD_PRE_SKIP_EXISTING
-    if env_pre_skip is not None and pre_skip_existing is False:  # Only apply env var if still at default
-        return env_pre_skip
-    return pre_skip_existing
+    return apply_if_default(pre_skip_existing, config.DOWNLOAD_PRE_SKIP_EXISTING, False)
 
 
 def _handle_download_cookies_file(cookies_file):
     """Handle DOWNLOAD_COOKIES_FILE environment variable as default for --cookies-file."""
-    env_cookies_file = config.DOWNLOAD_COOKIES_FILE
-    if env_cookies_file and cookies_file is None:  # Only apply env var if not explicitly set via command line
-        return env_cookies_file
-    return cookies_file
+    return apply_if_none(cookies_file, config.DOWNLOAD_COOKIES_FILE)
 
 
 def _handle_download_retries(retries):
     """Handle DOWNLOAD_RETRIES environment variable as default for --retries."""
-    env_retries = config.DOWNLOAD_RETRIES
-    if env_retries is not None and retries == 0:  # Only apply env var if still at default (not explicitly set via command line)
-        return env_retries
-    return retries
+    return apply_if_default(retries, config.DOWNLOAD_RETRIES, 0)
 
 
 def _handle_environment_variables(exclude_names, pre_skip_existing, cookies_file, retries):
@@ -485,18 +471,7 @@ def run_process_unmatched(
     print()
 
     # Overall result
-    overall_ok = _calculate_overall_result(results)
+    overall_ok = calculate_overall_result(results)
     print("done." if overall_ok else "completed with errors - see steps above.")
     return {"steps": results, "ok": overall_ok}
 
-
-def _calculate_overall_result(results):
-    """Calculate the overall result based on step results.
-
-    Args:
-        results: List of step result dictionaries
-
-    Returns:
-        bool: True if all non-skipped steps were successful, False otherwise
-    """
-    return all(r["ok"] for r in results if not r["skipped"])

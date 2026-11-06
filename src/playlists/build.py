@@ -38,8 +38,9 @@ import sys
 
 from lib.spotify_auth import authenticate_user
 from lib import config
+from lib.exclusion import extract_playlist_id_from_url, apply_exclude_filter
 from download.spotify.spotify_api import get_playlist_tracks
-from download.spotify.spotify_export import export_all_data, extract_playlist_id_from_url
+from download.spotify.spotify_export import export_all_data
 
 from lib.paths import (
     archive_path as resolve_archive_path,
@@ -47,7 +48,7 @@ from lib.paths import (
     exports_dir as resolve_exports_dir,
 )
 from lib.catalog.indexer import get_index
-from lib.catalog.matcher import MatchIndex, match_rows
+from lib.catalog.match_index import MatchIndex, match_rows
 from lib.catalog.links import load_links_safe, links_path
 from lib.m3u import safe_name, write_m3u8
 
@@ -253,32 +254,7 @@ def _apply_exclude_filter(selected, exclude_names):
     Returns:
         List of playlist dictionaries with exclusions applied
     """
-    if not exclude_names:
-        return selected
-
-    exclude_tokens = []
-    for token in exclude_names:
-        as_id = extract_playlist_id_from_url(token)
-        is_id = len(as_id) >= 16
-        exclude_tokens.append((token, as_id, is_id))
-    matched_tokens = set()
-    filtered = []
-    for meta in selected:
-        excluded = False
-        for token, as_id, is_id in exclude_tokens:
-            if is_id and meta.get("id") == as_id:
-                excluded = True
-                matched_tokens.add(token)
-                break
-            if not is_id and (meta.get("name") == token or meta.get("id") == token or meta.get("playlist_url") == token):
-                excluded = True
-                matched_tokens.add(token)
-                break
-        if not excluded:
-            filtered.append(meta)
-    for token, as_id, is_id in exclude_tokens:
-        if token not in matched_tokens:
-            print(f"warning: --exclude '{token}' did not match any playlist (skipped).")
+    filtered, _ = apply_exclude_filter(selected, exclude_names, match_url=True)
     return filtered
 
 

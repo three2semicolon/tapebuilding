@@ -24,7 +24,7 @@ from lib.tags import (
 from lib.text import group_key, split_artists
 from lib import config
 
-from organize.journal import Journal
+from organize.journal import Journal, journal_path
 
 from .common import resolve_crate
 from .grouping import build_plan, group_files
@@ -217,7 +217,7 @@ def _check_single_file(tags, dp, suspicious):
     artist = tags['artist'] or ''
     if not aa:
         # no albumartist at all -> should be set to artist
-        suspicious.append((os.path.join(dp, tags['path']), 'singles', '(empty)', artist, 'missing'))
+        suspicious.append((tags['path'], 'singles', '(empty)', artist, 'missing'))
         return
     aa_norm = group_key(aa)
     if aa_norm in ('variousartists', 'va'):
@@ -230,7 +230,7 @@ def _check_single_file(tags, dp, suspicious):
         return  # albumartist is one of the collaborating artists - legitimate
     # True corruption: disjoint albumartist (e.g. Spencer with albumartist=Anysia Kym)
     # Fix: set to the track's own artist
-    suspicious.append((os.path.join(dp, tags['path']), 'singles', aa, artist, 'corruption'))
+    suspicious.append((tags['path'], 'singles', aa, artist, 'corruption'))
 
 
 def _check_albums(crate):
@@ -291,9 +291,7 @@ def _display_fixed_results(fixed, suspicious, crate):
     """Display results after applying fixes."""
     print(f"\nwrote {fixed} albumartist tag(s) "
           f"({len(suspicious) - fixed} unchanged/skipped - see the journal for why).")
-    # Create a journal instance just to get the path and run_id for reporting
-    with Journal(crate, 'check-tags') as j:
-        print(f"journal: {j.path}  (run {j.run_id}; revert with `organize undo`)")
+    print(f"journal: {journal_path(crate)}  (revert with `organize undo`)")
     print("note: beets.db may still hold the old tags - rebuild with `uv run organize cleanup --rebuild-db`")
     print("      if you want the library csv/beets.db to match.")
 
@@ -304,7 +302,6 @@ def _setup_run_cleanup(crate=None, apply=False, no_tag_write=False,
     sys.stdout.reconfigure(encoding='utf-8')  # non-ASCII artist names won't crash the console
     sys.stderr.reconfigure(encoding='utf-8')
     return resolve_crate(crate)
-    # TEST COMMENT
 
 
 def _scan_and_preprocess(crate):
@@ -329,7 +326,7 @@ def _display_plan(album_groups, singleton_count, album_moves, singleton_moves, d
     print(f"  files already in place     : {noop}")
     print(f"  albumartist tags to write : {0 if no_tag_write else len(tag_writes)}")
     print(f"  album tags to write       : {0 if no_tag_write else len(album_tag_writes)}")
-    print(f"  title tags to write     : {0 if no_tag_write else len([])}")  # No title tag writes implemented
+    print(f"  title tags to write     : {0 if no_tag_write else 0}")  # No title tag writes implemented
     print(f"  'Various Artists' albums  : {len(va_groups)}")
     print(f"  split (false VA collision): {len(split_groups)}")
     if split_groups:
@@ -542,9 +539,7 @@ def _final_reporting(crate, apply, no_tag_write, tag_writes, album_tag_writes,
                      album_moves, singleton_moves, groups, rebuild_db_flag):
     """Display final reporting and handle database rebuild."""
     print("\ndone.")
-    # Create a journal instance just to get the path and run_id for reporting
-    with Journal(crate, 'cleanup') as j:
-        print(f"journal: {j.path}  (run {j.run_id}; revert with `uv run organize undo`)")
+    print(f"journal: {journal_path(crate)}  (revert with `uv run organize undo`)")
     print("note: beets.db now points at old file paths - it's stale until rebuilt.")
     print("      rebuild with:  uv run organize cleanup --rebuild-db")
     print("      (or re-run --apply --rebuild-db next time)")
@@ -553,12 +548,6 @@ def _final_reporting(crate, apply, no_tag_write, tag_writes, album_tag_writes,
         rebuild_db(crate, config_path())
 
     return True
-
-
-def _test_function():
-    """A test function."""
-    return 42
-
 
 def _group_and_plan(files, crate):
     """Group files and build the cleanup plan."""

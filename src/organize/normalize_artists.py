@@ -18,26 +18,11 @@ except ImportError:  # pragma: no cover - lets tests import normalize_artist()
         def register_listener(self, *a, **k):
             pass
 
-# featuring aliases -> normalized to "feat."
-#
-# BUGFIX_PLAN.md Bug 13: the old pattern had no word boundaries and was
-# applied with .search(), so it matched "ft"/"f."/"feat" INSIDE words -
-# "Daft Punk" -> "Da feat. Punk", "Soft Cell" -> "So feat. Cell". The marker
-# must now be a whole token: (?<!\w) before it, and \b after the word forms
-# ("f." keeps its dot as the terminator). An optional opening bracket and
-# surrounding whitespace are still consumed, as before.
-_FEAT_RE = re.compile(
-    r'\s*[\(\[]?\s*(?<!\w)(?:feat(?:uring)?\b\.?|ft\b\.?|f\.)\s*',
-    re.IGNORECASE,
-)
+# Featuring/collab regexes are shared with lib.text - imported here to avoid
+# duplication (see lib/text.py for the canonical definitions, incl. Bug 13 fix).
+from lib.text import _FEAT_RE, _COLLAB_X_RE, _AND_WORD_RE
 
-# collab "x" between artists - whitespace-delimited only. (Old pattern was a
-# bare \b[xX]\b applied to the featuring part, which turned a lone "X" in a
-# name - "Malcolm X" - into a separator.)
-_COLLAB_X_RE = re.compile(r'\s+[xX]\s+')
-
-# " and " as an artist separator
-_AND_WORD_RE = re.compile(r'\s+and\s+', re.IGNORECASE)
+# " and " as an artist separator - handled by _AND_WORD_RE above
 
 _SPACES_RE = re.compile(r'  +')
 _EDGE_PUNCT_RE = re.compile(r'^[\s,&]+|[\s,&]+$')

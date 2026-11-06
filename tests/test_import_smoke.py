@@ -11,7 +11,7 @@ import pytest
 pytest.importorskip('mediafile')   # lib.tags exits at import without it
 
 MODULES = [
-    'lib.text', 'lib.tags', 'lib.paths', 'lib.catalog.indexer', 'lib.catalog.matcher',
+    'lib.text', 'lib.tags', 'lib.paths', 'lib.catalog.indexer',
     'organize.cli', 'organize.journal',
     'organize.cleanup', 'organize.cleanup.apply', 'organize.cleanup.grouping',
     'organize.cleanup.common',

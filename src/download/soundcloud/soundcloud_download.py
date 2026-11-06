@@ -9,6 +9,7 @@ import glob
 import time
 
 
+from lib.filename import predict_output_filename
 from lib.paths import archive_path, ffmpeg_path
 from lib.text import normalize_key
 from download.existing import build_library_index, scan_existing_fuzzy, resolve_output_dir
@@ -19,19 +20,10 @@ from download.ytdl import download_ytdl
 
 def _predict_soundcloud_filename(artist, track, set_name=None, set_position=None, fmt='mp3'):
     """Predict the filename that ytdl will output for a SoundCloud track.
-    If set_name and set_position are provided, use the playlist template:
-        '%(playlist)s/%(playlist_index)02d - %(uploader)s - %(title)s.%(ext)s'
-    Otherwise, use the single template:
-        '%(uploader)s - %(title)s.%(ext)s'
-    """
-    if set_name and set_position is not None:
-        # Playlist template: set_name is playlist, set_position is playlist_index
-        # Note: ytdl uses zero-padded two-digit index for playlist_index
-        predicted = f"{set_name}/{set_position:02d} - {artist} - {track}.{fmt}"
-    else:
-        # Single template
-        predicted = f"{artist} - {track}.{fmt}"
-    return predicted
+
+    Delegates to lib.filename.predict_output_filename() which uses
+    lib.tags.sanitize for illegal-character replacement."""
+    return predict_output_filename(artist, track, fmt, set_name=set_name, set_position=set_position)
 
 
 def _deduplicate_urls_and_metadata(urls, metadata):

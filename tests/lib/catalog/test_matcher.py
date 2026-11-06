@@ -1,5 +1,4 @@
-"""Tests for lib.catalog.matcher - TEST_PLANS.md 'lib/catalog/matcher.py'
-section.
+"""Tests for lib.catalog.matcher.
 
 Written against the actual current source. No skeleton existed for this
 module yet, so this is built fresh from TEST_PLANS.md's spec plus the
@@ -26,13 +25,8 @@ column names.
 """
 import pytest
 
-from lib.catalog.matcher import (
-    MatchIndex,
-    match_rows,
-    tier_name,
-    _row_duration_seconds,
-    _row_track_number,
-)
+from lib.catalog.match_index import MatchIndex, match_rows, tier_name
+from lib.catalog.row_access import _row_duration_seconds, _row_track_number
 
 
 def _entry(**kw):

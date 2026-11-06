@@ -41,7 +41,8 @@ from lib.tags import (
     split_group,
     unique_name,
 )
-from lib.text import normalize_key, group_album_key, render_credit
+from lib.naming import _track_label, album_folder_name, singleton_filename
+from lib.text import normalize_key, group_album_key
 
 
 def _artist_tokens(f):
@@ -303,16 +304,10 @@ def _assert_no_conflicting_tag_writes(tag_writes, album_tag_writes):
             write_map[src] = val
 
 
-def _track_label(idx_in_group, f):
-    """Generate a zero-padded track label for filename construction."""
-    n = f['track'] or (idx_in_group + 1)
-    return f"{int(n) if n else idx_in_group + 1:02d}"
-
-
 def _add_singleton(f, albums_dir, singles_dir, seen_singletons, singleton_moves, noop_ref):
     """Add a singleton file to the plan."""
     ext = os.path.splitext(f['path'])[1]
-    base_name = f"{sanitize(f['artist'])} - {sanitize(f['title'])}{ext}"
+    base_name = singleton_filename(f['artist'], f['title'], ext)
     name, c = base_name, 2
     while os.path.normpath(os.path.join(singles_dir, name)).lower() in seen_singletons:
         stem, sfx = os.path.splitext(base_name)
@@ -372,7 +367,7 @@ def _add_album(component, albums_dir, singles_dir, seen_singletons,
              for m in component]
     aa = canonical_albumartist(basis)
     album = dominant_album(component)
-    folder = sanitize(f"{render_credit(aa)} - {album}") or 'Unknown Album'
+    folder = album_folder_name(aa, album)
     # Fix 4: keep-existing-folder - reuse an existing folder's exact string
     # when it matches case-insensitively; case alone never renames.
     keep = _existing_folder_exact(albums_dir, folder)
