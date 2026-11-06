@@ -283,6 +283,51 @@ def filter_manual_linked_urls(urls, library_root=None):
     return kept, skipped
 
 
+def apply_lost_song_filter(urls, metadata, url_file):
+    """Filter out URLs previously marked as lost (via backspace in manual mode).
+
+    lost-songs.csv lives next to unmatched.csv; URLs listed there are skipped
+    so they aren't re-downloaded on subsequent runs.
+
+    Returns (urls, metadata, url_count).
+    """
+    if not url_file:
+        return urls, metadata, len(urls)
+    lost_songs_path = os.path.join(
+        os.path.dirname(os.path.abspath(url_file)), "lost-songs.csv"
+    )
+    lost_urls = _read_lost_song_urls(lost_songs_path)
+    if not lost_urls:
+        return urls, metadata, len(urls)
+    lost_set = set(lost_urls)
+    before = len(urls)
+    urls = [u for u in urls if u not in lost_set]
+    metadata = {u: m for u, m in metadata.items() if u in set(urls)}
+    removed = before - len(urls)
+    if removed:
+        print(f"  Skipping {removed} lost song(s) (listed in lost-songs.csv).")
+    return urls, metadata, len(urls)
+
+
+def apply_manual_link_filter(urls, metadata):
+    """Filter out URLs already covered by a manual link (.manual_links.json).
+
+    The user already pointed fallback at an existing crate file for these
+    tracks, so there's nothing to download or re-prompt for.
+
+    Returns (urls, metadata, url_count).
+    """
+    if not urls:
+        return urls, metadata, 0
+    before = len(urls)
+    urls, _ = filter_manual_linked_urls(urls, archive_path())
+    metadata = {u: m for u, m in metadata.items() if u in set(urls)}
+    removed = before - len(urls)
+    if removed:
+        print(f"  Skipping {removed} song(s) already covered by a manual link.")
+    return urls, metadata, len(urls)
+
+
 def process_fallback(
     batch: List[str],
     metadata: Dict[str, Dict[str, Any]],

@@ -313,6 +313,35 @@ def _process_ytdl_batch(batch, output_dir, format, bitrate, overwrite_errors,
     return batch_succeeded
 
 
+def _process_ytdl_fallback(batch, metadata, output_dir, format,
+                           overwrite_errors, cookies_from_browser,
+                           resolved_ffmpeg):
+    """Run fallback for a failed ytdl batch.
+
+    Translates soundcloud metadata (uploader/title) to artist/track for
+    fallback prompts, then delegates to fallback.process_fallback().
+
+    Returns (batch_succeeded, fallback_failed_urls).
+    """
+    fallback_metadata = {}
+    for url in batch:
+        m = metadata.get(url, {}) or {}
+        fallback_metadata[url] = dict(m)
+        fallback_metadata[url]['artist'] = m.get('uploader', '')
+        fallback_metadata[url]['track'] = m.get('title', '')
+    _, fallback_failed, batch_succeeded = fallback.process_fallback(
+        batch=batch,
+        metadata=fallback_metadata,
+        output_dir=output_dir,
+        format=format,
+        overwrite_errors=overwrite_errors,
+        cookies_from_browser=cookies_from_browser,
+        resolved_ffmpeg=resolved_ffmpeg,
+        library_index={},
+    )
+    return batch_succeeded, fallback_failed
+
+
 def _process_ytdl_mode(urls, metadata, output_dir, format, bitrate,
                        overwrite_errors, skip_existing, batch_size,
                        retries, retry_delay, cookies_from_browser, verbose,
@@ -343,43 +372,39 @@ def _process_ytdl_mode(urls, metadata, output_dir, format, bitrate,
         )
 
         if not batch_succeeded:
-            overall_success = False
             if verbose:
                 print(f"  Batch {batch_num} had failures.")
             if soundcloud_fallback:
-                # Translate soundcloud metadata (uploader/title) to artist/track for fallback
-                fallback_metadata = {}
-                for url in batch:
-                    m = metadata.get(url, {}) or {}
-                    fallback_metadata[url] = dict(m)
-                    fallback_metadata[url]['artist'] = m.get('uploader', '')
-                    fallback_metadata[url]['track'] = m.get('title', '')
-                fallback_succeeded, fallback_failed, batch_succeeded = fallback.process_fallback(
-                    batch=batch,
-                    metadata=fallback_metadata,
-                    output_dir=resolved_output_dir,
-                    format=format,
-                    overwrite_errors=overwrite_errors,
-                    cookies_from_browser=cookies_from_browser,
-                    resolved_ffmpeg=resolved_ffmpeg,
-                    library_index={},
+                batch_succeeded, fallback_failed = _process_ytdl_fallback(
+                    batch,
+                    metadata,
+                    resolved_output_dir,
+                    format,
+                    overwrite_errors,
+                    cookies_from_browser,
+                    resolved_ffmpeg,
                 )
-                if not batch_succeeded:
+            if not batch_succeeded:
+                overall_success = False
+                if soundcloud_fallback:
                     fallback._log_urls('soft_failures.txt', fallback_failed, reason='ytdl_fallback_failed')
-            else:
-                # Log the batch to soft_failures.txt
-                fallback._log_urls('soft_failures.txt', batch, reason='ytdl_exhausted_retries')
+                else:
+                    fallback._log_urls('soft_failures.txt', batch, reason='ytdl_exhausted_retries')
         else:
             if verbose:
                 print(f"  Batch {batch_num} downloaded successfully")
 
+    _report_ytdl_mode_summary(overall_success, len(urls), verbose)
+    return overall_success
+
+
+def _report_ytdl_mode_summary(overall_success, total_urls, verbose):
     if overall_success:
         if verbose:
-            print(f"\nall batches processed. total: {len(urls)}")
+            print(f"\nall batches processed. total: {total_urls}")
     else:
         if verbose:
             print("\ncompleted with some failures. check soft_failures.txt")
-    return overall_success
 
 
 def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
@@ -410,36 +435,10 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
     print(f"url validation complete: {url_count} unique urls.")
 
     # Filter out songs previously marked as lost (via backspace in manual mode).
-    # lost-songs.csv lives next to unmatched.csv; even if unmatched.csv is
-    # regenerated on a subsequent full run, these URLs are skipped so they
-    # aren't re-downloaded.
-    if url_file:
-        lost_songs_path = os.path.join(
-            os.path.dirname(os.path.abspath(url_file)), "lost-songs.csv"
-        )
-        lost_urls = _fallback_mod._read_lost_song_urls(lost_songs_path)
-        if lost_urls:
-            lost_set = set(lost_urls)
-            before = len(urls)
-            urls = [u for u in urls if u not in lost_set]
-            metadata = {u: m for u, m in metadata.items() if u in set(urls)}
-            removed = before - len(urls)
-            if removed:
-                print(f"  Skipping {removed} lost song(s) (listed in lost-songs.csv).")
-            url_count = len(urls)
+    urls, metadata, url_count = _fallback_mod.apply_lost_song_filter(urls, metadata, url_file)
 
     # Filter out songs already covered by a manual link (.manual_links.json).
-    # The user already pointed fallback at an existing crate file for these,
-    # so there's nothing to download or prompt for. Resolve against the crate
-    # root since link paths are crate-relative.
-    if urls:
-        before = len(urls)
-        urls, manual_skipped = _fallback_mod.filter_manual_linked_urls(urls, archive_path())
-        metadata = {u: m for u, m in metadata.items() if u in set(urls)}
-        removed = before - len(urls)
-        if removed:
-            print(f"  Skipping {removed} song(s) already covered by a manual link.")
-        url_count = len(urls)
+    urls, metadata, url_count = _fallback_mod.apply_manual_link_filter(urls, metadata)
 
     # Pre-skip existing check
     if pre_skip_existing:
