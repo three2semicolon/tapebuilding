@@ -28,6 +28,7 @@ from lib.text import normalize_key
 from download.existing import build_library_index, scan_existing_fuzzy, resolve_output_dir
 from download.manifest import predict_output_filename, read_csv_metadata
 from download import fallback
+from download import fallback as _fallback_mod  # alias to avoid shadowing by the `fallback` parameter
 
 
 def _read_urls_from_source(url_file, verbose):
@@ -216,6 +217,7 @@ def download_spotify(
     cookie_file=None,
     debug=False,
     spotdl_fallback=False,
+    fallback=False,
     manual=False,
     verbose=False,
     clean=False,
@@ -251,7 +253,7 @@ def download_spotify(
         lost_songs_path = os.path.join(
             os.path.dirname(os.path.abspath(url_file)), "lost-songs.csv"
         )
-        lost_urls = fallback._read_lost_song_urls(lost_songs_path)
+        lost_urls = _fallback_mod._read_lost_song_urls(lost_songs_path)
         if lost_urls:
             lost_set = set(lost_urls)
             before = len(urls)
@@ -268,7 +270,7 @@ def download_spotify(
     # root since link paths are crate-relative.
     if urls:
         before = len(urls)
-        urls, manual_skipped = fallback.filter_manual_linked_urls(urls, archive_path())
+        urls, manual_skipped = _fallback_mod.filter_manual_linked_urls(urls, archive_path())
         metadata = {u: m for u, m in metadata.items() if u in set(urls)}
         removed = before - len(urls)
         if removed:
@@ -306,7 +308,7 @@ def download_spotify(
         cookies_from_browser,
         cookie_file,
         debug,
-        spotdl_fallback,
+        spotdl_fallback or fallback,
         verbose,
     )
 
@@ -605,10 +607,10 @@ def _handle_batch_result(
             print(f"  Batch {batch_num} had hard failure (track unavailable).")
         overall_success = False
         # Log the failed URLs to failed_downloads.txt with track_unavailable reason
-        fallback._log_urls("failed_downloads.txt", batch, reason="track_unavailable")
+        _fallback_mod._log_urls("failed_downloads.txt", batch, reason="track_unavailable")
     elif not batch_succeeded and spotdl_fallback:
         # Process fallback using the fallback module
-        fallback_succeeded, fallback_failed, batch_succeeded = fallback.process_fallback(
+        fallback_succeeded, fallback_failed, batch_succeeded = _fallback_mod.process_fallback(
             batch=batch,
             metadata=metadata,
             output_dir=resolved_output_dir,
@@ -622,7 +624,7 @@ def _handle_batch_result(
         if not batch_succeeded:
             overall_success = False
             # Log the failed URLs from fallback
-            fallback._log_urls("soft_failures.txt", fallback_failed, reason="spotdl_fallback_failed")
+            _fallback_mod._log_urls("soft_failures.txt", fallback_failed, reason="spotdl_fallback_failed")
     elif not batch_succeeded:
         # No fallback or fallback not enabled, log failure
         if verbose:
@@ -630,6 +632,6 @@ def _handle_batch_result(
         overall_success = False
         # Determine if it was hard or soft failure? We don't have reason here.
         # For simplicity, log to soft_failures.txt (could be either)
-        fallback._log_urls("soft_failures.txt", batch, reason="spotdl_exhausted_retries")
+        _fallback_mod._log_urls("soft_failures.txt", batch, reason="spotdl_exhausted_retries")
 
     return overall_success

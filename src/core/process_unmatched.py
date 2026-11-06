@@ -186,6 +186,7 @@ def _download_step(
     apply,
     verbose,
     manual,
+    fallback,
     service,
     record,
     results,
@@ -203,7 +204,8 @@ def _download_step(
         retries: Number of retry attempts
         apply: Whether to apply changes or just show what would be done
         verbose: Whether to show verbose output
-        manual: Whether to use manual mode
+        manual: Whether to use manual mode (skips primary download)
+        fallback: Whether to try primary download first, prompt on failure
         record: Function to record step results
         results: List of step results so far
 
@@ -234,6 +236,7 @@ def _download_step(
                         validate_only=not apply,  # Dry run mode
                         debug=verbose,
                         manual=manual,
+                        fallback=fallback,
                     )
                 else:  # spotify (default)
                     ok = download_spotify(
@@ -247,6 +250,7 @@ def _download_step(
                         validate_only=not apply,  # Dry run mode
                         debug=verbose,
                         manual=manual,
+                        fallback=fallback,
                     )
                 record("download", ok)
             except Exception as e:
@@ -392,6 +396,7 @@ def run_process_unmatched(
     pre_skip_existing=False,
     retries=0,
     manual=False,
+    fallback=False,
     verbose=False,
     skip_initial_playlist_refresh=False,
 ):
@@ -451,6 +456,7 @@ def run_process_unmatched(
         apply,
         verbose,
         manual,
+        fallback,
         service,
         record,
         results,

@@ -80,7 +80,8 @@ def download_cmd(source, apply, archive_path_opt, drop_opt, only_opt,
 @click.option('--cookies-from-browser', 'cookies_from_browser', help='browser name to pull cookies from (e.g. chrome, firefox).')
 @click.option('--pre-skip-existing', is_flag=True, help='skip downloading existing files.')
 @click.option('--retries', 'retries', default=0, show_default=True, type=int, help='number of download retries.')
-@click.option('--manual', is_flag=True, help='enable manual fallback for failed downloads.')
+@click.option('--manual', is_flag=True, help='enable manual fallback for failed downloads (skips primary download).')
+@click.option('--fallback', is_flag=True, help='try primary download first, prompt for fallback sources on failure.')
 @click.option('--verbose', is_flag=True, help='verbose output.')
 @click.option('--clean', is_flag=True,
               help='run organize cleanup after successful download to organize the crate.')
@@ -88,7 +89,7 @@ def download_cmd(source, apply, archive_path_opt, drop_opt, only_opt,
               help='skip the initial playlist refresh step (use existing unmatched CSV).')
 def process_unmatched_cmd(archive_path_opt, playlists_path_opt, exports_dir_opt, service,
                          playlist_names, exclude_names, apply, format_opt, bitrate_opt, cookies_file,
-                         cookies_from_browser, pre_skip_existing, retries, manual, verbose, clean, skip_initial_playlist_refresh):
+                         cookies_from_browser, pre_skip_existing, retries, manual, fallback, verbose, clean, skip_initial_playlist_refresh):
     """process unmatched tracks: refresh playlists → download missing → import."""
     result = run_process_unmatched(
         archive_path_opt=archive_path_opt,
@@ -104,6 +105,7 @@ def process_unmatched_cmd(archive_path_opt, playlists_path_opt, exports_dir_opt,
         pre_skip_existing=pre_skip_existing,
         retries=retries,
         manual=manual,
+        fallback=fallback,
         verbose=verbose,
         skip_initial_playlist_refresh=skip_initial_playlist_refresh
     )

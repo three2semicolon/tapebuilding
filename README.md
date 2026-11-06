@@ -91,6 +91,7 @@ core process-unmatched --service soundcloud --playlist "https://soundcloud.com/a
 core process-unmatched --apply --format flac --bitrate 1000k
 core process-unmatched --apply --service soundcloud             # rescrape soundcloud sets, download unmatched, import, sync
 core process-unmatched --apply --service soundcloud --manual    # manual mode: prompt for each unmatched track's source
+core process-unmatched --apply --fallback                       # download first, prompt on failure
 ```
 
 options:
@@ -107,6 +108,8 @@ options:
 - `--cookies-file` - Netscape format cookie file for Spotify download
 - `--pre-skip-existing` - skip downloading existing files (default: true)
 - `--retries` (default 0) - number of download retries
+- `--manual` - skip primary download and only prompt for fallback sources
+- `--fallback` - try primary download first, prompt for fallback sources on failure
 - `--verbose` - verbose output
 
 workflow steps:
@@ -177,6 +180,7 @@ download soundcloud "https://soundcloud.com/artist/track"
 download soundcloud "https://soundcloud.com/artist/sets/my-set"     # set -> "Set Name/NN - Uploader - Title.ext"
 download soundcloud -u path/to/urls.txt
 download soundcloud -u path/to/urls.txt --manual                   # prompt for each track's source (youtube url or local file)
+download soundcloud -u path/to/urls.txt --fallback                 # download first, prompt on failure
 download soundcloud -u path/to/urls.txt --batch-size 25            # urls per yt-dlp call (default 1)
 download soundcloud -u path/to/urls.txt --pre-skip-existing        # skip tracks already in the library (needs csv metadata)
 download soundcloud -u path/to/urls.txt --validate-only            # check existence without downloading
@@ -193,6 +197,7 @@ options:
 - `--cookie-file` - path to a Netscape-format `cookies.txt`; preferred over `--cookies-from-browser` (avoids the browser file-lock issue)
 - `--debug` - DEBUG log level for yt-dlp instead of INFO
 - `--manual` - skip primary download, prompt for each track's fallback source (enter a youtube url or local file path; backspace marks as lost)
+- `--fallback` - try primary download first, prompt for fallback sources on failure
 - `--soundcloud-fallback` / `--no-soundcloud-fallback` - prompt for youtube url or local file when yt-dlp fails (default: off)
 - `-o, --output` - output directory (default: library root)
 - `--clean` - run `organize validate --all` after successful download
@@ -229,6 +234,7 @@ options:
 - `--cookies-from-browser` - browser to pull cookies from (e.g. `chrome`)
 - `--cookie-file` - path to a Netscape-format `cookies.txt`; preferred over `--cookies-from-browser` (avoids the browser file-lock issue)
 - `--debug` - DEBUG log level for spotdl/yt-dlp instead of INFO
+- `--fallback` - try primary download first, prompt for fallback sources on failure
 - `-o, --output` - output directory (default: library root)
 
 urls are deduplicated preserving first-seen order. spotdl's exit code is

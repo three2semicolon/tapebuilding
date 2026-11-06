@@ -266,6 +266,7 @@ def export_cmd(playlists, playlists_file, output, mine, service, export_type, se
     show_default=True,
     help="prompt for YouTube URL or local file when spotdl fails to find a track",
 )
+@click.option("--fallback", is_flag=True, help="try primary download first, prompt for fallback sources on failure.")
 @click.option("--clean", is_flag=True, help="run organize validate --all after successful download to organize the crate.")
 @click.option("--verbose", "-v", is_flag=True)
 def spotify_cmd(
@@ -285,6 +286,7 @@ def spotify_cmd(
     cookie_file,
     spotdl_fallback,
     manual,
+    fallback,
     debug,
     clean,
     verbose,
@@ -323,6 +325,7 @@ def spotify_cmd(
             cookie_file=cookie_file,
             debug=debug,
             spotdl_fallback=spotdl_fallback,
+            fallback=fallback,
             manual=manual,
             verbose=verbose,
         )
@@ -463,6 +466,7 @@ def ytdl_cmd(
     show_default=True,
     help="prompt for YouTube URL or local file when soundcloud fails to find a track",
 )
+@click.option("--fallback", is_flag=True, help="try primary download first, prompt for fallback sources on failure.")
 @click.option("--clean", is_flag=True, help="run organize validate --all after successful download to organize the crate.")
 @click.option("--verbose", "-v", is_flag=True)
 def soundcloud_cmd(
@@ -481,6 +485,7 @@ def soundcloud_cmd(
     cookie_file,
     soundcloud_fallback,
     manual,
+    fallback,
     debug,
     clean,
     verbose,
@@ -508,6 +513,7 @@ def soundcloud_cmd(
             cookie_file=cookie_file,
             debug=debug,
             soundcloud_fallback=soundcloud_fallback,
+            fallback=fallback,
             manual=manual,
             verbose=verbose,
         )

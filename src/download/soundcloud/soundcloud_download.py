@@ -13,6 +13,7 @@ from lib.paths import archive_path, ffmpeg_path
 from lib.text import normalize_key
 from download.existing import build_library_index, scan_existing_fuzzy, resolve_output_dir
 from download import fallback
+from download import fallback as _fallback_mod  # alias to avoid shadowing by the `fallback` parameter
 from download.ytdl import download_ytdl
 
 
@@ -314,10 +315,12 @@ def _process_ytdl_batch(batch, output_dir, format, bitrate, overwrite_errors,
 
 def _process_ytdl_mode(urls, metadata, output_dir, format, bitrate,
                        overwrite_errors, skip_existing, batch_size,
-                       retries, retry_delay, cookies_from_browser, verbose):
+                       retries, retry_delay, cookies_from_browser, verbose,
+                       soundcloud_fallback=False):
     """Process URLs using ytdl (original logic)."""
     # Resolve output directory
     resolved_output_dir = resolve_output_dir(output_dir)
+    resolved_ffmpeg = ffmpeg_path()
 
     overall_success = True
     num_batches = (len(urls) + batch_size - 1) // batch_size
@@ -343,8 +346,29 @@ def _process_ytdl_mode(urls, metadata, output_dir, format, bitrate,
             overall_success = False
             if verbose:
                 print(f"  Batch {batch_num} had failures.")
-            # Log the batch to soft_failures.txt
-            fallback._log_urls('soft_failures.txt', batch, reason='ytdl_exhausted_retries')
+            if soundcloud_fallback:
+                # Translate soundcloud metadata (uploader/title) to artist/track for fallback
+                fallback_metadata = {}
+                for url in batch:
+                    m = metadata.get(url, {}) or {}
+                    fallback_metadata[url] = dict(m)
+                    fallback_metadata[url]['artist'] = m.get('uploader', '')
+                    fallback_metadata[url]['track'] = m.get('title', '')
+                fallback_succeeded, fallback_failed, batch_succeeded = fallback.process_fallback(
+                    batch=batch,
+                    metadata=fallback_metadata,
+                    output_dir=resolved_output_dir,
+                    format=format,
+                    overwrite_errors=overwrite_errors,
+                    cookies_from_browser=cookies_from_browser,
+                    resolved_ffmpeg=resolved_ffmpeg,
+                    library_index={},
+                )
+                if not batch_succeeded:
+                    fallback._log_urls('soft_failures.txt', fallback_failed, reason='ytdl_fallback_failed')
+            else:
+                # Log the batch to soft_failures.txt
+                fallback._log_urls('soft_failures.txt', batch, reason='ytdl_exhausted_retries')
         else:
             if verbose:
                 print(f"  Batch {batch_num} downloaded successfully")
@@ -362,7 +386,7 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
                         overwrite_errors=False, skip_existing=False,
                         validate_only=False, batch_size=1, pre_skip_existing=False,
                         retries=3, retry_delay=3, cookies_from_browser=None, cookie_file=None,
-                        debug=False, soundcloud_fallback=False, manual=False, verbose=False):
+                        debug=False, soundcloud_fallback=False, fallback=False, manual=False, verbose=False):
     if verbose:
         print(f"processing soundcloud source: {url_file}")
 
@@ -393,7 +417,7 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
         lost_songs_path = os.path.join(
             os.path.dirname(os.path.abspath(url_file)), "lost-songs.csv"
         )
-        lost_urls = fallback._read_lost_song_urls(lost_songs_path)
+        lost_urls = _fallback_mod._read_lost_song_urls(lost_songs_path)
         if lost_urls:
             lost_set = set(lost_urls)
             before = len(urls)
@@ -410,7 +434,7 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
     # root since link paths are crate-relative.
     if urls:
         before = len(urls)
-        urls, manual_skipped = fallback.filter_manual_linked_urls(urls, archive_path())
+        urls, manual_skipped = _fallback_mod.filter_manual_linked_urls(urls, archive_path())
         metadata = {u: m for u, m in metadata.items() if u in set(urls)}
         removed = before - len(urls)
         if removed:
@@ -437,4 +461,5 @@ def download_soundcloud(url_file, output_dir=None, format='mp3', bitrate='320k',
     # Otherwise, proceed with ytdl processing (original logic)
     return _process_ytdl_mode(urls, metadata, output_dir, format, bitrate,
                             overwrite_errors, skip_existing, batch_size,
-                            retries, retry_delay, cookies_from_browser, verbose)
+                            retries, retry_delay, cookies_from_browser, verbose,
+                            soundcloud_fallback=soundcloud_fallback or fallback)

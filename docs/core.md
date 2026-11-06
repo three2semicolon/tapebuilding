@@ -62,6 +62,7 @@ core process-unmatched --service soundcloud --playlist "https://soundcloud.com/a
 core process-unmatched --apply --format flac --bitrate 1000k
 core process-unmatched --apply --service soundcloud             # rescrape soundcloud sets, download unmatched, import, sync
 core process-unmatched --apply --service soundcloud --manual    # manual mode: prompt for each unmatched track's source
+core process-unmatched --apply --fallback                       # download first, prompt on failure
 ```
 
 options:
@@ -77,6 +78,8 @@ options:
 - `--cookies-file` - netscape format cookie file for spotify download
 - `--pre-skip-existing` - skip downloading existing files (default: true)
 - `--retries` (default `0`) - number of download retries
+- `--manual` - skip primary download and only prompt for fallback sources
+- `--fallback` - try primary download first, prompt for fallback sources on failure
 - `--verbose` - verbose output
 
 workflow steps:
