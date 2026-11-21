@@ -24,10 +24,11 @@ from playlists.build import (
     _write_csv,
     _write_unmatched,
     build_playlists,
+    plan_playlist,
 )
 
 
-PLAYLISTS_HEADER = "id,name,description,owner,owner_id,public,track_count,playlist_url\n"
+PLAYLISTS_HEADER = "id,name,description,owner,owner_id,public,track_count,playlist_url,snapshot_id\n"
 
 
 # --- _select_playlists -------------------------------------------------
@@ -157,7 +158,7 @@ class TestSelectPlaylistsOtherScopes:
 # --- _select_playlists -- exclude ---------------------------------------
 
 class TestSelectPlaylistsExclude:
-    PLAYLISTS_HEADER = "id,name,description,owner,owner_id,public,track_count,playlist_url\n"
+    PLAYLISTS_HEADER = "id,name,description,owner,owner_id,public,track_count,playlist_url,snapshot_id\n"
 
     def test_exclude_by_id_filters_out_the_matching_playlist(self, tmp_path):
         """uses a long id (>=16 chars) so the id-vs-name heuristic triggers as id."""
@@ -435,6 +436,7 @@ class TestBuildPlaylistsOrchestration:
         exports = tmp_path / "exports"
         exports.mkdir()
         playlists_path = tmp_path / "playlists"
+        playlists_path.mkdir()
         crate = tmp_path / "crate"
         crate.mkdir()
         (exports / "playlists.csv").write_text(
@@ -464,8 +466,8 @@ class TestBuildPlaylistsOrchestration:
             return [match_map[r["track_id"]](r) for r in rows]
         monkeypatch.setattr(build_module, "match_rows", fake_match_rows)
 
-        def fake_write_m3u8(path, entries):
-            m3u8_calls.append((path, entries))
+        def fake_write_m3u8(path, entries, source=None, edited=False):
+            m3u8_calls.append((path, entries, source))
             with open(path, "w", encoding="utf-8") as f:
                 f.write("stub")
         monkeypatch.setattr(build_module, "write_m3u8", fake_write_m3u8)
@@ -488,9 +490,10 @@ class TestBuildPlaylistsOrchestration:
                          archive_path=str(crate), exports_dir=str(exports))
 
         assert len(m3u8_calls) == 1  # only P1 had a match; P2 had none
-        path, entries = m3u8_calls[0]
+        path, entries, source = m3u8_calls[0]
         assert path == os.path.join(str(playlists_path), "Playlist One.m3u8")
         assert [e["track_id"] for e in entries] == ["t1"]
+        assert source == "spotify:P1"
         assert os.path.exists(path)
 
         unmatched_rows = _read_csv(str(exports / "unmatched.csv"))
@@ -552,3 +555,116 @@ class TestBuildPlaylistsOrchestration:
         # P2's tracks should never appear in unmatched (P2 was excluded entirely)
         unmatched_rows = _read_csv(str(exports / "unmatched.csv"))
         assert {r["track_id"] for r in unmatched_rows} == {"t2"}  # only P1's unmatched track
+
+
+# --- plan_playlist ----------------------------------------------------------
+
+class TestPlanPlaylist:
+    def test_returns_matched_entries_and_unmatched_rows(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SPOTIFY_USER_ID", raising=False)
+        monkeypatch.setattr(build_module, "get_index", lambda *a, **kw: "INDEX")
+        monkeypatch.setattr(build_module, "MatchIndex", lambda index, **kw: index)
+
+        def fake_match_rows(rows, index=None, verbose=False):
+            return [
+                {"row": rows[0], "path": "/crate/t1.mp3", "length": 200, "tier": 1},
+                {"row": rows[1], "path": None, "length": 0, "tier": 6},
+            ]
+        monkeypatch.setattr(build_module, "match_rows", fake_match_rows)
+
+        meta = {"id": "P1", "name": "Playlist One"}
+        rows = [
+            {"track_id": "t1", "track_name": "Song A", "artist_names": "Artist A",
+             "album_name": "Album A", "spotify_url": "u1"},
+            {"track_id": "t2", "track_name": "Song B", "artist_names": "Artist B",
+             "album_name": "Album B", "spotify_url": "u2"},
+        ]
+        entries, unmatched = plan_playlist(meta, rows, "INDEX")
+
+        assert len(entries) == 1
+        assert entries[0]["track_id"] == "t1"
+        assert entries[0]["path"] == "/crate/t1.mp3"
+        assert entries[0]["tier"] == 1
+        assert len(unmatched) == 1
+        assert unmatched[0]["track_id"] == "t2"
+        assert unmatched[0]["tier_tried"] == 6
+
+
+# --- guard: local playlist skip + collision-proof names ---------------------
+
+class TestGuardAndCollision:
+    def _fixture_dirs(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SPOTIFY_USER_ID", raising=False)
+        exports = tmp_path / "exports"
+        exports.mkdir()
+        playlists_path = tmp_path / "playlists"
+        playlists_path.mkdir()
+        crate = tmp_path / "crate"
+        crate.mkdir()
+        (exports / "playlists.csv").write_text(
+            "id,name,description,owner,owner_id,public,track_count,playlist_url,snapshot_id\n"
+            + "P1,Playlist One,,me,,True,2,url1,\n",
+            encoding="utf-8",
+        )
+        (exports / "playlist_tracks.csv").write_text(
+            "playlist_id,track_id,track_name,artist_names,album_name,spotify_url\n"
+            "P1,t1,Song A,Artist A,Album A,u1\n",
+            encoding="utf-8",
+        )
+        return exports, playlists_path, crate
+
+    def _wire_common(self, monkeypatch, m3u8_calls):
+        monkeypatch.setattr(build_module, "get_index", lambda *a, **kw: "INDEX")
+        monkeypatch.setattr(build_module, "MatchIndex", lambda index, **kw: index)
+        monkeypatch.setattr(build_module, "safe_name", lambda name: name)
+
+        def fake_match_rows(rows, index=None, verbose=False):
+            return [{"row": r, "path": f"/crate/{r['track_id']}.mp3",
+                     "length": 200, "tier": 1} for r in rows]
+
+        monkeypatch.setattr(build_module, "match_rows", fake_match_rows)
+
+        def fake_write_m3u8(path, entries, source=None, edited=False):
+            m3u8_calls.append((path, entries, source))
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("stub")
+        monkeypatch.setattr(build_module, "write_m3u8", fake_write_m3u8)
+
+    def test_skips_local_playlist_not_overwritten_by_sync(self, tmp_path, monkeypatch):
+        exports, playlists_path, crate = self._fixture_dirs(tmp_path, monkeypatch)
+        m3u8_calls = []
+        self._wire_common(monkeypatch, m3u8_calls)
+
+        # pre-create a local playlist file
+        m3u8_path = playlists_path / "Playlist One.m3u8"
+        m3u8_path.write_text(
+            "#EXTM3U\n#TAPEDECK-SOURCE:local\n#SPOTIFY:t9\n#EXTINF:100,X - Y\nx.mp3\n",
+            encoding="utf-8",
+        )
+
+        build_playlists(apply=True, playlists_path=str(playlists_path),
+                         archive_path=str(crate), exports_dir=str(exports))
+
+        assert m3u8_calls == []  # local playlist was skipped, not rewritten
+
+    def test_collision_proof_name_on_different_source(self, tmp_path, monkeypatch):
+        exports, playlists_path, crate = self._fixture_dirs(tmp_path, monkeypatch)
+        m3u8_calls = []
+        self._wire_common(monkeypatch, m3u8_calls)
+
+        # pre-create a file with a different source id at the same path
+        m3u8_path = playlists_path / "Playlist One.m3u8"
+        m3u8_path.write_text(
+            "#EXTM3U\n#TAPEDECK-SOURCE:spotify:OTHERID\n#SPOTIFY:t9\n#EXTINF:100,X - Y\nx.mp3\n",
+            encoding="utf-8",
+        )
+
+        build_playlists(apply=True, playlists_path=str(playlists_path),
+                         archive_path=str(crate), exports_dir=str(exports))
+
+        # wrote to a collision-proof path, not the existing one
+        assert len(m3u8_calls) == 1
+        path, entries, source = m3u8_calls[0]
+        assert "Playlist One (P1).m3u8" in path  # P1[:6] = "P1" (short id)
+        assert source == "spotify:P1"

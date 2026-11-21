@@ -19,13 +19,14 @@ dependencies = [
     "spotapi==1.2.8",
     "spotdl>=4.5.0",
     "spotipy>=2.26.0",
+    "uvicorn>=0.23.2",
     "websocket>=0.2.1",
     "yt-dlp[default]>=2026.8.19",
 ]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["lib", "lib.catalog", "download", "organize", "playlists", "tapedeck", "core"]
+packages = ["lib", "lib.catalog", "download", "organize", "playlists", "tapedeck", "core", "app"]
 
 [dependency-groups]
 dev = [
@@ -51,4 +52,4 @@ organize = "organize.cli:organize"
 playlists = "playlists.cli:playlists"
 tapedeck = "tapedeck.cli:tapedeck"
 core = "core.cli:core"
-    
+app = "app.server:main"

@@ -22,10 +22,12 @@ mount into a top-level multi-package cli (once one exists) with
 `top_level_group.add_command(download, name="download")`.
 """
 
+import os
 import sys
 import click
 from dotenv import load_dotenv
 from lib import config
+from lib.paths import archive_path
 
 from lib.catalog.links import check_links, print_check_report
 from lib.spotify_auth import authenticate_user
@@ -306,6 +308,12 @@ def spotify_cmd(
             export_dir = get_export_dir()
             url_file = f"{export_dir}/spotify_manifest_urls.txt"
             click.echo(f"using default url file: {url_file}")
+
+    # Default output dir to <crate>/unorganized (matches core.download's
+    # convention). Pre-skip still scans the full crate so existing files in
+    # albums/ / singles/ are found regardless of where new downloads land.
+    if output is None:
+        output = os.path.join(archive_path(), 'unorganized')
 
     try:
         success = download_spotify(

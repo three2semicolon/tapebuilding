@@ -1739,6 +1739,7 @@ dependencies = [
     { name = "spotapi" },
     { name = "spotdl" },
     { name = "spotipy" },
+    { name = "uvicorn" },
     { name = "websocket" },
     { name = "yt-dlp", extra = ["default"] },
 ]
@@ -1762,6 +1763,7 @@ requires-dist = [
     { name = "spotapi", specifier = "==1.2.8" },
     { name = "spotdl", specifier = ">=4.5.0" },
     { name = "spotipy", specifier = ">=2.26.0" },
+    { name = "uvicorn", specifier = ">=0.23.2" },
     { name = "websocket", specifier = ">=0.2.1" },
     { name = "yt-dlp", extras = ["default"], specifier = ">=2026.8.19" },
 ]

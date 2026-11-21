@@ -53,7 +53,8 @@ def get_user_playlists(sp, my_playlists_only=False):
                 'owner_id': owner_id or '',
                 'public': playlist.get('public', False),
                 'track_count': playlist.get('tracks', {}).get('total', 0),
-                'playlist_url': playlist_url
+                'playlist_url': playlist_url,
+                'snapshot_id': playlist.get('snapshot_id', ''),
             })
 
         if results.get('next'):

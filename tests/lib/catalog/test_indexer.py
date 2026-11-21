@@ -132,12 +132,12 @@ class TestGetIndex:
         index = get_index(library_root=str(tmp_path), exports_dir_value=str(exports))
         assert len(index) == 2  # auto-invalidated, no --reindex needed
 
-    def test_auto_invalidation_calls_build_index_when_crate_changed(
+    def test_auto_invalidation_calls_refresh_index_when_crate_changed(
         self, tmp_path, make_tagged_file, monkeypatch
     ):
         """Direct complement to test_cache_hit_does_not_call_build_index_again:
-        confirms the rebuild is actually triggered (not just that the
-        eventual output happens to contain 2 entries some other way)."""
+        confirms the incremental refresh is actually triggered (not just that
+        the eventual output happens to contain 2 entries some other way)."""
         import lib.catalog.indexer as indexer_module
 
         make_tagged_file(filename="Artist/Album/Track.mp3", title="Track")
@@ -148,11 +148,11 @@ class TestGetIndex:
         time.sleep(0.01)
         make_tagged_file(filename="Artist/Album/Track Two.mp3", title="Track Two")
 
-        real_build_index = indexer_module.build_index
+        real_refresh_index = indexer_module.refresh_index
         calls = []
         monkeypatch.setattr(
-            indexer_module, "build_index",
-            lambda *a, **k: calls.append(1) or real_build_index(*a, **k)
+            indexer_module, "refresh_index",
+            lambda *a, **k: calls.append(1) or real_refresh_index(*a, **k)
         )
         get_index(library_root=str(tmp_path), exports_dir_value=str(exports))
         assert calls == [1]

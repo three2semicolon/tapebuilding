@@ -89,7 +89,7 @@ class TestGetUserPlaylists:
         assert result == [{
             "id": "P1", "name": "Playlist P1", "description": "", "owner": "Jordan Smith",
             "owner_id": "1137489201", "public": True, "track_count": 3,
-            "playlist_url": "https://open.spotify.com/playlist/P1",
+            "playlist_url": "https://open.spotify.com/playlist/P1", "snapshot_id": "",
         }]
 
     def test_pagination_follows_next(self):

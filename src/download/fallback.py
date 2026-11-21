@@ -37,14 +37,11 @@ def _read_key() -> Optional[str]:
 
     if sys.platform == "win32":
         import msvcrt
-        ch = msvcrt.getch()
-        if ch in (b'\x00', b'\xe0'):  # function/arrow key prefix
-            msvcrt.getch()  # consume the scan code
+        ch = msvcrt.getwch()
+        if ch in ('\x00', '\xe0'):  # function/arrow key prefix
+            msvcrt.getwch()  # consume the scan code
             return None
-        try:
-            return ch.decode('utf-8')
-        except UnicodeDecodeError:
-            return ch.decode('latin-1')
+        return ch
     else:
         import tty
         import termios

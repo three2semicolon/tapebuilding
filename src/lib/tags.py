@@ -59,8 +59,22 @@ def read_tags(path):
         'title': (m.title or '').strip(),
         'track': m.track or 0,
         'disc': getattr(m, 'disc', 0) or 0,
+        'year': getattr(m, 'year', 0) or 0,
         'length': float(m.length) if m.length else 0.0,
     }
+
+
+def read_cover(path):
+    """return (data, mime_type) of embedded cover art, or None."""
+    try:
+        m = MediaFile(path)
+    except Exception:
+        return None
+    images = getattr(m, 'images', None) or []
+    if images:
+        img = images[0]
+        return (img.data, img.mime_type or 'image/jpeg')
+    return None
 
 
 def find_duplicates(files):
@@ -160,22 +174,34 @@ def split_group(members):
     return list(components.values())
 
 
-def write_tag(path, **fields):
+def write_tag(path, raise_errors=False, **fields):
     """write one or more MediaFile fields (e.g. albumartist='X') if they
-    differ from the current value. generalizes the old write_albumartist."""
+    differ from the current value. generalizes the old write_albumartist.
+
+    returns True if anything was saved, False if no change. swallows errors
+    unless raise_errors=True, in which case the exception propagates so the
+    caller (e.g. the web API) can report the truth. passing an empty string
+    clears the field.
+    """
     try:
         m = MediaFile(path)
         changed = False
         for field, value in fields.items():
-            current = getattr(m, field, None) or ''
+            current = getattr(m, field, None)
+            current_str = str(current) if current is not None else ''
+            value_str = str(value)
             # Compare exact NFC strings for case-only/non-Latin awareness
-            if unicodedata.normalize('NFC', current) != unicodedata.normalize('NFC', value):
-                setattr(m, field, value)
+            if unicodedata.normalize('NFC', current_str) != unicodedata.normalize('NFC', value_str):
+                setattr(m, field, value if value != '' else None)
                 changed = True
         if changed:
             m.save()
+        return changed
     except Exception as e:
+        if raise_errors:
+            raise
         print(f"  tag-write failed: {path} ({e})", file=sys.stderr)
+        return False
 
 
 def _dominant_key(counts, orig, total):

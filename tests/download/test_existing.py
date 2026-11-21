@@ -42,7 +42,7 @@ class TestBuildLibraryIndex:
         (tmp_path / "song.mp3").write_text("x")
         (tmp_path / "notes.txt").write_text("x")
         index = build_library_index(str(tmp_path))
-        assert len(index) == 1
+        assert len(index['stems']) == 1
 
     def test_skips_pycache_directories(self, tmp_path):
         pycache = tmp_path / "__pycache__"
@@ -50,21 +50,21 @@ class TestBuildLibraryIndex:
         (pycache / "song.mp3").write_text("x")
         (tmp_path / "real_song.mp3").write_text("x")
         index = build_library_index(str(tmp_path))
-        assert len(index) == 1
+        assert len(index['stems']) == 1
 
-    def test_missing_root_returns_empty_set(self, tmp_path):
+    def test_missing_root_returns_empty_index(self, tmp_path):
         missing = tmp_path / "does_not_exist"
-        assert build_library_index(str(missing)) == set()
+        assert build_library_index(str(missing)) == {'stems': set(), 'paths': []}
 
-    def test_none_root_returns_empty_set(self):
-        assert build_library_index(None) == set()
+    def test_none_root_returns_empty_index(self):
+        assert build_library_index(None) == {'stems': set(), 'paths': []}
 
     def test_recurses_into_subdirectories(self, tmp_path):
         nested = tmp_path / "albums" / "Artist" / "Album"
         nested.mkdir(parents=True)
         (nested / "track.mp3").write_text("x")
         index = build_library_index(str(tmp_path))
-        assert len(index) == 1
+        assert len(index['stems']) == 1
 
 
 class TestScanExistingFuzzy:

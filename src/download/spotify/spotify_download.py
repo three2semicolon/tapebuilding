@@ -134,10 +134,24 @@ def _process_manual_mode(
 
 def _check_existing(urls, metadata, output_dir, fmt):
     # returns (existing, new, no_meta, library_root, library_index)
-    library_root = output_dir or archive_path()
-    print("scanning output folder for existing files...")
-    library_index = build_library_index(library_root)
-    print(f"found {len(library_index)} audio files on disk.")
+    # Scan both the output dir (where new downloads land, e.g. unorganized/)
+    # and the full crate root (archive_path) so pre-skip finds existing files
+    # in albums/ / singles/ regardless of where new downloads go.
+    roots = []
+    explicit_root = output_dir or archive_path()
+    roots.append(explicit_root)
+    crate_root = archive_path()
+    if crate_root not in roots:
+        roots.append(crate_root)
+
+    merged = {"stems": set(), "paths": []}
+    for root in roots:
+        idx = build_library_index(root)
+        merged["stems"].update(idx["stems"])
+        merged["paths"].extend(idx["paths"])
+
+    print(f"scanning {len(roots)} crate location(s) for existing files...")
+    print(f"found {len(merged['stems'])} audio files on disk.")
     candidates = []
     no_meta = 0
     for url in urls:
@@ -147,8 +161,8 @@ def _check_existing(urls, metadata, output_dir, fmt):
             no_meta += 1
         else:
             candidates.append(predict_output_filename(artist_names, track_name, fmt))
-    existing, new = scan_existing_fuzzy(candidates, library_index)
-    return existing, new + no_meta, no_meta, library_root, library_index
+    existing, new = scan_existing_fuzzy(candidates, merged)
+    return existing, new + no_meta, no_meta, explicit_root, merged
 
 
 def _validate_and_prepare_urls(url_file, verbose):
@@ -236,9 +250,7 @@ def download_spotify(
         source = "single url" if urls is not None else (url_file or "<default manifest>")
         print(f"processing spotify source: {source}")
 
-    urls, url_count, metadata = _resolve_urls_and_metadata(
-        url_file, urls, manual or spotdl_fallback, pre_skip_existing, verbose
-    )
+    urls, url_count, metadata = _resolve_urls_and_metadata(url_file, urls, manual or spotdl_fallback, pre_skip_existing, verbose)
     if urls is None:
         return False
 
@@ -260,7 +272,14 @@ def download_spotify(
     # If manual, process via fallback and return
     if manual:
         return _process_manual_mode(
-            urls, metadata, output_dir, format, overwrite_errors, batch_size, cookies_from_browser, verbose,
+            urls,
+            metadata,
+            output_dir,
+            format,
+            overwrite_errors,
+            batch_size,
+            cookies_from_browser,
+            verbose,
             url_file=url_file,
         )
 
@@ -320,6 +339,8 @@ def _handle_pre_skip_existence(urls, metadata, output_dir, format, validate_only
         print("\nuse without --validate-only to download.")
         return False, [], 0  # Don't continue processing
 
+    # Pass 1: filename-stem match (fast, no tag reads)
+    stems = library_index["stems"] if isinstance(library_index, dict) else library_index
     new_urls = []
     for url in urls:
         meta = metadata.get(url) or {}
@@ -329,8 +350,29 @@ def _handle_pre_skip_existence(urls, metadata, output_dir, format, validate_only
         else:
             predicted = predict_output_filename(a, t, format)
             stem = os.path.splitext(predicted)[0]
-            if normalize_key(stem) not in library_index:
+            if normalize_key(stem) not in stems:
                 new_urls.append(url)
+
+    # Pass 2: tag-based fallback for filename misses.
+    # Reads tags via mediafile (same approach preimport's find_duplicates uses)
+    # so files with track-number prefixes ("01 - Title.mp3"), parentheticals,
+    # remix tags, etc. are still recognized as already-on-disk.
+    if new_urls:
+        from download.existing import build_tag_index
+
+        tag_index = build_tag_index(library_index["paths"] if isinstance(library_index, dict) else [])
+        tag_new_urls = []
+        for url in new_urls:
+            meta = metadata.get(url) or {}
+            a, t = meta.get("artist", ""), meta.get("track", "")
+            if not a or not t:
+                tag_new_urls.append(url)
+            else:
+                tag_key = normalize_key(a) + "|" + normalize_key(t)
+                if tag_key not in tag_index:
+                    tag_new_urls.append(url)
+        new_urls = tag_new_urls
+
     skipped = len(urls) - len(new_urls)
     if verbose:
         print(f"\npre-skip: skipping {skipped} existing files, {len(new_urls)} to download.")

@@ -428,6 +428,64 @@ tapedeck list
 for the full `load`/`unload`/`list` flag set (kind/spec syntax,
 `--apply`, `--link`, `--overwrite`, `--verbose`) run `tapedeck --help`.
 
+## playing the crate from a discord bot
+
+the web app serves crate audio over http at `/files/<crate-relative-path>`
+(port 8000, `uv run app`) - audio extensions only, paths confined to the
+crate root, with `Accept-Ranges: bytes` and real 206 responses so seeking
+works. this lets a discord music bot on the same lan play crate tracks
+directly:
+
+1. run the app: `uv run app` (use `--host 0.0.0.0` to reach it from another
+   machine on your lan)
+2. open the library page, find a track, click **bot url** to copy its
+   playable http link, e.g.
+   `http://<pc-ip>:8000/files/albums/Artist/Album/01 - Artist - Title.mp3`
+3. paste it into discord with the play command, e.g. `@mention play <url>`
+
+the library json (`/api/library`) attaches a `url` to every track, so any
+http client can turn a crate track into a playable link. note that this
+exposes the crate's audio files on your lan - only bind to `0.0.0.0` on a
+network you trust.
+
+## web app - React SPA
+
+the crate has a web UI built with React + Vite + TypeScript
+(`src/app/ui/`), served by the same FastAPI backend (`src/app/main.py`).
+all page routes (library, playlists, jobs, download) are handled by the
+React SPA; the old static HTML pages have been removed.
+
+### run
+
+build the frontend once, then start the backend:
+
+```bash
+cd src/app/ui && npm install && npm run build
+cd ..                        # back to repo root
+uv run app
+```
+
+open `http://localhost:8000`.
+
+### dev mode
+
+run backend and frontend dev server in two terminals:
+
+```bash
+# terminal 1 - backend (port 8000)
+uv run app
+
+# terminal 2 - frontend dev server (port 5173, proxies /api and /files to 8000)
+cd src/app/ui && npm run dev
+```
+
+### structure
+
+- `src/app/` — FastAPI backend (routers, jobs, runners, services, config)
+- `src/app/ui/` — React SPA source (Vite, React 18, TypeScript, TanStack
+  Query, dnd-kit, Zustand)
+- `src/app/ui/dist/` — built React SPA (served as SPA fallback by FastAPI)
+
 ## environment variables
 
 set in `.env` (see `.env.example`). uppercase only - the old dual-case

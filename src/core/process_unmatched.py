@@ -168,6 +168,7 @@ def _download_step(
     format,
     bitrate,
     cookies_file,
+    cookies_from_browser,
     pre_skip_existing,
     retries,
     apply,
@@ -218,6 +219,7 @@ def _download_step(
                         format=format,
                         bitrate=bitrate,
                         cookie_file=cookies_file,
+                        cookies_from_browser=cookies_from_browser,
                         pre_skip_existing=pre_skip_existing,
                         retries=retries,
                         validate_only=not apply,  # Dry run mode
@@ -232,6 +234,7 @@ def _download_step(
                         format=format,
                         bitrate=bitrate,
                         cookie_file=cookies_file,
+                        cookies_from_browser=cookies_from_browser,
                         pre_skip_existing=pre_skip_existing,
                         retries=retries,
                         validate_only=not apply,  # Dry run mode
@@ -438,6 +441,7 @@ def run_process_unmatched(
         format,
         bitrate,
         cookies_file,
+        cookies_from_browser,
         pre_skip_existing,
         retries,
         apply,

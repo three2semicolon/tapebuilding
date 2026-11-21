@@ -67,3 +67,30 @@ def config_path(cli=None):
     """config file path - LIBRARY_CONFIG_PATH env var, defaulting to
     project root/library_config.yaml. cli flag wins, then env, then default."""
     return cli or config.LIBRARY_CONFIG_PATH
+
+
+def crate_root(cli=None):
+    """archive_path() made absolute + normalised - what the app and journal
+    replay should use as the crate root."""
+    return os.path.normpath(os.path.abspath(os.path.expanduser(archive_path(cli))))
+
+
+def path_key(p):
+    """one canonical comparison key (separators, case on Windows, '..'
+    resolved). Use this as the dict key for path->anything lookups so
+    `Y:/Music/Crate/albums/a.mp3` and `y:/music/crate/albums/A.MP3` match."""
+    return os.path.normcase(os.path.normpath(p))
+
+
+def to_rel(p, root=None):
+    """crate-relative path with '/' separators, or None if outside the crate."""
+    root = root or crate_root()
+    p = os.path.normpath(os.path.abspath(os.path.expanduser(p)))
+    root = os.path.normpath(os.path.abspath(os.path.expanduser(root)))
+    try:
+        rel = os.path.relpath(p, root)
+    except ValueError:
+        return None
+    if rel.startswith("..") or os.path.isabs(rel):
+        return None
+    return rel.replace("\\", "/")

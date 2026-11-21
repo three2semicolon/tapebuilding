@@ -59,6 +59,9 @@ MODULES = [
     "core.cli",
     "core.download",
     "core.sync",
+    # app/ (web UI)
+    "app.main",
+    "app.jobs",
 ]
 
 

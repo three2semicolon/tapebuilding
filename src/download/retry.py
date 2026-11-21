@@ -142,7 +142,8 @@ def run_retry(failed_path=DEFAULT_FAILED, soft_path=DEFAULT_SOFT,
                 continue
             predicted = predict_output_filename(meta['artist'], meta['track'], 'mp3')
             stem = os.path.splitext(predicted)[0]
-            if normalize_key(stem) in library_index:
+            stems = library_index['stems'] if isinstance(library_index, dict) else library_index
+            if normalize_key(stem) in stems:
                 already_on_disk.append(url)
             else:
                 retry_urls.append(url)

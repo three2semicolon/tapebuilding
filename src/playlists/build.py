@@ -50,7 +50,7 @@ from lib.paths import (
 from lib.catalog.indexer import get_index
 from lib.catalog.match_index import MatchIndex, match_rows
 from lib.catalog.links import load_links_safe, links_path
-from lib.m3u import safe_name, write_m3u8
+from lib.m3u import safe_name, write_m3u8, read_entries, read_source
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")  # non-ascii artist names on windows
@@ -85,6 +85,7 @@ PLAYLIST_META_FIELDS = (
     "public",
     "track_count",
     "playlist_url",
+    "snapshot_id",
 )
 
 
@@ -351,6 +352,7 @@ def _scope_rescrape(sp, names, exports_dir):
             "public": pl.get("public", False),
             "track_count": (pl.get("tracks") or {}).get("total", 0),
             "playlist_url": (pl.get("external_urls") or {}).get("spotify", ""),
+            "snapshot_id": pl.get("snapshot_id", ""),
         }
         # replace in place to keep playlists.csv row order; else append
         for i, m in enumerate(metas):
@@ -383,6 +385,7 @@ def build_playlists(
     service="spotify",
     cookies_from_browser=None,
     cookie_file=None,
+    keep_local=True,
 ):
     """build/refresh local .m3u8s from current playlist membership (spotify or soundcloud).
 
@@ -396,6 +399,12 @@ def build_playlists(
     `exclude_names` filters out playlists after scope resolution but
     before matching: an excluded playlist never generates unmatched rows
     or triggers a cover download. Same id/name resolution as `names`.
+
+    `keep_local=True` (default): when rewriting a synced playlist, re-insert
+    its `#TAPEDECK-LOCAL` entries after their previous neighbour instead of
+    dropping them.
+
+    Returns a summary dict: {'written', 'skipped', 'unmatched', 'playlists': [...]}
     """
     playlists_path_resolved, exports_dir_resolved = _handle_basic_setup(names, playlists_path, exports_dir)
 
@@ -405,14 +414,18 @@ def build_playlists(
         if rescrape:
             if names:
                 from download.soundcloud.soundcloud_export import export_sets as sc_export_sets
+
                 print(f"rescraping {len(names)} soundcloud set(s) (--playlist) into {exports_dir_resolved}")
                 sc_export_sets(
-                    None, names, exports_dir_resolved,
+                    None,
+                    names,
+                    exports_dir_resolved,
                     cookies_from_browser=cookies_from_browser,
                     cookie_file=cookie_file,
                 )
             elif config.SOUNDCLOUD_PLAYLISTS_FILE:
                 from download.soundcloud.soundcloud_export import export_sets as sc_export_sets
+
                 playlists_file = config.SOUNDCLOUD_PLAYLISTS_FILE
                 identifiers = []
                 with open(playlists_file, "r", encoding="utf-8") as f:
@@ -425,16 +438,21 @@ def build_playlists(
                 else:
                     print(f"rescraping {len(identifiers)} soundcloud set(s) from {playlists_file} into {exports_dir_resolved}")
                     sc_export_sets(
-                        None, identifiers, exports_dir_resolved,
+                        None,
+                        identifiers,
+                        exports_dir_resolved,
                         cookies_from_browser=cookies_from_browser,
                         cookie_file=cookie_file,
                     )
             else:
                 from download.soundcloud.soundcloud_export import export_all_data as sc_export_all_data
+
                 username = config.SOUNDCLOUD_USER
                 print(f"rescraping soundcloud (--rescrape) into {exports_dir_resolved}")
                 sc_export_all_data(
-                    None, username, exports_dir_resolved,
+                    None,
+                    username,
+                    exports_dir_resolved,
                     cookies_from_browser=cookies_from_browser,
                     cookie_file=cookie_file,
                 )
@@ -454,8 +472,10 @@ def build_playlists(
     # Service-specific cover downloader (Spotify: uses the Spotify API).
     cover_downloader = None
     if covers and sp is not None:
+
         def _spotify_cover_downloader(pid, dest_path):
             return _download_cover(sp, pid, dest_path)
+
         cover_downloader = _spotify_cover_downloader
 
     total_tracks, total_matched, total_unmatched, total_written, unmatched_rows = _process_playlists(
@@ -468,18 +488,33 @@ def build_playlists(
         service_exports_dir,
         cover_downloader=cover_downloader,
         url_field="spotify_url",
+        service=service,
         total_tracks=total_tracks,
         total_matched=total_matched,
         total_unmatched=total_unmatched,
         total_written=total_written,
         unmatched_rows=unmatched_rows,
         verbose=verbose,
+        keep_local=keep_local,
     )
 
     _finalize_and_report(
-        service_exports_dir, unmatched_rows, total_written, selected,
-        total_matched, total_unmatched, total_tracks, url_field="spotify_url",
+        service_exports_dir,
+        unmatched_rows,
+        total_written,
+        selected,
+        total_matched,
+        total_unmatched,
+        total_tracks,
+        url_field="spotify_url",
     )
+
+    return {
+        "written": total_written,
+        "skipped": len(selected) - total_written,
+        "unmatched": total_unmatched,
+        "playlists": [{"id": m.get("id"), "name": m.get("name")} for m in selected],
+    }
 
 
 def _handle_basic_setup(names, playlists_path, exports_dir):
@@ -557,6 +592,90 @@ def _initialize_counters():
     return total_tracks, total_matched, total_unmatched, total_written, unmatched_rows
 
 
+def plan_playlist(meta, rows, mindex, verbose=False):
+    """Pure: match ``rows`` against the catalog and return the entries a
+    ``.m3u8`` would hold for this playlist, plus the unmatched rows.
+
+    No files are written - used by both ``build_playlists`` and the app's
+    preview/diff endpoints.  Each matched entry carries ``track_id``,
+    ``artist``, ``title``, ``length``, ``path`` (absolute) and ``tier``.
+    """
+    results = match_rows(rows, index=mindex, verbose=verbose)
+    entries = []
+    unmatched = []
+    for rec in results:
+        row = rec["row"]
+        if rec["path"]:
+            entries.append(
+                {
+                    "track_id": row.get("track_id", ""),
+                    "artist": row.get("artist_names", ""),
+                    "title": row.get("track_name", ""),
+                    "length": rec["length"],
+                    "path": rec["path"],
+                    "tier": rec["tier"],
+                }
+            )
+        else:
+            unmatched.append(
+                {
+                    "playlist_name": meta.get("name", ""),
+                    "track_id": row.get("track_id", ""),
+                    "track_name": row.get("track_name", ""),
+                    "artist_names": row.get("artist_names", ""),
+                    "album_name": row.get("album_name", ""),
+                    "tier_tried": rec["tier"],
+                }
+            )
+    return entries, unmatched
+
+
+def _merge_keep_local(new_entries, old_entries):
+    """re-insert old ``#TAPEDECK-LOCAL`` entries after their previous
+    non-local neighbour (anchor) in the new synced list; anchor gone ->
+    append at end.  Matches on absolute path."""
+    new_by_path = {}
+    for e in new_entries:
+        p = e.get("path")
+        if p:
+            new_by_path[os.path.normpath(p)] = e
+
+    insert_after = {}  # anchor_path -> [local entries] ; None -> unanchored
+    for i, old in enumerate(old_entries):
+        if not old.get("local"):
+            continue
+        anchor = None
+        for j in range(i - 1, -1, -1):
+            if not old_entries[j].get("local"):
+                anchor = old_entries[j]
+                break
+        anchor_path = os.path.normpath(anchor["path"]) if anchor and anchor.get("path") else None
+        local_entry = {
+            "track_id": old.get("track_id", ""),
+            "artist": old.get("artist", ""),
+            "title": old.get("title", ""),
+            "length": old.get("length", 0),
+            "path": old.get("path"),
+            "rel": old.get("rel", ""),
+            "local": True,
+            "extinf": old.get("extinf"),
+        }
+        insert_after.setdefault(anchor_path, []).append(local_entry)
+
+    result = []
+    for e in new_entries:
+        result.append(e)
+        p = os.path.normpath(e.get("path", "")) if e.get("path") else None
+        for local_e in insert_after.pop(p, []):
+            result.append(local_e)
+    for local_e in insert_after.pop(None, []):
+        result.append(local_e)
+    # any anchors that were never reached (shouldn't happen) - append their locals
+    for anchor_path, locals_ in insert_after.items():
+        result.extend(locals_)
+    return result
+
+
 def _process_playlists(
     selected,
     grouped,
@@ -567,12 +686,14 @@ def _process_playlists(
     exports_dir,
     cover_downloader=None,
     url_field="spotify_url",
+    service="spotify",
     total_tracks=0,
     total_matched=0,
     total_unmatched=0,
     total_written=0,
     unmatched_rows=None,
     verbose=False,
+    keep_local=True,
 ):
     """Process each playlist in the selection: match tracks against the catalog,
     write .m3u8 files for matched playlists, collect unmatched rows.
@@ -581,53 +702,54 @@ def _process_playlists(
     provided and a playlist is written, it's called to fetch cover art.
     `url_field` names the key in each track row that holds the service-specific
     URL (e.g. 'spotify_url') - it's stored in unmatched rows for the handoff.
+    `service` is used for the #TAPEDECK-SOURCE header stamp.
     This section is source-agnostic: it knows nothing about Spotify vs
     SoundCloud auth, rescrape, or cover download - those live in the caller.
     """
     if unmatched_rows is None:
         unmatched_rows = []
 
+    row_by_tid = {}
+    for meta in selected:
+        for row in grouped.get(meta.get("id"), []):
+            row_by_tid[row.get("track_id", "")] = row
+
     for i, meta in enumerate(selected, 1):
         pid = meta.get("id")
         name = meta.get("name") or meta.get("id") or "Unknown"
         rows = grouped.get(pid, [])
-        results = match_rows(rows, index=mindex, verbose=verbose)
+        entries, pl_unmatched = plan_playlist(meta, rows, mindex, verbose=verbose)
 
-        matched_entries = []
-        for rec in results:
-            total_tracks += 1
-            row = rec["row"]
-            if rec["path"]:
-                total_matched += 1
-                matched_entries.append(
-                    {
-                        "track_id": row.get("track_id", ""),
-                        "artist": row.get("artist_names", ""),
-                        "title": row.get("track_name", ""),
-                        "length": rec["length"],
-                        "path": rec["path"],
-                    }
-                )
-            else:
-                total_unmatched += 1
-                unmatched_rows.append(
-                    {
-                        "playlist_name": name,
-                        "track_id": row.get("track_id", ""),
-                        "track_name": row.get("track_name", ""),
-                        "artist_names": row.get("artist_names", ""),
-                        "album_name": row.get("album_name", ""),
-                        "tier_tried": rec["tier"],
-                        url_field: row.get(url_field, ""),
-                    }
-                )
+        matched_entries = entries
+        total_tracks += len(rows)
+        total_matched += len(matched_entries)
+        total_unmatched += len(pl_unmatched)
+        for u in pl_unmatched:
+            u[url_field] = row_by_tid.get(u["track_id"], {}).get(url_field, "")
+        unmatched_rows.extend(pl_unmatched)
 
         unmatched_count = len(rows) - len(matched_entries)
         print(f"\n[{i}/{len(selected)}] {name} - {len(matched_entries)}/{len(rows)} matched ({unmatched_count} unmatched)")
 
         if apply and matched_entries:
+            expected_source = f"{service}:{pid}"
             m3u8_path = os.path.join(playlists_path, safe_name(name) + ".m3u8")
-            write_m3u8(m3u8_path, matched_entries)
+
+            # --- guard: don't clobber a local playlist; collision-proof on name clash ---
+            existing_source = read_source(m3u8_path) if os.path.exists(m3u8_path) else ""
+            if existing_source == "local":
+                print(f"  skip {m3u8_path} (local playlist, not overwritten by sync)")
+                continue
+            if existing_source and existing_source != expected_source:
+                m3u8_path = os.path.join(playlists_path, f"{safe_name(name)} ({pid[:6]}).m3u8")
+                print(f"  name collision -> {m3u8_path}")
+
+            # keep_local: re-insert old #TAPEDECK-LOCAL entries after their neighbour
+            if keep_local and os.path.exists(m3u8_path) and existing_source in ("", expected_source):
+                old_entries, _, _ = read_entries(m3u8_path)
+                matched_entries = _merge_keep_local(matched_entries, old_entries)
+
+            write_m3u8(m3u8_path, matched_entries, source=expected_source)
             total_written += 1
             print(f"  wrote {m3u8_path}")
             if cover_downloader:
@@ -640,8 +762,14 @@ def _process_playlists(
 
 
 def _finalize_and_report(
-    service_exports_dir, unmatched_rows, total_written, selected,
-    total_matched, total_unmatched, total_tracks, url_field="spotify_url",
+    service_exports_dir,
+    unmatched_rows,
+    total_written,
+    selected,
+    total_matched,
+    total_unmatched,
+    total_tracks,
+    url_field="spotify_url",
 ):
     """Finalize processing and print final report."""
     # Ensure service-specific exports directory exists
