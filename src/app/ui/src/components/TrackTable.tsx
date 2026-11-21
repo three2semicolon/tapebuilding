@@ -2,7 +2,9 @@
  * TrackTable - virtualized track table shared by library and playlist views.
  * Uses @tanstack/react-virtual for performant rendering and @dnd-kit for
  * drag-to-reorder within playlists. Selection is controlled via the `selected`
- * prop; checkbox/row clicks call `onSelectionChange` with the new path set.
+ * prop; row clicks call `onSelectionChange` with the new path set.
+ * No checkboxes — click selects, ctrl/cmd+click toggles, shift+click selects
+ * a range, right-click opens the context menu.
  */
 
 import {
@@ -15,7 +17,7 @@ import {
 import { closestCenter } from '@dnd-kit/core'
 import { useSortable } from '@dnd-kit/sortable'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { type LibraryRow, type PlaylistEntry } from '@/services/api'
 
 type TrackRow = LibraryRow | PlaylistEntry
@@ -26,6 +28,7 @@ interface TrackTableProps {
   selected?: string[]
   onRowClick?: (track: TrackRow) => void
   onSelectionChange?: (paths: string[]) => void
+  onContextMenu?: (track: TrackRow, x: number, y: number) => void
   /** Called when a drag reorder completes: (fromIndex, toIndex). */
   onReorder?: (fromIndex: number, toIndex: number) => void
   rowHeight?: number
@@ -40,6 +43,7 @@ export function TrackTable({
   selected: selectedProp,
   onRowClick,
   onSelectionChange,
+  onContextMenu,
   onReorder,
   rowHeight = 32,
   overscan = 10,
@@ -48,6 +52,7 @@ export function TrackTable({
 }: TrackTableProps) {
   const parentRef = useRef<HTMLDivElement>(null)
   const [internalSelected, setInternalSelected] = useState<Set<string>>(new Set())
+  const anchorIndexRef = useRef<number | null>(null)
 
   // Controlled selection: use prop if provided, otherwise internal state.
   const selectedSet = useMemo(
@@ -69,10 +74,53 @@ export function TrackTable({
 
   const isSelected = (path: string) => selectedSet.has(path)
 
-  const handleSelectionChange = (paths: string[]) => {
-    setInternalSelected(new Set(paths))
-    onSelectionChange?.(paths)
-  }
+  const handleSelectionChange = useCallback(
+    (paths: string[]) => {
+      setInternalSelected(new Set(paths))
+      onSelectionChange?.(paths)
+    },
+    [onSelectionChange]
+  )
+
+  const handleRowClick = useCallback(
+    (e: React.MouseEvent, index: number, path: string) => {
+      if ((e.target as HTMLElement).closest('a')) return
+
+      if (e.shiftKey && anchorIndexRef.current != null) {
+        // Range selection from anchor to current
+        const start = Math.min(anchorIndexRef.current, index)
+        const end = Math.max(anchorIndexRef.current, index)
+        const next = new Set(selectedSet)
+        for (let i = start; i <= end; i++) {
+          const p = tracks[i].path
+          if (p) next.add(p)
+        }
+        handleSelectionChange([...next])
+      } else if (e.ctrlKey || e.metaKey) {
+        // Toggle individual track
+        const next = new Set(selectedSet)
+        if (next.has(path)) next.delete(path)
+        else next.add(path)
+        handleSelectionChange([...next])
+        anchorIndexRef.current = index
+      } else {
+        // Select only this track
+        const next = path ? [path] : []
+        handleSelectionChange(next)
+        anchorIndexRef.current = index
+      }
+      onRowClick?.(tracks[index])
+    },
+    [tracks, selectedSet, handleSelectionChange, onRowClick]
+  )
+
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent, index: number) => {
+      e.preventDefault()
+      onContextMenu?.(tracks[index], e.clientX, e.clientY)
+    },
+    [tracks, onContextMenu]
+  )
 
   const handleDragEnd = (event: DragEndEventType) => {
     if (!onReorder) return
@@ -105,19 +153,8 @@ export function TrackTable({
                 index={item.index}
                 virtualItem={item}
                 isSelected={isSelected(path)}
-                onClick={() => {
-                  const next = new Set(selectedSet)
-                  if (next.has(path)) next.delete(path)
-                  else next.add(path)
-                  handleSelectionChange([...next])
-                  onRowClick?.(track)
-                }}
-                onToggle={(p) => {
-                  const next = new Set(selectedSet)
-                  if (next.has(p)) next.delete(p)
-                  else next.add(p)
-                  handleSelectionChange([...next])
-                }}
+                onClick={(e) => handleRowClick(e, item.index, path)}
+                onContextMenu={(e) => handleContextMenu(e, item.index)}
                 showPlaylistColumn={showPlaylistColumn}
                 memberships={membership?.[path] ?? []}
               />
@@ -135,8 +172,8 @@ interface SortableTrackRowProps {
   index: number
   virtualItem: { start: number; size: number }
   isSelected: boolean
-  onClick?: () => void
-  onToggle?: (path: string) => void
+  onClick: (e: React.MouseEvent) => void
+  onContextMenu: (e: React.MouseEvent) => void
   showPlaylistColumn: boolean
   memberships: string[]
 }
@@ -145,9 +182,8 @@ function SortableTrackRow({
   track,
   index,
   virtualItem,
-  isSelected,
   onClick,
-  onToggle,
+  onContextMenu,
   showPlaylistColumn,
   memberships,
 }: SortableTrackRowProps) {
@@ -178,16 +214,14 @@ function SortableTrackRow({
     width: '100%',
   }
 
-  const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const path = track.path
-    if (!path) return
-    onToggle?.(path)
-    e.stopPropagation()
+  const handleRowClick = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('a')) return
+    onClick(e)
   }
 
-  const handleRowClick = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('input, a')) return
-    onClick?.()
+  const handleContextMenu = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('a')) return
+    onContextMenu(e)
   }
 
   return (
@@ -198,14 +232,8 @@ function SortableTrackRow({
       {...listeners}
       className="track-row"
       onClick={handleRowClick}
+      onContextMenu={handleContextMenu}
     >
-      <input
-        type="checkbox"
-        className="track-checkbox"
-        checked={isSelected}
-        onChange={handleCheckboxChange}
-        style={{ marginRight: 8, flexShrink: 0 }}
-      />
       <span className="sr-only">{escapeHtml(title)}</span>
       <div className="track-info" style={{ flex: 1, minWidth: 0 }}>
         <div className="track-title">{escapeHtml(title)}</div>

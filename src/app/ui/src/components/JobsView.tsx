@@ -3,7 +3,7 @@
  * Polls /api/jobs every 2 seconds while a job is running.
  */
 
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useState } from '@tanstack/react-query'
 import { api, type Job } from '@/services/api'
 import { useInterval } from '@/utils/useInterval'
 
@@ -18,14 +18,28 @@ export function JobsView({ onRefresh }: JobsViewProps) {
     queryFn: api.listJobs,
   })
 
+  const [toast, setToast] = useState<{ type: 'ok' | 'error'; msg: string } | null>(null)
+  const [expandedJob, setExpandedJob] = useState<string | null>(null)
+
   const jobs: Job[] = data?.jobs ?? []
 
   const running = jobs.some((j) => j.state === 'queued' || j.state === 'running')
+  const justFinished = jobs.some((j) => j.state === 'ok' || j.state === 'error')
 
   // poll every 2s while a job is running
   useInterval(() => {
     refetch()
   }, running ? 2000 : 0)
+
+  // show a toast when a job lands in a terminal state
+  if (justFinished && toast === null) {
+    const errJob = jobs.find((j) => j.state === 'error')
+    if (errJob) {
+      setToast({ type: 'error', msg: `${errJob.type}: ${errJob.error ?? 'failed'}` })
+    } else {
+      setToast({ type: 'ok', msg: 'job finished' })
+    }
+  }
 
   const handleCreateDownload = async (url: string, organize: boolean) => {
     try {
@@ -72,6 +86,27 @@ export function JobsView({ onRefresh }: JobsViewProps) {
 
   return (
     <div className="app">
+      {toast && (
+        <div
+          className="card"
+          style={{
+            border: toast.type === 'error' ? '3px solid var(--text-dark)' : '3px solid #6f9a5f',
+            position: 'fixed',
+            top: 12,
+            right: 12,
+            minWidth: 260,
+            zIndex: 50,
+            opacity: 0.95,
+          }}
+          onClick={() => setToast(null)}
+        >
+          <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.08em, marginBottom: 4 }}>
+            {toast.type === 'error' ? 'job error' : 'job finished'}
+          </div>
+          <div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>{toast.msg}</div>
+          <div style={{ fontSize: 10, color: 'var(--outline-soft)', marginTop: 6 }}>click to dismiss</div>
+        </div>
+      )}
       <div className="page-header">
         <h2>jobs</h2>
         <div className="page-actions">
@@ -159,31 +194,53 @@ export function JobsView({ onRefresh }: JobsViewProps) {
           </tbody>
         </table>
 
-        {/* job detail: logs for the most recent running job */}
-        {running && jobs.length > 0 && (
-          <div className="card" style={{ marginTop: 14 }}>
-            <h3>job log</h3>
-            <div className="job-log">
-              {jobs
-                .filter((j) => j.state === 'queued' || j.state === 'running')
-                .map((job) => (
-                  <div key={job.id} className="job-log-block">
-                    <div style={{ fontFamily: 'var(--font-display)', fontSize: 12, marginBottom: 6 }}>
-                      {job.type} · {job.state}
-                    </div>
-                    <pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', margin: 0 }}>
-                      {job.log.join('\n')}
-                    </pre>
-                    {job.error && (
-                      <div style={{ color: '#b89bb8', marginTop: 6, fontSize: 11 }}>
-                        error: {job.error}
-                      </div>
-                    )}
+        {/* job detail: logs for running and finished jobs (expanded on click) */}
+        <div className="card" style={{ marginTop: 14 }}>
+          <h3>job log</h3>
+          <div className="job-log">
+            {[...jobs].reverse().map((job) => {
+              const isOpen = expandedJob === job.id
+              const terminal = job.state === 'ok' || job.state === 'error'
+              const show = job.state === 'queued' || job.state === 'running' || terminal
+              if (!show) return null
+              return (
+                <div key={job.id} className="job-log-block">
+                  <div
+                    style={{
+                      fontFamily: 'var(--font-display)',
+                      fontSize: 12,
+                      marginBottom: 6,
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => setExpandedJob(isOpen ? null : job.id)}
+                  >
+                    {job.type} · {job.state} {isOpen ? '▾' : '▸'}
                   </div>
-                ))}
-            </div>
+                  {isOpen && (
+                    <>
+                      <pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', margin: 0 }}>
+                        {job.log.join('\n')}
+                      </pre>
+                      {job.error && (
+                        <div
+                          style={{
+                            color: '#8a4a6b',
+                            marginTop: 6,
+                            fontSize: 11,
+                            borderTop: '1px solid var(--container-light)',
+                            paddingTop: 6,
+                          }}
+                        >
+                          error: {job.error}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )
+            })}
           </div>
-        )}
+        </div>
 
         {onRefresh && (
           <button className="btn secondary" style={{ marginTop: 12 }} onClick={onRefresh}>

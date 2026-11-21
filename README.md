@@ -460,12 +460,18 @@ React SPA; the old static HTML pages have been removed.
 build the frontend once, then start the backend:
 
 ```bash
-cd src/app/ui && npm install && npm run build
-cd ..                        # back to repo root
+npm run build --prefix src/app/ui   # builds from repo root, no cd needed
 uv run app
 ```
 
 open `http://localhost:8000`.
+
+Alternatively, if you have GNU `make` installed (via `winget install make` or `choco install make`):
+
+```bash
+make build
+make start
+```
 
 ### dev mode
 
@@ -476,7 +482,7 @@ run backend and frontend dev server in two terminals:
 uv run app
 
 # terminal 2 - frontend dev server (port 5173, proxies /api and /files to 8000)
-cd src/app/ui && npm run dev
+npm run dev --prefix src/app/ui
 ```
 
 ### structure

@@ -15,7 +15,7 @@ import time
 from collections import deque
 from urllib.parse import quote
 
-from fastapi import APIRouter, Body, Header
+from fastapi import APIRouter, Body, Header, UploadFile, File
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
@@ -245,7 +245,36 @@ def playlist_cover(name: str):
     f = _playlist_cover_file(pl_dir, os.path.basename(candidate))
     if f is None:
         return Response(status_code=204)
-    return Response(content=open(f, "rb").read(), media_type="image/jpeg")
+    ext = os.path.splitext(f)[1].lower()
+    media_type = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }.get(ext, "image/jpeg")
+    return Response(content=open(f, "rb").read(), media_type=media_type)
+
+
+@router.post("/api/playlists/{name}/cover")
+def upload_playlist_cover(name: str, file: UploadFile = File(...)):
+    """upload a cover image for a playlist, saved next to the playlist file."""
+    pl_dir = playlists_path()
+    candidate = confine(pl_dir, name)
+    if candidate is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    pl_path = os.path.basename(candidate)
+    stem = pl_path.removesuffix(".m3u8").removesuffix(".m3u")
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if not ext:
+        ext = ".jpg"
+
+    cover_path = os.path.join(pl_dir, stem + ext)
+    content = file.file.read()
+    with open(cover_path, "wb") as f:
+        f.write(content)
+
+    return {"ok": True, "cover": f"/api/playlists/{quote(name)}/cover"}
 
 
 # ---------------------------------------------------------------- membership
@@ -423,6 +452,8 @@ def get_playlist_full(name: str, if_match: str | None = Header(default=None, ali
             kind = "synced"
             source_id = source
 
+    cover = _playlist_cover_url(pl_dir, name)
+
     entries = []
     ghosts = []
     duration = 0.0
@@ -439,6 +470,7 @@ def get_playlist_full(name: str, if_match: str | None = Header(default=None, ali
         "name": name,
         "kind": kind,
         "source_id": source_id,
+        "cover": cover,
         "etag": current_etag,
         "edited": edited,
         "entries": entries,
@@ -480,6 +512,7 @@ class OpMove(BaseModel):
     op: str = "move"
     ids: list = []
     to: int = 0
+    at: int | None = None  # alias for `to`; final index of the first moved item
 
 
 class OpsRequest(BaseModel):
@@ -493,8 +526,11 @@ def playlist_ops(name: str, body: OpsRequest):
 
     Request: {etag?, ops:[{op:"add",paths:[...],at?} |
                           {op:"remove",ids:[...]} |
-                          {op:"move",ids:[...],to}]}
+                          {op:"move",ids:[...],to?|at?}]}
     Response: {etag, ops:[...applied with results...]}
+
+    For `move`, `to` (alias `at`) is the final index of the first moved item
+    in the resulting list, after the moved items are popped.
     """
     pl_dir = playlists_path()
     path = confine(pl_dir, name)
@@ -560,7 +596,10 @@ def playlist_ops(name: str, body: OpsRequest):
 
         elif otype == "move":
             ids = op.get("ids") or []
-            to = op.get("to", 0)
+            # `to` is the final index of the first moved item in the resulting
+            # list (after the moved items are popped). `at` is accepted as an
+            # alias so move-to-top/bottom can reuse the same op.
+            to = op.get("to", op.get("at", 0))
             moved = []
             for i in sorted(ids, reverse=True):
                 if 0 <= i < len(entries_raw):

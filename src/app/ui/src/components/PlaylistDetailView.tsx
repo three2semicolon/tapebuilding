@@ -15,6 +15,7 @@ import {
 import { TrackTable } from './TrackTable'
 import { CoverImage } from './CoverImage'
 import { TrackMenu } from './TrackMenu'
+import { AudioPlayer } from './AudioPlayer'
 
 interface PlaylistDetailViewProps {
   name: string
@@ -40,10 +41,25 @@ export function PlaylistDetailView({
   const [isEditing, setIsEditing] = useState(false)
   const [editName, setEditName] = useState(name)
 
+  // Right-click context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+  } | null>(null)
+
   const { data: detail, isLoading, error, refetch } = useQuery({
     queryKey: ['playlist', name],
     queryFn: () => api.getPlaylist(name),
   })
+
+  // all playlists (for add-to-playlist context menu)
+  const { data: playlistsData } = useQuery({
+    queryKey: ['playlists'],
+    queryFn: api.listPlaylists,
+  })
+  const playlistNames: string[] = (playlistsData?.playlists ?? []).map(
+    (p) => p.name
+  )
 
   // membership: which playlists each track appears in
   const entryPaths = detail?.entries.map((e) => e.path!).filter(Boolean) ?? []
@@ -112,15 +128,16 @@ export function PlaylistDetailView({
   const handleMoveToTop = useCallback(() => {
     const ids = selectedEntryPaths.map((e) => e.id).filter((id): id is number => id != null)
     if (ids.length === 0) return
-    applyOps([{ op: 'move', ids, at: 0 }])
+    applyOps([{ op: 'move', ids, to: 0 }])
     handleClearSelection()
   }, [selectedEntryPaths, applyOps, handleClearSelection])
 
   const handleMoveToBottom = useCallback(() => {
     const ids = selectedEntryPaths.map((e) => e.id).filter((id): id is number => id != null)
     if (ids.length === 0) return
-    const lastIdx = (playlist?.entries.length ?? 0) - 1
-    applyOps([{ op: 'move', ids, at: lastIdx < 0 ? 0 : lastIdx }])
+    const len = playlist?.entries.length ?? 0
+    // `to` is the final index of the first moved item: len - n puts the block at the bottom.
+    applyOps([{ op: 'move', ids, to: Math.max(0, len - ids.length) }])
     handleClearSelection()
   }, [selectedEntryPaths, playlist?.entries.length, applyOps, handleClearSelection])
 
@@ -188,6 +205,17 @@ export function PlaylistDetailView({
       refetch()
     } catch (err) {
       alert(`Relink failed: ${err}`)
+    }
+  }, [name, queryClient, refetch])
+
+  const handleUploadCover = useCallback(async (file: File) => {
+    try {
+      await api.uploadCover(name, file)
+      queryClient.invalidateQueries({ queryKey: ['playlist', name] })
+      queryClient.invalidateQueries({ queryKey: ['playlists'] })
+      refetch()
+    } catch (err) {
+      alert(`Failed to upload cover: ${err}`)
     }
   }, [name, queryClient, refetch])
 
@@ -345,6 +373,15 @@ export function PlaylistDetailView({
     window.location.hash = `edit:${paths.join(',')}`
   }, [selectedEntryPaths])
 
+  // right-click context menu
+  const handleContextMenu = (_track: any, x: number, y: number) => {
+    setContextMenu({ x, y })
+  }
+
+  const handleCloseMenu = () => {
+    setContextMenu(null)
+  }
+
   if (isLoading) {
     return <div className="loading">loading playlist…</div>
   }
@@ -444,6 +481,29 @@ export function PlaylistDetailView({
         <div className="card" style={{ height: 'fit-content' }}>
           <CoverImage playlist={playlist} size={140} />
           <div style={{ padding: 10 }}>
+            <input
+              type="file"
+              accept="image/*"
+              id="cover-upload"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) handleUploadCover(file)
+              }}
+            />
+            <label
+              htmlFor="cover-upload"
+              style={{
+                display: 'inline-block',
+                marginTop: 8,
+                fontSize: 11,
+                color: 'var(--outline-soft)',
+                cursor: 'pointer',
+                textDecoration: 'underline',
+              }}
+            >
+              replace cover image
+            </label>
             <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>
               {entries.length} track{entries.length !== 1 ? 's' : ''}
             </div>
@@ -522,6 +582,15 @@ export function PlaylistDetailView({
             </div>
           )}
 
+          {/* inline audio player: plays the first selected track */}
+          {selectedEntryPaths.length > 0 && (
+            <AudioPlayer
+              srcPath={selectedEntryPaths[0].path ?? null}
+              title={selectedEntryPaths[0].title}
+              artist={selectedEntryPaths[0].artist}
+            />
+          )}
+
           <TrackTable
             tracks={entries}
             selected={Array.from(selectedPaths)}
@@ -531,6 +600,7 @@ export function PlaylistDetailView({
               setPlaylistContext(paths.length > 0 ? name : null)
             }}
             onReorder={handleReorder}
+            onContextMenu={handleContextMenu}
             showPlaylistColumn={false}
             membership={membership}
           />
@@ -544,6 +614,7 @@ export function PlaylistDetailView({
                 tracks={ghosts}
                 selected={Array.from(selectedPaths)}
                 onRowClick={() => {}}
+                onContextMenu={handleContextMenu}
                 showPlaylistColumn={false}
                 membership={membership}
               />
@@ -565,8 +636,14 @@ export function PlaylistDetailView({
 
       {/* track menu */}
       <TrackMenu
+        open={contextMenu != null}
+        onOpenChange={handleCloseMenu}
+        x={contextMenu?.x ?? 0}
+        y={contextMenu?.y ?? 0}
         selectedPaths={Array.from(selectedPaths)}
         playlist={name}
+        playlists={playlistNames}
+        trackMembership={membership}
         isSynced={playlist.kind === 'synced'}
         isDetached={playlist.kind === 'detached'}
         onAddToPlaylist={handleAddToPlaylist}
@@ -587,9 +664,6 @@ export function PlaylistDetailView({
         onLinkToFile={handleLinkToFile}
         onDetach={handleDetach}
         onReattach={handleReattach}
-        children={
-          <button className="sr-only">open track menu</button>
-        }
       />
     </div>
   )

@@ -23,6 +23,18 @@ from pathlib import Path
 
 from app.config import APP_TITLE, STATIC_DIR
 from app.routers import files, jobs as jobs_router, library, pages, playlists
+# The real runner implementations live in app.runners; re-export them here so
+# app.routers.jobs (which does `from app.main import _run_*`) and the test
+# suite (which patches main_module._run_*) both work.
+from app.runners import (  # noqa: F401
+    _run_cleanup,
+    _run_download,
+    _run_import,
+    _run_organize,
+    _run_preimport,
+    _run_sync,
+    _run_validate,
+)
 from lib.paths import archive_path, playlists_path
 from lib.tags import scan_audio
 

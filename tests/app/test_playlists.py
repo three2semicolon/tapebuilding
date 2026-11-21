@@ -361,6 +361,112 @@ def test_ops_move(client, monkeypatch, tmp_path):
     assert [e["title"] for e in j["entries"]] == ["T2", "T3", "T1"]
 
 
+def _make_playlist(tmp_path, name="tracks.m3u8", count=5):
+    (tmp_path / name).write_text(
+        "".join(
+            f"#EXTINF:{100 + i * 100},A{i} - T{i}\nalbums/t{i}.mp3\n"
+            for i in range(count)
+        ),
+        encoding="utf-8",
+    )
+
+
+def _titles(client, name):
+    resp = client("GET", f"/api/playlists/{name}")
+    assert resp.status_code == 200
+    return [e["title"] for e in resp.json()["entries"]]
+
+
+def test_ops_move_down(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PLAYLISTS_PATH", str(tmp_path))
+    name = "tracks.m3u8"
+    (tmp_path / "albums").mkdir()
+    for i in range(5):
+        (tmp_path / "albums" / f"t{i}.mp3").write_bytes(b"fake audio")
+    _make_playlist(tmp_path, name, 5)
+    # move T1 (index 1) down to index 3 -> [T0, T2, T3, T1, T4]
+    resp = client("POST", f"/api/playlists/{name}/ops", json={
+        "ops": [{"op": "move", "ids": [1], "to": 3}],
+    })
+    assert resp.status_code == 200
+    assert _titles(client, name) == ["T0", "T2", "T3", "T1", "T4"]
+
+
+def test_ops_move_up(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PLAYLISTS_PATH", str(tmp_path))
+    name = "tracks.m3u8"
+    (tmp_path / "albums").mkdir()
+    for i in range(5):
+        (tmp_path / "albums" / f"t{i}.mp3").write_bytes(b"fake audio")
+    _make_playlist(tmp_path, name, 5)
+    # move T3 (index 3) up to index 1 -> [T0, T3, T1, T2, T4]
+    resp = client("POST", f"/api/playlists/{name}/ops", json={
+        "ops": [{"op": "move", "ids": [3], "to": 1}],
+    })
+    assert resp.status_code == 200
+    assert _titles(client, name) == ["T0", "T3", "T1", "T2", "T4"]
+
+
+def test_ops_move_multi(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PLAYLISTS_PATH", str(tmp_path))
+    name = "tracks.m3u8"
+    (tmp_path / "albums").mkdir()
+    for i in range(5):
+        (tmp_path / "albums" / f"t{i}.mp3").write_bytes(b"fake audio")
+    _make_playlist(tmp_path, name, 5)
+    # move T1 and T3 (indices 1, 3) to the front -> [T1, T3, T0, T2, T4]
+    resp = client("POST", f"/api/playlists/{name}/ops", json={
+        "ops": [{"op": "move", "ids": [1, 3], "to": 0}],
+    })
+    assert resp.status_code == 200
+    assert _titles(client, name) == ["T1", "T3", "T0", "T2", "T4"]
+
+
+def test_ops_move_to_top(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PLAYLISTS_PATH", str(tmp_path))
+    name = "tracks.m3u8"
+    (tmp_path / "albums").mkdir()
+    for i in range(5):
+        (tmp_path / "albums" / f"t{i}.mp3").write_bytes(b"fake audio")
+    _make_playlist(tmp_path, name, 5)
+    # move T3 and T4 to the top via `to` -> [T3, T4, T0, T1, T2]
+    resp = client("POST", f"/api/playlists/{name}/ops", json={
+        "ops": [{"op": "move", "ids": [3, 4], "to": 0}],
+    })
+    assert resp.status_code == 200
+    assert _titles(client, name) == ["T3", "T4", "T0", "T1", "T2"]
+
+
+def test_ops_move_to_bottom(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PLAYLISTS_PATH", str(tmp_path))
+    name = "tracks.m3u8"
+    (tmp_path / "albums").mkdir()
+    for i in range(5):
+        (tmp_path / "albums" / f"t{i}.mp3").write_bytes(b"fake audio")
+    _make_playlist(tmp_path, name, 5)
+    # move T0 and T1 to the bottom via `to` = len - n = 3 -> [T2, T3, T4, T0, T1]
+    resp = client("POST", f"/api/playlists/{name}/ops", json={
+        "ops": [{"op": "move", "ids": [0, 1], "to": 3}],
+    })
+    assert resp.status_code == 200
+    assert _titles(client, name) == ["T2", "T3", "T4", "T0", "T1"]
+
+
+def test_ops_move_noop(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PLAYLISTS_PATH", str(tmp_path))
+    name = "tracks.m3u8"
+    (tmp_path / "albums").mkdir()
+    for i in range(5):
+        (tmp_path / "albums" / f"t{i}.mp3").write_bytes(b"fake audio")
+    _make_playlist(tmp_path, name, 5)
+    # move an item to its own position -> unchanged
+    resp = client("POST", f"/api/playlists/{name}/ops", json={
+        "ops": [{"op": "move", "ids": [2], "to": 2}],
+    })
+    assert resp.status_code == 200
+    assert _titles(client, name) == ["T0", "T1", "T2", "T3", "T4"]
+
+
 def test_ops_etag_mismatch(client, monkeypatch, tmp_path):
     monkeypatch.setenv("PLAYLISTS_PATH", str(tmp_path))
     name = "tracks.m3u8"

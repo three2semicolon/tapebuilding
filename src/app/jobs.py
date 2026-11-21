@@ -16,6 +16,7 @@ import io
 import sys
 import threading
 import time
+import traceback
 import uuid
 
 
@@ -140,6 +141,8 @@ class JobStore:
             job["state"] = "error"
             job["error"] = str(exc)
             self._log(job, f"ERROR: {exc}")
+            for line in traceback.format_exc().splitlines():
+                self._log(job, line)
         finally:
             stream.flush()
             sys.stdout = old_stdout

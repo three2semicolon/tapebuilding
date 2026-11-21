@@ -125,11 +125,15 @@ export const api = {
     jobType: string,
     target: string,
     organize?: string,
-  ) =>
-    request('/api/jobs', {
+  ) => {
+    const qs = new URLSearchParams()
+    qs.set('job_type', jobType)
+    qs.set('target', target)
+    if (organize) qs.set('organize', organize)
+    return request(`/api/jobs?${qs}`, {
       method: 'POST',
-      body: JSON.stringify({ job_type: jobType, target, organize: organize || '' }),
-    }) as Promise<{ id: string }>,
+    }) as Promise<{ id: string }>
+  },
 
   // ------------------------------------------------- links
 
@@ -184,6 +188,15 @@ export const api = {
     fetch(`${API_BASE}/files/${encodeURIComponent(path)}`, {
       headers: range ? { Range: range } : {},
     }),
+
+  uploadCover: (name: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return request(`/api/playlists/${encodeURIComponent(name)}/cover`, {
+      method: 'POST',
+      body: form,
+    }) as Promise<{ ok: true; cover: string }>
+  },
 }
 
 // ------------------------------------------------- types

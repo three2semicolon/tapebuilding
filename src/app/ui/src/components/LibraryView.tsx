@@ -3,7 +3,7 @@
  * and virtualized track table.
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type LibraryParams, type LibraryRow } from '@/services/api'
 import { TrackTable } from './TrackTable'
@@ -34,6 +34,13 @@ export function LibraryView({
   )
   const [albumFilter, setAlbumFilter] = useState(initialFilter?.album ?? '')
   const [playlistFilter, setPlaylistFilter] = useState('')
+  const [advanced, setAdvanced] = useState(false)
+
+  // Right-click context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+  } | null>(null)
 
   // Apply initial filter on mount (e.g. navigating from an artist/album link)
   useEffect(() => {
@@ -43,6 +50,35 @@ export function LibraryView({
       onFilterApplied?.()
     }
   }, [initialFilter, onFilterApplied])
+
+  const queryInputRef = useRef<HTMLInputElement>(null)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearDebounce = useCallback(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current)
+      debounceRef.current = null
+    }
+  }, [])
+
+  const handleSearch = useCallback(() => {
+    setParams((p) => ({ ...p, offset: 0 }))
+  }, [])
+
+  const debouncedSearch = useCallback(() => {
+    clearDebounce()
+    debounceRef.current = setTimeout(handleSearch, 300)
+  }, [clearDebounce, handleSearch])
+
+  // Focus query input on mount and when advanced search opens
+  useEffect(() => {
+    queryInputRef.current?.focus()
+  }, [advanced])
+
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => clearDebounce()
+  }, [clearDebounce])
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: [
@@ -70,6 +106,15 @@ export function LibraryView({
   const tracks: LibraryRow[] = data?.rows ?? []
   const total = data?.total ?? 0
 
+  // --- playlists (for add-to-playlist context menu) -------------------------
+  const { data: playlistsData } = useQuery({
+    queryKey: ['playlists'],
+    queryFn: api.listPlaylists,
+  })
+  const playlistNames: string[] = (playlistsData?.playlists ?? []).map(
+    (p) => p.name
+  )
+
   // --- selection -----------------------------------------------------------
   const selectedPaths = useSelectedPaths()
   const setSelection = useSelectionStore((s) => s.setSelection)
@@ -93,10 +138,6 @@ export function LibraryView({
   })
   const membership: Record<string, string[]> = membershipData?.playlists ?? {}
 
-  const handleSearch = useCallback(() => {
-    setParams((p) => ({ ...p, offset: 0 }))
-  }, [])
-
   const handleSelectAll = () => {
     const paths = tracks.filter((t) => t.path).map((t) => t.path)
     setSelection(paths)
@@ -118,7 +159,6 @@ export function LibraryView({
 
   const handleCut = () => {
     handleCopy()
-    // cut is copy + mark for removal; removal handled by TrackMenu onCut
   }
 
   const handlePasteAfter = () => {
@@ -147,6 +187,32 @@ export function LibraryView({
         // job created; user can watch it on the jobs page
       })
       .catch((err) => alert(`Failed to start download: ${err}`))
+  }
+
+  // --- right-click context menu --------------------------------------------
+  const handleContextMenu = (_track: LibraryRow, x: number, y: number) => {
+    setContextMenu({ x, y })
+  }
+
+  const handleCloseMenu = () => {
+    setContextMenu(null)
+  }
+
+  const handleAddToPlaylist = (_paths: string[], playlistName: string) => {
+    if (playlistName === '__new__') {
+      const newName = window.prompt('New playlist name:')
+      if (!newName) return
+      api
+        .createPlaylist(newName)
+        .then(() => {
+          // playlist created; user can open it from the sidebar
+        })
+        .catch((err) => alert(`Failed to create playlist: ${err}`))
+      return
+    }
+    alert(
+      'Use the playlist view to add tracks to an existing playlist.'
+    )
   }
 
   if (isLoading) {
@@ -208,62 +274,107 @@ export function LibraryView({
       <div className="card">
         <h3>search</h3>
         <div className="form-grid">
+          {/* Default: single query box */}
           <div className="form-row">
             <label>query</label>
             <input
               id="q"
-              placeholder="artist / album / title"
+              ref={queryInputRef}
+              placeholder="artist / album / title / year"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                debouncedSearch()
+              }}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  clearDebounce()
+                  handleSearch()
+                }
+              }}
             />
           </div>
-          <div className="form-row">
-            <label>artist</label>
-            <input
-              id="f-artist"
-              placeholder="artist contains"
-              value={artistFilter}
-              onChange={(e) => setArtistFilter(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-            />
-          </div>
-          <div className="form-row">
-            <label>album</label>
-            <input
-              id="f-album"
-              placeholder="album contains"
-              value={albumFilter}
-              onChange={(e) => setAlbumFilter(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-            />
-          </div>
-          <div className="form-row">
-            <label>playlist</label>
-            <select
-              id="f-playlist"
-              value={playlistFilter}
-              onChange={(e) => setPlaylistFilter(e.target.value)}
-            >
-              <option value="">all</option>
-              <option value="none">not in any playlist</option>
-            </select>
-          </div>
-          <div className="form-row" style={{ alignItems: 'flex-end', display: 'flex', gap: 8 }}>
-            <button className="btn" onClick={handleSearch}>
-              search
-            </button>
+
+          {advanced && (
+            <>
+              <div className="form-row">
+                <label>artist</label>
+                <input
+                  id="f-artist"
+                  placeholder="artist contains"
+                  value={artistFilter}
+                  onChange={(e) => {
+                    setArtistFilter(e.target.value)
+                    debouncedSearch()
+                  }}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      clearDebounce()
+                      handleSearch()
+                    }
+                  }}
+                />
+              </div>
+              <div className="form-row">
+                <label>album</label>
+                <input
+                  id="f-album"
+                  placeholder="album contains"
+                  value={albumFilter}
+                  onChange={(e) => {
+                    setAlbumFilter(e.target.value)
+                    debouncedSearch()
+                  }}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      clearDebounce()
+                      handleSearch()
+                    }
+                  }}
+                />
+              </div>
+              <div className="form-row">
+                <label>playlist</label>
+                <select
+                  id="f-playlist"
+                  value={playlistFilter}
+                  onChange={(e) => {
+                    setPlaylistFilter(e.target.value)
+                    debouncedSearch()
+                  }}
+                >
+                  <option value="">all</option>
+                  <option value="none">not in any playlist</option>
+                </select>
+              </div>
+            </>
+          )}
+
+          <div className="form-row" style={{ alignItems: 'flex-end', display: 'flex', gap: 8, flexDirection: 'column' }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn" onClick={handleSearch}>
+                search
+              </button>
+              <button
+                className="btn secondary"
+                onClick={() => {
+                  clearDebounce()
+                  setQuery('')
+                  setArtistFilter('')
+                  setAlbumFilter('')
+                  setPlaylistFilter('')
+                  setParams((p) => ({ ...p, offset: 0 }))
+                }}
+              >
+                clear
+              </button>
+            </div>
             <button
               className="btn secondary"
-              onClick={() => {
-                setQuery('')
-                setArtistFilter('')
-                setAlbumFilter('')
-                setPlaylistFilter('')
-                setParams((p) => ({ ...p, offset: 0 }))
-              }}
+              style={{ fontSize: 11, padding: '4px 8px' }}
+              onClick={() => setAdvanced(!advanced)}
             >
-              clear
+              {advanced ? 'simple search' : 'advanced search'}
             </button>
           </div>
         </div>
@@ -280,6 +391,7 @@ export function LibraryView({
             setSelection(paths)
             setPlaylistContext(paths.length > 0 ? null : null)
           }}
+          onContextMenu={handleContextMenu}
           showPlaylistColumn={true}
           membership={membership}
         />
@@ -298,24 +410,15 @@ export function LibraryView({
 
       {/* track menu - actions on the current selection */}
       <TrackMenu
+        open={contextMenu != null}
+        onOpenChange={handleCloseMenu}
+        x={contextMenu?.x ?? 0}
+        y={contextMenu?.y ?? 0}
         selectedPaths={Array.from(selectedPaths)}
         playlist={null}
-        onAddToPlaylist={(_paths: string[], playlistName: string) => {
-          if (playlistName === '__new__') {
-            const newName = window.prompt('New playlist name:')
-            if (!newName) return
-            api
-              .createPlaylist(newName)
-              .then(() => {
-                // playlist created; user can open it from the sidebar
-              })
-              .catch((err) => alert(`Failed to create playlist: ${err}`))
-            return
-          }
-          alert(
-            'Use the playlist view to add tracks to an existing playlist.'
-          )
-        }}
+        playlists={playlistNames}
+        trackMembership={membership}
+        onAddToPlaylist={handleAddToPlaylist}
         onRemoveFromPlaylist={() => {}}
         onCopy={handleCopy}
         onCut={handleCut}
@@ -351,9 +454,6 @@ export function LibraryView({
         }}
         onDetach={() => {}}
         onReattach={() => {}}
-        children={
-          <button className="sr-only">open track menu</button>
-        }
       />
     </div>
   )

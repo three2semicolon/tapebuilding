@@ -1,8 +1,14 @@
 /**
  * TrackMenu - Spotify-style track context menu (Radix UI ContextMenu).
  * Acts on the current selection, not just the clicked row.
+ *
+ * Supports controlled open mode: pass `open`, `onOpenChange`, `x`, `y` to
+ * open the menu at a specific screen position (e.g. from a right-click).
+ * Pass `playlists` + `trackMembership` to render the add-to-playlist
+ * submenu as a checklist (✓ = already in playlist).
  */
 
+import { useEffect, useRef } from 'react'
 import * as ContextMenuPrimitive from '@radix-ui/react-context-menu'
 import { ChevronRight, Copy, ExternalLink, Folder, Music, Trash2 } from 'lucide-react'
 
@@ -27,6 +33,17 @@ interface TrackMenuProps {
   isSynced?: boolean
   /** Whether the playlist is detached. */
   isDetached?: boolean
+  /** Controlled open state (for right-click triggering). */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  /** Screen X position for the menu (used with controlled open). */
+  x?: number
+  /** Screen Y position for the menu (used with controlled open). */
+  y?: number
+  /** All playlist names, for the add-to-playlist checklist submenu. */
+  playlists: string[]
+  /** path -> playlist names, used to determine ✓ state. */
+  trackMembership: Record<string, string[]>
   onAddToPlaylist: (paths: string[], playlistName: string) => void
   onRemoveFromPlaylist: (paths: string[]) => void
   onCopy: (paths: string[]) => void
@@ -45,7 +62,6 @@ interface TrackMenuProps {
   onLinkToFile: (paths: string[]) => void
   onDetach: () => void
   onReattach: (mode: 'merge' | 'replace') => void
-  children: React.ReactNode // the trigger element(s)
 }
 
 export function TrackMenu({
@@ -54,6 +70,12 @@ export function TrackMenu({
   isGhost = false,
   isSynced = false,
   isDetached = false,
+  open = false,
+  onOpenChange,
+  x = 0,
+  y = 0,
+  playlists = [],
+  trackMembership = {},
   onAddToPlaylist,
   onRemoveFromPlaylist,
   onCopy,
@@ -72,11 +94,50 @@ export function TrackMenu({
   onLinkToFile,
   onDetach,
   onReattach,
-  children,
 }: TrackMenuProps) {
+  // A track is considered "in" a playlist if ALL selected tracks are members.
+  const triggerRef = useRef<HTMLButtonElement>(null)
+
+  // Auto-open the menu at the right-click position. Radix v1.0.0's Root doesn't
+  // accept a controlled `open` prop, so we programmatically click the hidden
+  // trigger (positioned at x/y by the parent) whenever the menu should open.
+  useEffect(() => {
+    if (open && triggerRef.current) {
+      triggerRef.current.click()
+    }
+  }, [open, x, y])
+
+  // A track is considered "in" a playlist if ALL selected tracks are members.
+  const isInPlaylist = (playlistName: string) =>
+    selectedPaths.length > 0 &&
+    selectedPaths.every((p) => (trackMembership[p] ?? []).includes(playlistName))
+
+  // Playlists that contain at least one of the selected tracks (for "In playlists" submenu).
+  const memberPlaylists = useMemoMemberPlaylists(selectedPaths, trackMembership)
+
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+    <ContextMenu onOpenChange={onOpenChange}>
+      {/* Hidden trigger positioned at (x, y) so the menu opens at the right-click spot. */}
+      <ContextMenuTrigger asChild>
+        <button
+          ref={triggerRef}
+          style={{
+            position: 'fixed',
+            left: x,
+            top: y,
+            width: 1,
+            height: 1,
+            overflow: 'hidden',
+            border: 'none',
+            background: 'none',
+            padding: 0,
+            margin: 0,
+            opacity: 0,
+          }}
+        >
+          trigger
+        </button>
+      </ContextMenuTrigger>
       <ContextMenuContent
         className="track-menu"
         style={{
@@ -92,17 +153,28 @@ export function TrackMenu({
           </ContextMenuSubTrigger>
           <ContextMenuSubContent className="track-menu-sub">
             <ContextMenuLabel className="track-menu-label">playlists</ContextMenuLabel>
-            <ContextMenuItem
-              className="track-menu-item"
-              onClick={() => onAddToPlaylist(selectedPaths, '__new__')}
-            >
-            + New playlist
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            {/* Placeholder: playlist list populated by parent via render prop or state */}
-            <ContextMenuItem className="track-menu-item muted">
-              no playlists
-            </ContextMenuItem>
+            {playlists.length === 0 ? (
+              <ContextMenuItem className="track-menu-item muted">no playlists</ContextMenuItem>
+            ) : (
+              <>
+                <ContextMenuItem
+                  className="track-menu-item"
+                  onClick={() => onAddToPlaylist(selectedPaths, '__new__')}
+                >
+                  + New playlist
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                {playlists.map((p) => (
+                  <ContextMenuItem
+                    key={p}
+                    className="track-menu-item"
+                    onClick={() => onAddToPlaylist(selectedPaths, p)}
+                  >
+                    {isInPlaylist(p) ? '✓ ' : ''}{p}
+                  </ContextMenuItem>
+                ))}
+              </>
+            )}
           </ContextMenuSubContent>
         </ContextMenuSub>
 
@@ -127,9 +199,17 @@ export function TrackMenu({
           </ContextMenuSubTrigger>
           <ContextMenuSubContent className="track-menu-sub">
             <ContextMenuLabel className="track-menu-label">membership</ContextMenuLabel>
-            <ContextMenuItem className="track-menu-item muted">
-              not in any playlist
-            </ContextMenuItem>
+            {memberPlaylists.length === 0 ? (
+              <ContextMenuItem className="track-menu-item muted">
+                not in any playlist
+              </ContextMenuItem>
+            ) : (
+              memberPlaylists.map((p) => (
+                <ContextMenuItem key={p} className="track-menu-item">
+                  {p}
+                </ContextMenuItem>
+              ))
+            )}
           </ContextMenuSubContent>
         </ContextMenuSub>
 
@@ -280,4 +360,18 @@ export function TrackMenu({
       </ContextMenuContent>
     </ContextMenu>
   )
+}
+
+function useMemoMemberPlaylists(
+  selectedPaths: string[],
+  trackMembership: Record<string, string[]>
+): string[] {
+  if (selectedPaths.length === 0) return []
+  // Intersection: playlists that contain ALL selected tracks.
+  const first = (trackMembership[selectedPaths[0]] ?? []).slice()
+  const rest = selectedPaths.slice(1)
+  const result = first.filter((p) =>
+    rest.every((path) => (trackMembership[path] ?? []).includes(p))
+  )
+  return result
 }
